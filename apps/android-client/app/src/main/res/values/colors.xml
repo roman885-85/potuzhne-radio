@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Кольори ті самі, що на екрані радіо й на його сторінці. -->
+<resources>
+    <color name="ic_launcher_background">#000000</color>
+    <color name="bg">#000000</color>
+    <color name="pan">#111111</color>
+    <color name="pan2">#1b1b1b</color>
+    <color name="txt">#f2f2f2</color>
+    <color name="dim">#8c8c8c</color>
+    <color name="acc">#e6d25a</color>
+</resources>

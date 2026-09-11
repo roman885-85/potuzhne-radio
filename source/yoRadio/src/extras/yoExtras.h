@@ -1,0 +1,174 @@
+/*  ---------------------------------------------------------------------------
+ *  Доповнення ПОТУЖНОГО РАДІО, яких немає в yoRadio:
+ *    - таймер сну (15/30/60/90 хв) із плавним затуханням наприкінці;
+ *    - будильник: щодня або в будні, гучність наростає з нуля;
+ *    - нічна яркість екрана за розкладом, дотик ненадовго будить;
+ *    - батарея (TP4054, дільник 1:2 на GPIO9);
+ *    - RGB-світлодіод WS2812 на GPIO42.
+ *
+ *  Налаштування живуть в окремому просторі NVS «yoext», а не в сховищі
+ *  yoRadio: там свій формат і своя міграція. Записуємо не частіше ніж раз
+ *  на три секунди після останньої зміни — серія натискань на «+» дає один
+ *  запис, а не десять.
+ *
+ *  Підсвітку екрана відтепер веде лише цей модуль: він знає і денну
+ *  яскравість, і нічну, і те, що екран погашено таймером сну. Плавні
+ *  переходи меню й плеєра беруть «повну» яскравість звідси ж, інакше вночі
+ *  кожен перехід спалахував би на денну.
+ *  ------------------------------------------------------------------------- */
+#ifndef yoExtras_h
+#define yoExtras_h
+
+#include <Arduino.h>
+
+#define EXT_BAT_PIN   9
+#define EXT_LED_PIN   42
+
+enum extLed_e : uint8_t { LED_OFF = 0, LED_STATUS = 1, LED_MUSIC = 2 };
+
+struct ExtStore {
+  uint8_t  ver;
+  uint8_t  alarmOn, alarmH, alarmM, alarmDays;   /* days: 0 щодня, 1 будні */
+  uint8_t  nightOn, nightFrom, nightTo;          /* у півгодинах: 0..47 */
+  uint8_t  nightLevel;                           /* 0..100, 0 — екран гасне */
+  uint8_t  ledMode;
+  uint8_t  batSave;                              /* 0 вимк, 1..4 — 10/15/30/60 с без дотиків */
+  /*  сторінка «розробник»: нулі — усе ввімкнено, як було  */
+  uint8_t  noBat, noIp, noSd;                    /* сховати батарею / IP / функції картки */
+  uint8_t  dac;                                  /* аудіовихід: 0 вбудований ES8311, 1 PCM5102A, 2 UDA1334A, 3 MAX98357A */
+  uint8_t  favHide;                              /* 1 — рядок обраного на головному не показувати (0 = показувати) */
+};
+/*  Зовнішній ЦАП I2S — на вільні виводи роз'єму розширення  */
+#define DAC_BCLK  14
+#define DAC_LRC   21
+#define DAC_DOUT  2
+#define EXT_STORE_V1  10                          /* розмір першої версії — щоб не губити старі налаштування */
+
+/*  Обране зберігаємо назвою й адресою, а не номером у плейлисті: номер
+    зсувається від будь-якої правки списку, адреса — ні.  */
+#define FAV_N 6
+struct FavItem { char name[48]; char url[160]; };
+
+class YoExtras {
+  public:
+    ExtStore s;
+    FavItem  fav[FAV_N];
+
+    bool     favSetCurrent(uint8_t i);  /* поточну станцію — у клітинку */
+    void     favClear(uint8_t i);
+    bool     favPlay(uint8_t i);
+    int8_t   favPlaying();              /* клітинка станції, що грає, або -1 */
+
+    void begin();
+    void loop();                       /* головний цикл, поруч із плеєром */
+    void changed();                    /* налаштування змінено — записати згодом */
+
+    /*  таймер сну  */
+    void     setSleep(uint16_t minutes);
+    uint16_t sleepMinutes() const { return _sleepSet; }
+    uint16_t sleepLeft() const;        /* хвилин до кінця, з округленням угору */
+    uint32_t sleepLeftSec() const;
+    void     sleepTestSec(uint32_t sec); /* для перевірки: таймер у секундах */
+
+    /*  будильник  */
+    void     alarmNow();               /* спрацювати негайно (перевірка) */
+    bool     alarmRinging() const { return _rampT0 != 0; }
+    int32_t  alarmInMin() const;       /* хвилин до найближчого, -1 якщо вимкнено */
+
+    /*  екран  */
+    bool     nightActive() const { return _night; }
+    uint16_t pwmTarget();              /* яка яскравість має бути зараз, 0..255 */
+    void     pwmSet(uint16_t v);       /* записати в пін і запам'ятати */
+    uint16_t pwmNow();                 /* одразу виставити ціль (без плавності) */
+    bool     touchWake();              /* true — дотик лише розбудив екран */
+    void     forceNight(int8_t on) { _forceNight = on; }
+    void     setBlank(bool b) { _blank = b; }   /* заставка «порожній екран» yoRadio */
+    bool     dark() const { return _dark; }
+    bool     saverDim() const { return _saver; }  /* пригашено для економії батареї */
+
+    /*  батарея  */
+    uint16_t batMv() const { return _batMv; }
+    int8_t   batPct() const { return _simPct >= 0 ? _simPct : _batPct; }
+    bool     onUsb() const { return _usb; }
+    /*  Заряджання — як просив власник: живлення від USB є — заряджається,
+        напруга дійшла до 4.2 В — заряджено.  */
+    bool     charging() const { return _simChg >= 0 ? _simChg : (_power && !_full); }
+    bool     charged() const { return _simChg >= 0 ? false : (_power && _full); }
+    bool     onPower() const { return _simChg >= 0 ? _simChg : _power; }
+    bool     lowBattery() const { return !s.noBat && _batMv >= 2800 && batPct() >= 0 && batPct() < 10 && !onPower(); }
+    void     applyDac();                /* перемкнути виводи I2S на вибраний вихід */
+    uint16_t batRaw();                 /* разове читання, мВ */
+    void     batSim(int8_t pct, int8_t chg);   /* перевірка: підставити рівень, -1 — справжній */
+
+    /*  живлення: 1 — перезавантажити, 2 — вимкнути (глибокий сон до дотику)  */
+    void     requestPower(uint8_t mode) { _pwrAt = millis() + 300; _pwrMode = mode; }
+    static void earlyBoot();             /* найпершим у setup(): зняти фіксацію виводів після сну */
+    static bool wokeByTouch();
+
+    /*  світлодіод  */
+    void     ledTest(uint8_t r, uint8_t g, uint8_t b, uint16_t ms);
+
+    /*  Wi-Fi: до якої мережі просили підключитись перед перезавантаженням.
+        Після старту перевіряємо, чи вийшло, і якщо ні — кажемо про це.  */
+    void     wifiPending(const char* ssid);
+    char     wifiFail[33] = {0};         /* не вдалося підключитись до цієї */
+
+  private:
+    bool     _dirty = false;
+    uint32_t _dirtyMs = 0;
+    void     _load();
+    void     _save();
+
+    uint16_t _sleepSet = 0;            /* хвилин, 0 — вимкнено */
+    uint32_t _sleepEnd = 0;            /* millis() кінця */
+    bool     _sleepFading = false;
+    void     _sleepLoop(uint32_t now);
+
+    uint32_t _rampT0 = 0;              /* наростання будильника триває */
+    uint8_t  _rampTo = 0;
+    int16_t  _lastAlarmKey = -1;       /* хвилина доби, коли вже дзвонили */
+    void     _alarmLoop(uint32_t now);
+    void     _alarmStart();
+
+    bool     _night = false;
+    int8_t   _forceNight = -1;
+    bool     _dark = false;            /* погашено таймером сну до дотику */
+    bool     _blank = false;
+    uint32_t _wakeUntil = 0;           /* дотик уночі — денна яскравість до */
+    uint32_t _lastTouch = 0;           /* останній дотик — для економії батареї */
+    bool     _saver = false;
+    uint16_t _pwmCur = 0xFFFF;
+    uint32_t _pwmTick = 0;
+    void     _screenLoop(uint32_t now);
+
+    uint16_t _batMv = 0;
+    int8_t   _batPct = -1;
+    bool     _usb = false;
+    uint32_t _batTick = 0;
+    bool     _charging = false;         /* здогадка з напруги: зарядний блок без даних */
+    bool     _power = false, _full = false;
+    uint16_t _batPrev = 0;
+    uint16_t _batMin[6] = {0};
+    uint8_t  _batMinN = 0;
+    uint32_t _batMinT = 0;
+    int8_t   _simPct = -1, _simChg = -1;
+    uint32_t _batAcc = 0;
+    uint8_t  _batN = 0;
+    void     _batLoop(uint32_t now);
+
+    char     _wpend[33] = {0};
+    void     _wifiCheck(uint32_t now);
+    volatile uint8_t _pwrMode = 0;
+    uint32_t _pwrAt = 0;
+    void     _powerOff();
+    uint32_t _ledTick = 0;
+    uint32_t _ledTestUntil = 0;
+    uint8_t  _ledR = 1, _ledG = 1, _ledB = 1;   /* свідомо не нуль: перший запис відбудеться */
+    float    _ledEnv = 0.0f;
+    void     _ledLoop(uint32_t now);
+    void     _led(uint8_t r, uint8_t g, uint8_t b);
+};
+
+extern YoExtras extras;
+
+#endif

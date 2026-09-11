@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ==========================================================================
+       PotuzhneRadio.csproj — Windows-клієнт «ПОТУЖНЕ РАДІО»
+       ==========================================================================
+       Сама програма нічого не малює замість радіо: вона знаходить його в мережі
+       й показує його власну веб-сторінку у вбудованому браузері (WebView2).
+
+       Збирається на Mac у один самодостатній win-x64 .exe: на цільовому
+       комп'ютері не треба ані .NET, ані чогось іще. Потрібен лише WebView2
+       Runtime, який у Windows 11 є завжди (у Windows 10 — майже завжди).
+       ========================================================================== -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Без цього SDK на Mac відмовляється збирати проєкт під Windows. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>PotuzhneRadio</AssemblyName>
+    <RootNamespace>PotuzhneRadio</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- Іконка файлу .exe: те, що видно у Провіднику й на панелі задач.
+         Малюється скриптом make-ico.swift зі значка антени. -->
+    <ApplicationIcon>Resources/AppIcon.ico</ApplicationIcon>
+
+    <!-- «Опис файлу» — саме його Диспетчер задач показує як назву процесу. -->
+    <AssemblyTitle>ПОТУЖНЕ РАДІО</AssemblyTitle>
+    <Product>ПОТУЖНЕ РАДІО</Product>
+    <Version>1.0.0</Version>
+
+    <!-- Перекладів WinForms українською немає, а решта мов лише роздуває файл. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <!-- Документація бібліотек (.xml) поруч із .exe нікому не потрібна. -->
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Той самий .ico і для вікна: WinForms бере іконку вікна окремо від .exe. -->
+    <EmbeddedResource Include="Resources/AppIcon.ico" LogicalName="AppIcon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <!-- Пакет WebView2 для .NET 5+ завжди додає й збірку для WPF, а WPF у цій
+       програмі немає: вона лише тягнула б конфлікт версій WindowsBase і зайві
+       кілобайти в .exe. Прибираємо її до розв'язання посилань. -->
+  <Target Name="DropWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <!-- Перевірка пошуку для Mac живе окремим проєктом і сюди не входить. -->
+    <Compile Remove="check/**" />
+    <None Remove="check/**" />
+  </ItemGroup>
+
+</Project>

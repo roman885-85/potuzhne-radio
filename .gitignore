@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+._*
+
+# Документація виробника плати (1,3 ГБ, чужа) і старі копії
+docs/
+backup/
+source/broken204/
+
+# Проміжне збирання прошивки; налаштування arduino-cli створює rebuild.sh
+build/bp/
+build/out/
+build/*.log
+build/arduino-cli.yaml
+
+# Готові файли — у релізі на GitHub, не в коді
+Програми/
+firmware/*.bin
+firmware/web/
+source/yoRadio/data/www/*.gz
+source/yoRadio/src/extras/yoBuild.h
+
+# Програми: збирання, пакунки, перевірки
+apps/*/bin/
+apps/*/obj/
+apps/*/.nuget/
+apps/*/check/
+apps/windows-client/vm/
+apps/android-client/Службові/
+apps/android-client/app/build/
+apps/android-client/build/
+
+# Інструменти: знімки екрана з перевірок і зібраний конвертер шрифтів
+tools/*.png
+tools/cp1251fontconvert

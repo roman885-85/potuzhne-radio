@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ==========================================================================
+       PotuzhneRadioBuilder.csproj — «Збірка ПОТУЖНОГО РАДІО» для Windows
+       ==========================================================================
+       Збирає прошивку радіо прямо на Windows (arduino-cli + ядро ESP32, які
+       програма ставить сама) і оновлює радіо по Wi-Fi. Аналог Mac-програми
+       apps/mac-builder і сценарію firmware/rebuild.sh.
+
+       Пошук радіо, кольори, кнопки й діалог адреси — спільні з клієнтом
+       (apps/windows-client), файли підключено звідти, а не скопійовано.
+       ========================================================================== -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>PotuzhneRadioBuilder</AssemblyName>
+    <RootNamespace>PotuzhneRadio</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Resources/AppIcon.ico</ApplicationIcon>
+    <AssemblyTitle>Збірка ПОТУЖНОГО РАДІО</AssemblyTitle>
+    <Product>Збірка ПОТУЖНОГО РАДІО</Product>
+    <Version>1.0.0</Version>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- WFO1000 — про збереження властивостей у дизайнері форм; дизайнера тут немає, вікно складається кодом. -->
+    <NoWarn>$(NoWarn);CA1416;WFO1000</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources/AppIcon.ico" LogicalName="AppIcon.ico" />
+    <!-- Спільне з клієнтом. -->
+    <Compile Include="../windows-client/Sources/Net/Log.cs" Link="Shared/Log.cs" />
+    <Compile Include="../windows-client/Sources/Net/RadioProbe.cs" Link="Shared/RadioProbe.cs" />
+    <Compile Include="../windows-client/Sources/Net/NetScan.cs" Link="Shared/NetScan.cs" />
+    <Compile Include="../windows-client/Sources/Net/Mdns.cs" Link="Shared/Mdns.cs" />
+    <Compile Include="../windows-client/Sources/Net/Discovery.cs" Link="Shared/Discovery.cs" />
+    <Compile Include="../windows-client/Sources/Ui/Theme.cs" Link="Shared/Theme.cs" />
+    <Compile Include="../windows-client/Sources/Ui/Antenna.cs" Link="Shared/Antenna.cs" />
+    <Compile Include="../windows-client/Sources/Ui/Controls.cs" Link="Shared/Controls.cs" />
+    <Compile Include="../windows-client/Sources/Ui/AddressDialog.cs" Link="Shared/AddressDialog.cs" />
+    <Compile Remove="check/**" />
+  </ItemGroup>
+
+</Project>

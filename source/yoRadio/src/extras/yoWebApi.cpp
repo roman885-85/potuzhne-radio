@@ -1,0 +1,596 @@
+#include "yoWebApi.h"
+#include <SPIFFS.h>
+#include <WiFi.h>
+#include "esp_heap_caps.h"
+#include "../AsyncWebServer/ESPAsyncWebServer.h"
+#include "../core/options.h"
+#include "../core/config.h"
+#include "../core/player.h"
+#include "../core/display.h"
+#include "../core/network.h"
+#include "../core/netserver.h"
+#include "../core/sdmanager.h"
+#include "yoExtras.h"
+#include "yoRecorder.h"
+#include "yoSermons.h"
+#include "yoLogos.h"
+#include "yoVersion.h"
+
+/*  ---------- JSON у готовий буфер ----------
+    Буфери лежать у PSRAM і живуть весь час: відповідь іде з них без копії
+    (beginResponse_P на ESP32 — звичайний memcpy). Два браузери, що
+    спитали одночасно, можуть отримати зіпсований JSON — сторінка такий
+    просто пропустить і спитає знову за дві секунди.  */
+struct JOut {
+  char* b; size_t cap; size_t n = 0;
+  JOut(char* buf, size_t c) : b(buf), cap(c) { b[0] = 0; }
+  void put(char c){ if(n + 1 < cap){ b[n++] = c; b[n] = 0; } }
+  void raw(const char* s){ while(*s) put(*s++); }
+  /*  кома — перед усім, що йде не першим  */
+  void sep(){ if(n){ char l = b[n-1]; if(l != '{' && l != '[' && l != ':' && l != ',') put(','); } }
+  void str(const char* s){
+    put('"');
+    for(; *s; s++){
+      uint8_t c = (uint8_t)*s;
+      if(c == '"' || c == '\\'){ put('\\'); put((char)c); }
+      else if(c < 0x20){ char e[8]; snprintf(e, sizeof(e), "\\u%04x", c); raw(e); }
+      else put((char)c);
+    }
+    put('"');
+  }
+  void k(const char* key){ sep(); str(key); put(':'); }
+  void num(long long v){ char t[24]; snprintf(t, sizeof(t), "%lld", v); raw(t); }
+  void kn(const char* key, long long v){ k(key); num(v); }
+  void ks(const char* key, const char* v){ k(key); str(v ? v : ""); }
+  void obj(){ sep(); put('{'); }
+  void arr(const char* key){ k(key); put('['); }
+};
+
+#define ST_CAP   6144
+#define BIG_CAP  24576
+static char* _stBuf = nullptr;      /* /api/state */
+static char* _bigBuf = nullptr;     /* проповіді, мережі, логотипи */
+static char* _recBuf = nullptr;     /* записи на картці — збирає головний цикл */
+
+static void sendJson(AsyncWebServerRequest* r, const char* buf, size_t n){
+  AsyncWebServerResponse* resp = r->beginResponse_P(200, "application/json", (const uint8_t*)buf, n);
+  resp->addHeader("Cache-Control", "no-store");
+  r->send(resp);
+}
+
+/*  ---------- черга команд ---------- */
+struct WebCmd { char k[16]; char v[240]; };
+static QueueHandle_t _q = nullptr;
+
+static bool push(const char* k, const char* v){
+  if(!_q) return false;
+  WebCmd c;
+  strlcpy(c.k, k, sizeof(c.k));
+  strlcpy(c.v, v, sizeof(c.v));
+  return xQueueSend(_q, &c, pdMS_TO_TICKS(50)) == pdTRUE;
+}
+
+/*  ---------- стан головного циклу, який читають обробники ---------- */
+static const char* _msg = "";              /* відповідь на останню команду: помилка запису тощо */
+static volatile bool _recReq = false;       /* сторінка чекає список записів */
+
+#define SCAN_N 20
+struct ScanItem { char s[33]; int8_t r; uint8_t e; };
+static ScanItem  _scan[SCAN_N];
+static volatile uint8_t _scanN = 0;
+static volatile bool _scanning = false;
+static uint32_t _scanT0 = 0;
+
+/*  ---------- Wi-Fi: збережені мережі ---------- */
+#define WF_MAX 5
+static uint8_t readWifi(char ssid[][33], char pass[][65]){
+  uint8_t n = 0;
+  File f = SPIFFS.open(SSIDS_PATH, "r");
+  if(!f) return 0;
+  char line[112];
+  while(f.available() && n < WF_MAX){
+    size_t l = f.readBytesUntil('\n', line, sizeof(line) - 1);
+    line[l] = 0;
+    if(l && line[l-1] == '\r') line[--l] = 0;
+    char* t = strchr(line, '\t');
+    if(!t || t == line) continue;
+    *t = 0;
+    strlcpy(ssid[n], line, 33);
+    strlcpy(pass[n], t + 1, 65);
+    n++;
+  }
+  f.close();
+  return n;
+}
+
+static void writeWifi(char ssid[][33], char pass[][65], uint8_t n){
+  File f = SPIFFS.open(SSIDS_PATH, "w");
+  if(!f) return;
+  for(uint8_t i = 0; i < n; i++){ f.print(ssid[i]); f.print('\t'); f.print(pass[i]); f.print('\n'); }
+  f.close();
+}
+
+/*  Відбиток файлів сторінки: змінився — відкрита сторінка перезавантажиться
+    сама, а не показуватиме старе, як було з головною yoRadio.  */
+static uint32_t webStamp(){
+  static uint32_t v = 0, t = 0;
+  if(v && millis() - t < 5000) return v;
+  uint32_t sum = 0;
+  for(const char* f : { "/www/app.js.gz", "/www/app.css.gz" }){
+    File h = SPIFFS.open(f, "r");
+    if(h){ sum = sum * 31 + h.size(); h.close(); }
+  }
+  v = sum ? sum : 1; t = millis();
+  return v;
+}
+
+/*  ---------- /api/hello: «ти ПОТУЖНЕ РАДІО?» для програм-клієнтів ---------- */
+static void onHello(AsyncWebServerRequest* r){
+  char b[400];
+  JOut o(b, sizeof(b));
+  o.put('{');
+  o.kn("potuzhne", 1);
+  o.ks("board", "ES3C28P");
+  o.ks("v", prVersion());
+  o.ks("build", prBuild());
+  o.ks("host", config.store.mdnsname);
+  o.ks("ip", WiFi.localIP().toString().c_str());
+  o.ks("station", player.remoteStationName && sermons.playing() >= 0 ? "проповідь" : config.station.name);
+  o.kn("play", player.status() == PLAYING);
+  o.put('}');
+  AsyncWebServerResponse* resp = r->beginResponse(200, "application/json", b);
+  resp->addHeader("Access-Control-Allow-Origin", "*");
+  resp->addHeader("Cache-Control", "no-store");
+  r->send(resp);
+}
+
+/*  ---------- /api/state ---------- */
+static void onState(AsyncWebServerRequest* r){
+  JOut o(_stBuf, ST_CAP);
+  o.put('{');
+  o.ks("v", prVersion());
+  o.ks("build", prBuild());
+  o.ks("fw", prMarker());
+  bool sta = WiFi.status() == WL_CONNECTED;
+  o.ks("ip", sta ? WiFi.localIP().toString().c_str() : WiFi.softAPIP().toString().c_str());
+  o.ks("ssid", sta ? WiFi.SSID().c_str() : "");
+  o.kn("rssi", sta ? WiFi.RSSI() : 0);
+  o.kn("heap", ESP.getFreeHeap());
+  o.kn("heapBlk", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));   /* найбільший шматок — від нього залежить TLS */
+  o.kn("psram", ESP.getFreePsram());
+  o.kn("up", millis() / 1000);
+  {
+    char t[24];
+    if(network.timeinfo.tm_year > 100){ strftime(t, sizeof(t), "%H:%M", &network.timeinfo); o.ks("time", t);
+      strftime(t, sizeof(t), "%d.%m.%Y", &network.timeinfo); o.ks("date", t); }
+  }
+  o.kn("mode", config.getMode());
+  o.kn("play", player.status() == PLAYING);
+  o.kn("idx", config.lastStation());
+  o.ks("name", config.station.name);
+  o.ks("title", config.station.title);
+  o.ks("url", config.station.url);
+  o.kn("vol", config.store.volume);
+  o.kn("br", config.station.bitrate);
+  o.ks("codec", player.status() == PLAYING ? player.getCodecname() : "");
+  o.kn("bright", config.store.brightness);
+  o.kn("snuffle", config.store.sdsnuffle);
+
+  o.k("sleep"); o.put('{'); o.kn("set", extras.sleepMinutes()); o.kn("left", extras.sleepMinutes() ? extras.sleepLeftSec() : 0); o.put('}');
+  const ExtStore& s = extras.s;
+  o.k("alarm"); o.put('{'); o.kn("on", s.alarmOn); o.kn("h", s.alarmH); o.kn("m", s.alarmM); o.kn("days", s.alarmDays);
+  o.kn("in", extras.alarmInMin()); o.kn("ring", extras.alarmRinging()); o.put('}');
+  o.k("night"); o.put('{'); o.kn("on", s.nightOn); o.kn("from", s.nightFrom); o.kn("to", s.nightTo);
+  o.kn("level", s.nightLevel); o.kn("act", extras.nightActive()); o.put('}');
+  o.kn("led", s.ledMode);
+  o.kn("save", s.batSave);
+  o.k("dev"); o.put('{'); o.kn("noBat", s.noBat); o.kn("noIp", s.noIp); o.kn("noSd", s.noSd); o.kn("dac", s.dac); o.put('}');
+  o.k("bat"); o.put('{'); o.kn("mv", extras.batMv()); o.kn("pct", extras.batPct()); o.kn("chg", extras.charging());
+  o.kn("full", extras.charged()); o.kn("pwr", extras.onPower()); o.kn("low", extras.lowBattery()); o.put('}');
+  o.k("rec"); o.put('{'); o.kn("on", recorder.active()); o.kn("sec", recorder.seconds()); o.kn("bytes", recorder.bytes());
+  { const char* fn = recorder.fileName(); const char* sl = strrchr(fn, '/'); o.ks("file", sl ? sl + 1 : fn); }
+  o.ks("err", recorder.lastError()); o.put('}');
+  o.arr("fav");
+  for(uint8_t i = 0; i < FAV_N; i++){ o.obj(); o.ks("n", extras.fav[i].name); o.ks("u", extras.fav[i].url); o.put('}'); }
+  o.put(']');
+  o.kn("favOn", extras.favPlaying());
+  o.kn("favHide", s.favHide);
+  bool serm = player.remoteStationName && sermons.playing() >= 0;
+  o.k("serm"); o.put('{'); o.kn("on", serm); o.kn("i", sermons.playing());
+  if(serm){ const Sermon* it = sermons.at(sermons.playing()); if(it){ o.ks("t", it->title); o.ks("p", it->preacher); o.ks("c", it->cover); } }
+  o.kn("pos", serm ? player.posSec() : 0); o.kn("dur", serm ? player.durSec() : 0);
+  o.kn("n", sermons.count()); o.kn("load", sermons.loading()); o.kn("ver", sermons.version()); o.put('}');
+  o.k("fs"); o.put('{'); o.kn("t", SPIFFS.totalBytes()); o.kn("u", SPIFFS.usedBytes()); o.put('}');
+  o.kn("sdOk", sdman.ready);
+  o.kn("logo", logos.version());
+  o.kn("web", webStamp());
+  o.ks("wfail", extras.wifiFail);
+  o.ks("msg", _msg);
+  o.put('}');
+  sendJson(r, o.b, o.n);
+}
+
+/*  ---------- /api/sermons ---------- */
+/*  Увесь архів — понад 550 проповідей, до 200 КБ JSON: окремий буфер у PSRAM  */
+#define SM_CAP  (340 * 1024)
+static char* _smBuf = nullptr;
+static void onSermons(AsyncWebServerRequest* r){
+  if(!sermons.count() && !sermons.loading()) push("sermLoad", "1");
+  if(!_smBuf) _smBuf = (char*)ps_malloc(SM_CAP);
+  if(!_smBuf){ r->send(503, "application/json", "{\"err\":\"нема пам'яті\"}"); return; }
+  JOut o(_smBuf, SM_CAP);
+  o.put('{');
+  o.ks("site", SERMON_SITE);
+  o.kn("load", sermons.loading() || !sermons.count());
+  o.kn("got", sermons.loadedSoFar());
+  o.ks("err", sermons.error());
+  o.kn("i", player.remoteStationName ? sermons.playing() : -1);
+  o.arr("items");
+  for(uint16_t i = 0; i < sermons.count(); i++){
+    const Sermon* it = sermons.at(i);
+    if(!it || o.n > SM_CAP - 600) break;
+    o.obj(); o.ks("t", it->title); o.ks("p", it->preacher); o.ks("d", it->date);
+    o.kn("dur", it->dur); o.ks("c", it->cover); o.ks("u", it->url); o.put('}');
+  }
+  o.put(']'); o.put('}');
+  sendJson(r, o.b, o.n);
+}
+
+/*  ---------- /api/records: список збирає головний цикл ---------- */
+static void recList(){
+  JOut o(_recBuf, BIG_CAP);
+  o.put('{');
+  if(extras.s.noSd) o.ks("err", "функції картки вимкнено (розробник)");
+  else if(!sdman.ready && !sdman.start()) o.ks("err", "картки немає");
+  else{
+    o.kn("free", sdman.totalBytes() - sdman.usedBytes());
+    o.kn("total", sdman.totalBytes());
+    o.arr("items");
+    File d = sdman.open("/records");
+    if(d && d.isDirectory()){
+      File f;
+      while((f = d.openNextFile())){
+        if(!f.isDirectory()){
+          const char* nm = f.name(); const char* sl = strrchr(nm, '/');
+          o.obj(); o.ks("f", sl ? sl + 1 : nm); o.kn("s", f.size()); o.put('}');
+        }
+        f.close();
+        if(o.n > BIG_CAP - 200) break;
+      }
+    }
+    if(d) d.close();
+    o.put(']');
+    o.kn("rec", recorder.active());
+  }
+  o.put('}');
+}
+
+static void onRecords(AsyncWebServerRequest* r){
+  _recReq = true;
+  uint32_t t0 = millis();
+  while(_recReq && millis() - t0 < 2500) vTaskDelay(pdMS_TO_TICKS(10));
+  if(_recReq){ r->send(503, "application/json", "{\"err\":\"плата зайнята, спробуйте ще\"}"); return; }
+  sendJson(r, _recBuf, strlen(_recBuf));
+}
+
+/*  Ім'я файлу запису: лише ім'я, без шляху — щоб не віддати нічого поза /records.  */
+static bool safeName(const String& f){
+  if(!f.length() || f.length() > 70) return false;
+  if(f.indexOf('/') >= 0 || f.indexOf('\\') >= 0 || f.indexOf("..") >= 0) return false;
+  return true;
+}
+
+static void onRecFile(AsyncWebServerRequest* r){
+  if(!r->hasParam("f")){ r->send(400); return; }
+  String f = r->getParam("f")->value();
+  if(!safeName(f) || extras.s.noSd || !sdman.ready){ r->send(404, "text/plain", "немає"); return; }
+  String path = "/records/" + f;
+  if(!sdman.exists(path)){ r->send(404, "text/plain", "немає"); return; }
+  const char* ct = f.endsWith(".mp3") ? "audio/mpeg" : f.endsWith(".aac") ? "audio/aac" :
+                   f.endsWith(".flac") ? "audio/flac" : f.endsWith(".ogg") ? "audio/ogg" : "application/octet-stream";
+  r->send(sdman, path, ct, r->hasParam("dl"));
+}
+
+/*  ---------- Wi-Fi ---------- */
+static void onWifi(AsyncWebServerRequest* r){
+  char ss[WF_MAX][33], pw[WF_MAX][65];
+  uint8_t n = readWifi(ss, pw);
+  JOut o(_bigBuf, BIG_CAP);
+  o.put('{');
+  o.ks("cur", WiFi.status() == WL_CONNECTED ? WiFi.SSID().c_str() : "");
+  o.arr("saved");
+  for(uint8_t i = 0; i < n; i++){ o.sep(); o.str(ss[i]); }   /* паролі сторінці не віддаємо */
+  o.put(']');
+  o.kn("busy", _scanning);
+  o.arr("scan");
+  for(uint8_t i = 0; i < _scanN; i++){ o.obj(); o.ks("s", _scan[i].s); o.kn("r", _scan[i].r); o.kn("e", _scan[i].e); o.put('}'); }
+  o.put(']');
+  o.ks("fail", extras.wifiFail);
+  o.put('}');
+  sendJson(r, o.b, o.n);
+}
+
+static void onWifiJoin(AsyncWebServerRequest* r){
+  if(!r->hasParam("ssid", true)){ r->send(400, "application/json", "{\"err\":\"немає назви мережі\"}"); return; }
+  String v = r->getParam("ssid", true)->value();
+  String p = r->hasParam("pass", true) ? r->getParam("pass", true)->value() : "";
+  if(!v.length() || v.length() > 32 || p.length() > 64 || v.indexOf('\t') >= 0 || p.indexOf('\t') >= 0){
+    r->send(400, "application/json", "{\"err\":\"задовга назва чи пароль\"}"); return;
+  }
+  push("wifiJoin", (v + "\t" + p).c_str());
+  r->send(200, "application/json", "{\"ok\":1}");
+}
+
+/*  ---------- список станцій ---------- */
+static File _plFile;
+static bool _plOk = false;
+static void onStationsBody(AsyncWebServerRequest* r, uint8_t* data, size_t len, size_t index, size_t total){
+  if(!index){
+    _plOk = false;
+    if(total > 60000 || config.getMode() != PM_WEB){ return; }
+    _plFile = SPIFFS.open(TMP_PATH, "w");
+  }
+  if(_plFile) _plFile.write(data, len);
+  if(index + len == total && _plFile){ _plFile.close(); _plOk = true; }
+}
+static void onStationsPost(AsyncWebServerRequest* r){
+  if(config.getMode() != PM_WEB){ r->send(409, "application/json", "{\"err\":\"спершу перейдіть на радіо\"}"); return; }
+  if(!_plOk){ r->send(400, "application/json", "{\"err\":\"список не дійшов\"}"); return; }
+  _plOk = false;
+  push("plSave", "1");
+  r->send(200, "application/json", "{\"ok\":1}");
+}
+
+/*  ---------- логотипи ---------- */
+static void onLogos(AsyncWebServerRequest* r){
+  JOut o(_bigBuf, BIG_CAP);
+  o.put('{');
+  o.kn("v", logos.version());
+  o.arr("f");
+  /*  SPIFFS пласка: тек немає, є лише імена з «/logo/» усередині  */
+  File d = SPIFFS.open("/");
+  if(d){
+    for(File f = d.openNextFile(); f; f = d.openNextFile()){
+      const char* nm = f.path();
+      if(strstr(nm, "/logo/") && (strstr(nm, ".565") || strstr(nm, ".jpg"))){ o.sep(); o.str(strrchr(nm, '/') + 1); }
+      f.close();
+      if(o.n > BIG_CAP - 40) break;
+    }
+    d.close();
+  }
+  o.put(']'); o.put('}');
+  sendJson(r, o.b, o.n);
+}
+
+static bool hexName(const String& fn, char* crc){
+  /*  «0a1b2c3d.565» — рівно 8 шістнадцяткових цифр і розширення  */
+  if(fn.length() != 12 || !fn.endsWith(".565")) return false;
+  for(uint8_t i = 0; i < 8; i++){ char c = fn[i]; if(!isxdigit((unsigned char)c)) return false; crc[i] = tolower(c); }
+  crc[8] = 0;
+  return true;
+}
+
+static void dropLogo(const char* crc){
+  char p[32];
+  static const char* ext[] = { "565", "jpg", "no" };
+  for(const char* e : ext){ snprintf(p, sizeof(p), "/logo/%s.%s", crc, e); if(SPIFFS.exists(p)) SPIFFS.remove(p); }
+}
+
+static File _lgFile;
+static char _lgCrc[9] = {0};
+static size_t _lgLen = 0;
+static void onLogoUpload(AsyncWebServerRequest* r, String filename, size_t index, uint8_t* data, size_t len, bool final){
+  if(!index){
+    _lgCrc[0] = 0; _lgLen = 0;
+    if(!hexName(filename, _lgCrc)) return;
+    _lgFile = SPIFFS.open("/logo/up.tmp", "w");
+  }
+  /*  рахуємо самі: size() відкритого на запис файлу SPIFFS віддає нуль  */
+  if(_lgFile && len) _lgLen += _lgFile.write(data, len);
+  if(final && _lgFile){
+    size_t sz = _lgLen;
+    _lgFile.close();
+    if(sz == LOGO_S * LOGO_S * 2 && _lgCrc[0]){
+      dropLogo(_lgCrc);
+      char p[32]; snprintf(p, sizeof(p), "/logo/%s.565", _lgCrc);
+      SPIFFS.rename("/logo/up.tmp", p);
+      logos.bump();                          /* екран перечитає логотип */
+    }else{ SPIFFS.remove("/logo/up.tmp"); _lgCrc[0] = 0; }
+  }
+}
+static void onLogoDone(AsyncWebServerRequest* r){
+  if(_lgCrc[0]) r->send(200, "application/json", "{\"ok\":1}");
+  else r->send(400, "application/json", "{\"err\":\"потрібен файл 45x45\"}");
+}
+
+/*  ---------- команди ---------- */
+static void onSet(AsyncWebServerRequest* r){
+  size_t n = r->params();
+  uint8_t ok = 0;
+  for(size_t i = 0; i < n; i++){
+    AsyncWebParameter* p = r->getParam(i);
+    if(p->isFile()) continue;
+    if(push(p->name().c_str(), p->value().c_str())) ok++;
+  }
+  r->send(ok ? 200 : 503, "application/json", ok ? "{\"ok\":1}" : "{\"err\":\"черга повна\"}");
+}
+
+void yoWebApiBegin(AsyncWebServer& s){
+  if(!_q) _q = xQueueCreate(12, sizeof(WebCmd));
+  if(!_stBuf)  _stBuf  = (char*)ps_malloc(ST_CAP);
+  if(!_bigBuf) _bigBuf = (char*)ps_malloc(BIG_CAP);
+  if(!_recBuf){ _recBuf = (char*)ps_malloc(BIG_CAP); if(_recBuf) strcpy(_recBuf, "{}"); }
+  if(!_stBuf || !_bigBuf || !_recBuf) return;
+  s.on("/api/hello",    HTTP_GET,  onHello);
+  s.on("/api/state",    HTTP_GET,  onState);
+  s.on("/api/set",      HTTP_ANY,  onSet);
+  s.on("/api/sermons",  HTTP_GET,  onSermons);
+  s.on("/api/records",  HTTP_GET,  onRecords);
+  s.on("/api/rec",      HTTP_GET,  onRecFile);
+  s.on("/api/wifi/join",HTTP_POST, onWifiJoin);
+  s.on("/api/wifi",     HTTP_GET,  onWifi);
+  s.on("/api/stations", HTTP_GET,  [](AsyncWebServerRequest* r){
+    AsyncWebServerResponse* resp = r->beginResponse(SPIFFS, PLAYLIST_PATH, "text/plain; charset=utf-8");
+    resp->addHeader("Cache-Control", "no-store");
+    r->send(resp);
+  });
+  s.on("/api/stations", HTTP_POST, onStationsPost, nullptr, onStationsBody);
+  s.on("/api/logos",    HTTP_GET,  onLogos);
+  s.on("/api/logo",     HTTP_POST, onLogoDone, onLogoUpload);
+  /*  логотипи — прямо з SPIFFS; сторінка додає ?v=<версія>, тож кеш на добу безпечний  */
+  s.serveStatic("/logo/", SPIFFS, "/logo/").setCacheControl("max-age=86400");
+}
+
+/*  ---------- головний цикл ---------- */
+static int clampi(const char* v, int lo, int hi){ int x = atoi(v); return x < lo ? lo : (x > hi ? hi : x); }
+
+static void apply(const WebCmd& c){
+  const char* k = c.k; const char* v = c.v;
+  ExtStore& s = extras.s;
+  bool ext = true;                       /* поле налаштувань — записати згодом */
+  if(!strcmp(k, "sleep"))           { extras.setSleep(clampi(v, 0, 600)); ext = false; }
+  else if(!strcmp(k, "alarmOn"))    s.alarmOn = clampi(v, 0, 1);
+  else if(!strcmp(k, "alarmH"))     s.alarmH = clampi(v, 0, 23);
+  else if(!strcmp(k, "alarmM"))     s.alarmM = clampi(v, 0, 59);
+  else if(!strcmp(k, "alarmDays"))  s.alarmDays = clampi(v, 0, 1);
+  else if(!strcmp(k, "nightOn"))    s.nightOn = clampi(v, 0, 1);
+  else if(!strcmp(k, "nightFrom"))  s.nightFrom = clampi(v, 0, 47);
+  else if(!strcmp(k, "nightTo"))    s.nightTo = clampi(v, 0, 47);
+  else if(!strcmp(k, "nightLevel")) s.nightLevel = clampi(v, 0, 100);
+  else if(!strcmp(k, "ledMode"))    s.ledMode = clampi(v, 0, 2);
+  else if(!strcmp(k, "batSave"))    s.batSave = clampi(v, 0, 4);
+  else if(!strcmp(k, "favHide"))    s.favHide = clampi(v, 0, 1);
+  else if(!strcmp(k, "noBat"))      { s.noBat = clampi(v, 0, 1); display.requestRedraw(); }
+  else if(!strcmp(k, "noIp"))       { s.noIp = clampi(v, 0, 1); display.requestRedraw(); }
+  else if(!strcmp(k, "noSd")){
+    s.noSd = clampi(v, 0, 1);
+    if(s.noSd){ recorder.stop(); if(config.getMode() == PM_SDCARD) config.changeMode(PM_WEB); }
+    display.requestRedraw();
+  }
+  else if(!strcmp(k, "dac")){
+    uint8_t d = clampi(v, 0, 3);         /* VS1053 — лише окремою прошивкою */
+    if(d != s.dac){ s.dac = d; extras.changed(); extras.applyDac(); }
+    ext = false;
+  }
+  else{
+    ext = false;
+    if(!strcmp(k, "bright")){ config.store.brightness = clampi(v, 0, 100); config.setBrightness(true); }
+    else if(!strcmp(k, "favSet"))   { if(!extras.favSetCurrent(clampi(v, 0, FAV_N - 1))) _msg = "зараз не грає радіостанція"; }
+    else if(!strcmp(k, "favClear")) extras.favClear(clampi(v, 0, FAV_N - 1));
+    else if(!strcmp(k, "favPlay"))  { if(!extras.favPlay(clampi(v, 0, FAV_N - 1))) _msg = "цієї станції вже немає в списку"; }
+    else if(!strcmp(k, "favPut")){
+      /*  «клітинка \t назва \t адреса» — обране прямо зі списку на сторінці  */
+      char b[240]; strlcpy(b, v, sizeof(b));
+      char* t1 = strchr(b, '\t'); char* t2 = t1 ? strchr(t1 + 1, '\t') : nullptr;
+      int i = atoi(b);
+      if(t1 && t2 && i >= 0 && i < FAV_N){
+        *t2 = 0;
+        strlcpy(extras.fav[i].name, t1 + 1, sizeof(extras.fav[i].name)); utf8FixTail(extras.fav[i].name);
+        strlcpy(extras.fav[i].url, t2 + 1, sizeof(extras.fav[i].url));
+        extras.changed();
+      }
+    }
+    else if(!strcmp(k, "sermLoad")) sermons.fetch();
+    else if(!strcmp(k, "serm"))     { if(!sermons.play(clampi(v, 0, SERMON_MAX - 1))) _msg = "проповідь недоступна"; }
+    else if(!strcmp(k, "sermRel"))  sermons.playRel(clampi(v, -1, 1));
+    else if(!strcmp(k, "seek"))     { if(player.remoteStationName) player.burlSeek(clampi(v, 1, 36000)); }
+    else if(!strcmp(k, "rec")){
+      if(atoi(v)){ if(recorder.start()) _msg = ""; else _msg = recorder.lastError(); }
+      else recorder.stop();
+    }
+    else if(!strcmp(k, "recDel")){
+      String f = v;
+      if(safeName(f) && sdman.ready && !(recorder.active() && strstr(recorder.fileName(), v))){
+        sdman.remove(("/records/" + f).c_str());
+        /*  список картки перебудується при переході на неї  */
+        sdman.remove(INDEX_SD_PATH); sdman.remove(PLAYLIST_SD_PATH);
+      }
+    }
+    else if(!strcmp(k, "logoForget")) logos.forget();
+    else if(!strcmp(k, "logoDel")){
+      /*  прибрати логотип станції — плата знайде його в каталозі заново  */
+      String f = String(v) + ".565"; char crc[9];
+      if(hexName(f, crc)){ dropLogo(crc); logos.bump(); }
+    }
+    else if(!strcmp(k, "wifiScan")){
+      if(!_scanning){ WiFi.scanDelete(); WiFi.scanNetworks(true, false); _scanning = true; _scanT0 = millis(); }
+    }
+    else if(!strcmp(k, "wifiJoin")){
+      const char* t = strchr(v, '\t');
+      if(!t) return;
+      char nss[33]; size_t l = t - v; if(l > 32) l = 32; memcpy(nss, v, l); nss[l] = 0;
+      char ss[WF_MAX][33], pw[WF_MAX][65];
+      uint8_t n = readWifi(ss, pw);
+      String out = String(nss) + "\t" + String(t + 1) + "\n";
+      uint8_t m = 1;
+      for(uint8_t i = 0; i < n && m < WF_MAX; i++){
+        if(!strcmp(ss[i], nss)) continue;
+        out += String(ss[i]) + "\t" + String(pw[i]) + "\n"; m++;
+      }
+      extras.wifiPending(nss);
+      config.setLastSSID(1);
+      delay(300);                        /* відповідь сторінці встигає піти */
+      config.saveWifiFromNextion(out.c_str());   /* записує й перезавантажує */
+    }
+    else if(!strcmp(k, "wifiForget") || !strcmp(k, "wifiFirst")){
+      char ss[WF_MAX][33], pw[WF_MAX][65];
+      uint8_t n = readWifi(ss, pw);
+      int f = -1; for(uint8_t i = 0; i < n; i++) if(!strcmp(ss[i], v)) f = i;
+      if(f < 0) return;
+      if(!strcmp(k, "wifiForget")){
+        if(n <= 1){ _msg = "останню мережу не прибрати"; return; }
+        for(uint8_t i = f; i + 1 < n; i++){ strcpy(ss[i], ss[i+1]); strcpy(pw[i], pw[i+1]); }
+        n--;
+      }else{
+        char a[33], b[65]; strcpy(a, ss[f]); strcpy(b, pw[f]);
+        for(int i = f; i > 0; i--){ strcpy(ss[i], ss[i-1]); strcpy(pw[i], pw[i-1]); }
+        strcpy(ss[0], a); strcpy(pw[0], b);
+      }
+      writeWifi(ss, pw, n);
+    }
+    else if(!strcmp(k, "plSave")){
+      if(config.getMode() != PM_WEB || !SPIFFS.exists(TMP_PATH)) return;
+      SPIFFS.remove(PLAYLIST_PATH);
+      SPIFFS.rename(TMP_PATH, PLAYLIST_PATH);
+      netserver.requestOnChange(PLAYLISTSAVED, 0);   /* переіндексує й скаже сторінкам */
+    }
+    else if(!strcmp(k, "msgClr")) _msg = "";
+    else if(!strcmp(k, "power")){
+      /*  «вимкнути» зі сторінки: екран показати не встигнемо — просто спимо  */
+      if(!strcmp(v, "off")) extras.requestPower(2);
+      else if(!strcmp(v, "reboot")) extras.requestPower(1);
+    }
+  }
+  if(ext) extras.changed();
+}
+
+void yoWebApiLoop(){
+  if(!_q) return;
+  WebCmd c;
+  /*  по одній за прохід: команда плеєра може тривати, звук важливіший  */
+  if(xQueueReceive(_q, &c, 0) == pdTRUE) apply(c);
+  if(_recReq){ recList(); _recReq = false; }
+  if(_scanning){
+    int16_t n = WiFi.scanComplete();
+    if(n >= 0 || millis() - _scanT0 > 15000){
+      uint8_t m = 0;
+      for(int16_t i = 0; i < n && m < SCAN_N; i++){
+        String ss = WiFi.SSID(i);
+        if(!ss.length()) continue;
+        bool dup = false;
+        for(uint8_t j = 0; j < m; j++) if(!strcmp(_scan[j].s, ss.c_str())){ dup = true; if(WiFi.RSSI(i) > _scan[j].r) _scan[j].r = WiFi.RSSI(i); }
+        if(dup) continue;
+        strlcpy(_scan[m].s, ss.c_str(), sizeof(_scan[m].s));
+        _scan[m].r = WiFi.RSSI(i);
+        _scan[m].e = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
+        m++;
+      }
+      /*  найсильніші — першими  */
+      for(uint8_t a = 0; a < m; a++) for(uint8_t b = a + 1; b < m; b++)
+        if(_scan[b].r > _scan[a].r){ ScanItem t = _scan[a]; _scan[a] = _scan[b]; _scan[b] = t; }
+      _scanN = m;
+      WiFi.scanDelete();
+      _scanning = false;
+    }
+  }
+}

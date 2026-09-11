@@ -1,0 +1,643 @@
+#include "yoExtras.h"
+#include <Preferences.h>
+#include <SPIFFS.h>
+#include "yoRecorder.h"
+#include "yoSermons.h"
+#include "yoWebApi.h"
+#include "../core/options.h"
+#include "../core/config.h"
+#include "../core/player.h"
+#include "../core/network.h"
+#include "../core/display.h"
+#include "../menu/yoMenu.h"
+#include <WiFi.h>
+#include <HWCDC.h>
+#include <Wire.h>
+#include "esp_sleep.h"
+#include "esp_heap_caps.h"
+#include "mbedtls/platform.h"
+#include "driver/rtc_io.h"
+#include "driver/gpio.h"
+#include "../ES8311/yoES8311.h"
+#include "../core/sdmanager.h"
+
+YoExtras extras;
+
+#define EXT_VER          1
+#define SLEEP_FADE_MS    20000UL     /* затухання наприкінці таймера сну */
+#define ALARM_RAMP_MS    30000UL     /* наростання будильника */
+#define ALARM_WAIT_MS    25000UL     /* скільки чекати, поки станція заграє */
+#define ALARM_MIN_VOL    40          /* тихіше будильник не буває */
+#define WAKE_MS          15000UL     /* дотик уночі — денна яскравість на стільки */
+#define LED_MAX          28          /* WS2812 сліпить уже на 30 з 255 */
+
+/*  ---------- налаштування ---------- */
+
+void YoExtras::_load(){
+  memset(&s, 0, sizeof(s));
+  Preferences p;
+  bool ok = false;
+  if(p.begin("yoext", true)){
+    /*  Старіший запис коротший (без нових полів) — читаємо, що є, нові
+        лишаються нулями. Інакше будильник і ніч скидались би з кожним
+        новим полем.  */
+    size_t ln = p.getBytesLength("s");
+    if(ln >= EXT_STORE_V1 && ln <= sizeof(s)){
+      p.getBytes("s", &s, ln);
+      ok = (s.ver == EXT_VER);
+    }
+    p.end();
+  }
+  if(!ok){
+    memset(&s, 0, sizeof(s));
+    s.ver = EXT_VER;
+    s.alarmOn = 0; s.alarmH = 7; s.alarmM = 0; s.alarmDays = 0;
+    s.nightOn = 0; s.nightFrom = 44; s.nightTo = 14; s.nightLevel = 10;   /* 22:00..07:00 */
+    s.ledMode = LED_STATUS;
+  }
+  if(s.alarmH > 23) s.alarmH = 7;
+  if(s.alarmM > 59) s.alarmM = 0;
+  if(s.nightFrom > 47) s.nightFrom = 44;
+  if(s.nightTo > 47) s.nightTo = 14;
+  if(s.nightLevel > 100) s.nightLevel = 10;
+  if(s.ledMode > LED_MUSIC) s.ledMode = LED_STATUS;
+  if(s.batSave > 4) s.batSave = 0;
+  if(s.dac > 3) s.dac = 0;
+
+  memset(fav, 0, sizeof(fav));
+  if(p.begin("yoext", true)){
+    if(p.getBytesLength("fav") == sizeof(fav)) p.getBytes("fav", fav, sizeof(fav));
+    p.end();
+  }
+  for(uint8_t i = 0; i < FAV_N; i++){ fav[i].name[sizeof(fav[i].name)-1] = 0; fav[i].url[sizeof(fav[i].url)-1] = 0; }
+}
+
+void YoExtras::_save(){
+  Preferences p;
+  if(!p.begin("yoext", false)) return;
+  /*  Пишемо лише справді інше: NVS однаково переписала б сторінку.  */
+  ExtStore old;
+  if(p.getBytesLength("s") != sizeof(s) || (p.getBytes("s", &old, sizeof(old)), memcmp(&old, &s, sizeof(s)) != 0))
+    p.putBytes("s", &s, sizeof(s));
+  FavItem* of = (FavItem*)malloc(sizeof(fav));
+  if(of){
+    if(p.getBytesLength("fav") != sizeof(fav) || (p.getBytes("fav", of, sizeof(fav)), memcmp(of, fav, sizeof(fav)) != 0))
+      p.putBytes("fav", fav, sizeof(fav));
+    free(of);
+  }
+  p.end();
+}
+
+/*  ---------- обране ---------- */
+
+bool YoExtras::favSetCurrent(uint8_t i){
+  if(i >= FAV_N || config.getMode() != PM_WEB || !config.station.url[0] || !config.station.name[0]) return false;
+  strlcpy(fav[i].url, config.station.url, sizeof(fav[i].url));
+  strlcpy(fav[i].name, config.station.name, sizeof(fav[i].name));
+  utf8FixTail(fav[i].name);              /* не лишаємо півлітери, якщо назву обрізало */
+  changed();
+  return true;
+}
+
+void YoExtras::favClear(uint8_t i){
+  if(i >= FAV_N) return;
+  memset(&fav[i], 0, sizeof(fav[i]));
+  changed();
+}
+
+int8_t YoExtras::favPlaying(){
+  if(config.getMode() != PM_WEB || player.status() != PLAYING) return -1;
+  for(uint8_t i = 0; i < FAV_N; i++)
+    if(fav[i].url[0] && !strcmp(fav[i].url, config.station.url)) return i;
+  return -1;
+}
+
+/*  Номер станції шукаємо в плейлисті за адресою. Файл — 60 рядків на
+    SPIFFS, прохід займає кілька мілісекунд.  */
+bool YoExtras::favPlay(uint8_t i){
+  if(i >= FAV_N || !fav[i].url[0]) return false;
+  File f = SPIFFS.open(PLAYLIST_PATH, "r");
+  if(!f) return false;
+  uint16_t n = 0, found = 0;
+  char line[320];
+  while(f.available()){
+    size_t l = f.readBytesUntil('\n', line, sizeof(line) - 1);
+    line[l] = 0;
+    n++;
+    char* t1 = strchr(line, '\t'); if(!t1) continue;
+    char* t2 = strchr(t1 + 1, '\t'); if(t2) *t2 = 0;
+    if(!strcmp(t1 + 1, fav[i].url)){ found = n; break; }
+  }
+  f.close();
+  if(!found) return false;               /* станцію з плейлиста прибрали */
+  if(config.getMode() == PM_SDCARD){
+    config.changeMode(PM_WEB);
+    player.resetQueue();                 /* без «грати останню» від переходу на радіо */
+  }
+  player.sendCommand({PR_PLAY, (int)found});
+  return true;
+}
+
+void YoExtras::changed(){ _dirty = true; _dirtyMs = millis(); }
+
+void YoExtras::wifiPending(const char* ssid){
+  Preferences p;
+  if(!p.begin("yoext", false)) return;
+  p.putString("wpend", ssid);
+  p.end();
+}
+
+/*  Через кілька секунд після старту мережа вже або є, або плата пішла
+    в точку доступу. Порівнюємо з тим, чого просили, і забуваємо запит.  */
+void YoExtras::_wifiCheck(uint32_t now){
+  if(!_wpend[0] || now < 4000) return;
+  if(network.status != CONNECTED && network.status != SOFT_AP) return;
+  bool ok = network.status == CONNECTED && WiFi.SSID() == String(_wpend);
+  if(!ok){
+    strlcpy(wifiFail, _wpend, sizeof(wifiFail));
+    if(network.status == CONNECTED){
+      snprintf(config.tmpBuf, sizeof(config.tmpBuf), "Wi-Fi: не вдалося підключитись до %s", _wpend);
+      config.setTitle(config.tmpBuf);
+    }
+  }
+  Serial.printf("##WIFI#\tзапит на %s: %s\n", _wpend, ok ? "підключено" : "не вдалося");
+  _wpend[0] = 0;
+  Preferences p;
+  if(p.begin("yoext", false)){ p.remove("wpend"); p.end(); }
+}
+
+/*  Аудіовихід. Вбудований кодек ES8311 сидить на GPIO 4/5/7/8; зовнішній
+    ЦАП I2S (PCM5102A, UDA1334A, MAX98357A) — на вільних виводах роз'єму:
+    BCLK 14, LRC 21, DIN 2. Перемикаємо самі виводи I2S на ходу, а
+    вбудований підсилювач вимикаємо, щоб динамік плати мовчав.  */
+void YoExtras::applyDac(){
+  if(s.dac){
+    player.setPinout(DAC_BCLK, DAC_LRC, DAC_DOUT, I2S_PIN_NO_CHANGE, I2S_PIN_NO_CHANGE);
+  }else{
+    player.setPinout(I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_PIN_NO_CHANGE, I2S_MCLK);
+    /*  старі виводи зовнішнього ЦАП відв'язуємо, щоб не лишились на шині  */
+    gpio_reset_pin((gpio_num_t)DAC_BCLK); gpio_reset_pin((gpio_num_t)DAC_LRC); gpio_reset_pin((gpio_num_t)DAC_DOUT);
+  }
+  player.setOutputPins(player.status() == PLAYING);
+  Serial.printf("##DAC#\tаудіовихід %u\n", s.dac);
+}
+
+void YoExtras::begin(){
+  {
+    Preferences p;
+    if(p.begin("yoext", true)){
+      if(p.isKey("wpend")) p.getString("wpend", _wpend, sizeof(_wpend));
+      p.end();
+    }
+  }
+  _load();
+  if(s.dac) applyDac();                          /* зовнішній ЦАП — одразу після старту */
+  analogSetPinAttenuation(EXT_BAT_PIN, ADC_11db);
+  _led(0, 0, 0);
+}
+
+void YoExtras::loop(){
+  uint32_t now = millis();
+  _sleepLoop(now);
+  _alarmLoop(now);
+  _screenLoop(now);
+  _batLoop(now);
+  _ledLoop(now);
+  recorder.loop();
+  yoWebApiLoop();                    /* команди з веб-сторінки */
+  _wifiCheck(now);
+  if(_dirty && now - _dirtyMs > 3000){ _dirty = false; _save(); }
+  if(_pwrMode && (int32_t)(now - _pwrAt) >= 0){
+    uint8_t m = _pwrMode; _pwrMode = 0;
+    if(_dirty){ _dirty = false; _save(); }
+    if(m == 1){
+      Serial.println("##POWER#\tперезавантаження з меню");
+      recorder.stop();
+      delay(150);
+      ESP.restart();
+    } else _powerOff();
+  }
+}
+
+/*  ---------- живлення ----------
+    «Вимкнути» — глибокий сон ESP32-S3: Wi-Fi, процесор і пам'ять знеструмлені,
+    лишається RTC, що чекає дотику. Решту плати гасимо самі: підсилювач
+    (вивід MUTE), кодек, підсвітку, світлодіод, екран (його присипляє задача
+    дисплея). Сенсор FT6336 лишаємо в ощадливому режимі спостереження — він і
+    будить: його INT на GPIO17 (вивід RTC) іде в нуль, поки палець на екрані.
+    Виводи, що мають тримати рівень у сні, фіксуємо (gpio_hold), бо інакше
+    вони «пливуть» і, наприклад, підсилювач може ввімкнутись.  */
+#define FT_ADDR 0x38
+static void ftWrite(uint8_t reg, uint8_t val){
+  Wire.beginTransmission(FT_ADDR); Wire.write(reg); Wire.write(val); Wire.endTransmission();
+}
+
+void YoExtras::_powerOff(){
+  Serial.println("##POWER#\tвимикаюсь: сон до дотику");
+  bool was = player.status() == PLAYING && !player.remoteStationName;
+  recorder.stop();
+  if(player.status() == PLAYING){
+    player.sendCommand({PR_STOP, 0});
+    for(int i = 0; i < 40 && player.status() == PLAYING; i++) delay(25);
+  }
+  /*  грало радіо — після ввімкнення хай грає далі (якщо «грати після ввімкнення» не вимкнено)  */
+  if(was && config.store.smartstart != 2) config.saveValue(&config.store.smartstart, (uint8_t)1);
+  if(sdman.ready) sdman.stop();
+  _led(0, 0, 0);
+  pwmSet(0);
+  /*  екран: з меню його вже приспала задача дисплея; зі сторінки — спершу
+      зупиняємо малювання, тоді присипляємо  */
+  display.lock();
+  delay(80);
+  display.deepsleep();
+  delay(50);
+
+#if defined(I2S_ES8311) && I2S_ES8311
+  es8311_suspend();
+#endif
+  /*  сенсор: INT тримається низько весь час дотику (режим опитування),
+      сам переходить у ощадливий режим спостереження через 1 с без дотиків  */
+  ftWrite(0xA4, 0x00);
+  ftWrite(0x86, 0x01);
+  ftWrite(0x87, 0x01);
+
+  pinMode(MUTE_PIN, OUTPUT);       digitalWrite(MUTE_PIN, MUTE_VAL);  gpio_hold_en((gpio_num_t)MUTE_PIN);
+  pinMode(BRIGHTNESS_PIN, OUTPUT); digitalWrite(BRIGHTNESS_PIN, LOW); gpio_hold_en((gpio_num_t)BRIGHTNESS_PIN);
+  pinMode(TS_RST, OUTPUT);         digitalWrite(TS_RST, HIGH);        gpio_hold_en((gpio_num_t)TS_RST);
+  pinMode(EXT_LED_PIN, OUTPUT);    digitalWrite(EXT_LED_PIN, LOW);    gpio_hold_en((gpio_num_t)EXT_LED_PIN);
+  gpio_deep_sleep_hold_en();
+
+  /*  палець ще на кнопці «вимкнути» — дочекатись, поки відпустять,
+      інакше радіо прокинулось би тієї ж миті  */
+  pinMode(TS_INT, INPUT_PULLUP);
+  for(int i = 0; i < 300 && digitalRead(TS_INT) == LOW; i++) delay(10);
+  delay(200);
+
+  rtc_gpio_init((gpio_num_t)TS_INT);
+  rtc_gpio_set_direction((gpio_num_t)TS_INT, RTC_GPIO_MODE_INPUT_ONLY);
+  rtc_gpio_pullup_en((gpio_num_t)TS_INT);
+  rtc_gpio_pulldown_dis((gpio_num_t)TS_INT);
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)TS_INT, 0);
+  Serial.flush();
+  esp_deep_sleep_start();
+}
+
+static bool s_wokeTouch = false;
+bool YoExtras::wokeByTouch(){ return s_wokeTouch; }
+
+/*  Пам'ять для TLS — у PSRAM. У цій збірці ядра mbedTLS бере лише
+    внутрішню RAM (CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC), а кожне з'єднання
+    https хоче ~40 КБ одним шматком. Поки грає станція по https, а пам'ять
+    за години роботи дрібнішає, список проповідей переставав вантажитись
+    («сайт недоступний») аж до перезавантаження. PSRAM на платі 8 МБ.  */
+static void* tlsCalloc(size_t n, size_t sz){
+  void* p = heap_caps_calloc(n, sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  return p ? p : heap_caps_calloc(n, sz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+static void tlsFree(void* p){ heap_caps_free(p); }
+
+void YoExtras::earlyBoot(){
+  mbedtls_platform_set_calloc_free(tlsCalloc, tlsFree);
+  s_wokeTouch = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0;
+  /*  фіксацію, поставлену перед сном, знімаємо — інакше виводи так і лишились би
+      «замороженими»: підсвітка не світила б, підсилювач мовчав  */
+  gpio_deep_sleep_hold_dis();
+  gpio_hold_dis((gpio_num_t)MUTE_PIN);
+  gpio_hold_dis((gpio_num_t)BRIGHTNESS_PIN);
+  gpio_hold_dis((gpio_num_t)TS_RST);
+  gpio_hold_dis((gpio_num_t)EXT_LED_PIN);
+  if(s_wokeTouch) rtc_gpio_deinit((gpio_num_t)TS_INT);
+}
+
+static bool timeValid(){ return network.timeinfo.tm_year > 100; }
+
+/*  ---------- таймер сну ---------- */
+
+void YoExtras::setSleep(uint16_t minutes){
+  _sleepSet = minutes;
+  if(_sleepFading){                       /* повертаємо гучність, що була */
+    _sleepFading = false;
+    player.volOverride = -1;
+    player.applyVol(config.store.volume);
+  }
+  _sleepEnd = minutes ? millis() + minutes * 60000UL : 0;
+  if(_sleepEnd == 0 && minutes) _sleepEnd = 1;
+}
+
+void YoExtras::sleepTestSec(uint32_t sec){
+  setSleep(1);
+  _sleepEnd = millis() + sec * 1000UL;
+}
+
+uint32_t YoExtras::sleepLeftSec() const {
+  if(!_sleepEnd) return 0;
+  int32_t l = (int32_t)(_sleepEnd - millis());
+  return l > 0 ? (uint32_t)(l + 999) / 1000 : 0;
+}
+
+uint16_t YoExtras::sleepLeft() const {
+  if(!_sleepEnd) return 0;
+  int32_t l = (int32_t)(_sleepEnd - millis());
+  return l > 0 ? (uint16_t)((l + 59999) / 60000) : 0;
+}
+
+void YoExtras::_sleepLoop(uint32_t now){
+  if(!_sleepEnd) return;
+  int32_t left = (int32_t)(_sleepEnd - now);
+  if(left <= 0){
+    /*  Кінець: зупиняємо й гасимо екран. Гучність у пам'яті не чіпали,
+        тож наступний запуск заграє так, як було до сну.  */
+    _sleepEnd = 0; _sleepSet = 0;
+    _sleepFading = false;
+    player.volOverride = -1;
+    if(player.status() == PLAYING) player.sendCommand({PR_STOP, 0});
+    _dark = true;
+    return;
+  }
+  if(left <= (int32_t)SLEEP_FADE_MS && player.status() == PLAYING){
+    uint8_t v = (uint32_t)config.store.volume * (uint32_t)left / SLEEP_FADE_MS;
+    if(!_sleepFading || player.volOverride != v){
+      _sleepFading = true;
+      player.volOverride = v;
+      player.applyVol(v);
+    }
+  }
+}
+
+/*  ---------- будильник ---------- */
+
+static uint8_t rampState = 0;            /* 0 — нема, 1 — чекаємо звуку, 2 — наростає */
+static uint32_t rampWait0 = 0;
+static uint8_t  rampBase = 0;            /* гучність у налаштуваннях на момент старту */
+
+void YoExtras::alarmNow(){ _alarmStart(); }
+
+void YoExtras::_alarmStart(){
+  uint32_t now = millis();
+  _dark = false;
+  _wakeUntil = now + 60000UL;            /* хвилину екран світить і вночі */
+  if(_sleepEnd) setSleep(0);
+  if(player.status() == PLAYING) return;   /* уже грає — не заважаємо */
+  if(config.getMode() == PM_SDCARD) config.changeMode(PM_WEB);
+  rampBase = config.store.volume;
+  _rampTo = rampBase < ALARM_MIN_VOL ? ALARM_MIN_VOL : rampBase;
+  player.volOverride = 0;
+  player.applyVol(0);
+  player.sendCommand({PR_PLAY, config.lastStation()});
+  rampState = 1; rampWait0 = now;
+  _rampT0 = now;                         /* alarmRinging() */
+}
+
+int32_t YoExtras::alarmInMin() const {
+  if(!s.alarmOn || !timeValid()) return -1;
+  int cur = network.timeinfo.tm_hour * 60 + network.timeinfo.tm_min;
+  int wd  = network.timeinfo.tm_wday;
+  int at  = s.alarmH * 60 + s.alarmM;
+  for(int d = 0; d < 8; d++){
+    int w = (wd + d) % 7;
+    if(s.alarmDays == 1 && (w == 0 || w == 6)) continue;
+    int m = d * 1440 + at - cur;
+    if(m > 0) return m;
+  }
+  return -1;
+}
+
+void YoExtras::_alarmLoop(uint32_t now){
+  static uint32_t tick = 0;
+  if(now - tick < 100) return;
+  tick = now;
+
+  if(rampState){
+    /*  Гучність рухнули пальцем — людина прокинулась, далі вона сама.  */
+    if(config.store.volume != rampBase){
+      rampState = 0; _rampT0 = 0; player.volOverride = -1;
+    }else if(rampState == 1){
+      if(player.status() == PLAYING){ rampState = 2; _rampT0 = now; }
+      else if(now - rampWait0 > ALARM_WAIT_MS){ rampState = 0; _rampT0 = 0; player.volOverride = -1; }
+    }else{
+      uint32_t t = now - _rampT0;
+      if(player.status() != PLAYING){ rampState = 0; _rampT0 = 0; player.volOverride = -1; }
+      else if(t >= ALARM_RAMP_MS){
+        rampState = 0; _rampT0 = 0; player.volOverride = -1;
+        if(_rampTo != config.store.volume) player.setVol(_rampTo);
+        else player.applyVol(_rampTo);
+      }else{
+        uint8_t v = (uint32_t)_rampTo * t / ALARM_RAMP_MS;
+        if(player.volOverride != v){ player.volOverride = v; player.applyVol(v); }
+      }
+    }
+  }
+
+  if(!s.alarmOn || !timeValid()) return;
+  int key = network.timeinfo.tm_hour * 60 + network.timeinfo.tm_min;
+  if(network.timeinfo.tm_hour != s.alarmH || network.timeinfo.tm_min != s.alarmM){
+    _lastAlarmKey = -1;
+    return;
+  }
+  if(_lastAlarmKey == key) return;
+  _lastAlarmKey = key;
+  int wd = network.timeinfo.tm_wday;
+  if(s.alarmDays == 1 && (wd == 0 || wd == 6)) return;
+  _alarmStart();
+}
+
+/*  ---------- екран ---------- */
+
+uint16_t YoExtras::pwmTarget(){
+#if BRIGHTNESS_PIN!=255
+  if(!config.store.dspon || _dark || _blank) return 0;
+  uint16_t day = map(config.store.brightness, 0, 100, 0, 255);
+  bool awake = (int32_t)(_wakeUntil - millis()) > 0;
+#ifdef USE_YOMENU
+  if(yomenu.active()) awake = true;      /* у налаштуваннях людина вже тут */
+#endif
+  uint16_t t = day;
+  if(_night && !awake){
+    uint16_t n = map(s.nightLevel, 0, 100, 0, 255);
+    t = n < day ? n : day;
+  }
+  /*  Економія батареї: без зарядника й без дотиків N секунд — плавно до
+      мінімуму. Екран при цьому видно, лише дуже тьмяно.  */
+  static const uint8_t SAVE_S[5] = { 0, 10, 15, 30, 60 };
+  _saver = s.batSave && !s.noBat && _batMv >= 2800 && !onPower() &&
+           (millis() - _lastTouch) > (uint32_t)SAVE_S[s.batSave] * 1000UL;
+  if(_saver && t > 6) t = 6;
+  return t;
+#else
+  return 255;
+#endif
+}
+
+void YoExtras::pwmSet(uint16_t v){
+#if BRIGHTNESS_PIN!=255
+  analogWrite(BRIGHTNESS_PIN, v);
+#endif
+  _pwmCur = v;
+}
+
+uint16_t YoExtras::pwmNow(){ uint16_t v = pwmTarget(); pwmSet(v); return v; }
+
+/*  Дотик у темряві лише будить: інакше, намацуючи погаслий екран, людина
+    навмання натискала б кнопки, яких не бачить.  */
+bool YoExtras::touchWake(){
+  /*  Пригашений для економії екран теж спершу лише будимо: людина ще не
+      бачить, куди тисне.  */
+  bool wasDark = _dark || _saver || (_pwmCur == 0 && config.store.dspon && !_blank);
+  _dark = false;
+  _saver = false;
+  _lastTouch = millis();
+  _wakeUntil = millis() + WAKE_MS;
+  return wasDark;
+}
+
+void YoExtras::_screenLoop(uint32_t now){
+  static uint32_t nightTick = 0;
+  if(now - nightTick >= 1000 || nightTick == 0){
+    nightTick = now;
+    if(_forceNight >= 0) _night = _forceNight;
+    else if(!s.nightOn || !timeValid()) _night = false;
+    else{
+      int cur = network.timeinfo.tm_hour * 60 + network.timeinfo.tm_min;
+      int from = s.nightFrom * 30, to = s.nightTo * 30;
+      if(from == to) _night = false;
+      else if(from < to) _night = (cur >= from && cur < to);
+      else _night = (cur >= from || cur < to);
+    }
+  }
+  if(now - _pwmTick < 20) return;
+  _pwmTick = now;
+  /*  Під час плавних переходів підсвіткою керують вони.  */
+  if(display.fading()) return;
+#ifdef USE_YOMENU
+  if(yomenu.fading()) return;
+#endif
+  uint16_t t = pwmTarget();
+  if(_pwmCur == 0xFFFF){ pwmSet(t); return; }
+  if(_pwmCur == t) return;
+  int d = (int)t - (int)_pwmCur;
+  /*  Гасне повільно (секунди дві-три), засвічується швидко.  */
+  int st = d < 0 ? abs(d) / 20 : abs(d) / 6;
+  if(d < 0){ if(st < 1) st = 1; } else if(st < 3) st = 3;
+  if(abs(d) <= st) pwmSet(t);
+  else pwmSet(_pwmCur + (d > 0 ? st : -st));
+}
+
+/*  ---------- батарея ---------- */
+
+void YoExtras::batSim(int8_t pct, int8_t chg){ _simPct = pct; _simChg = chg; }
+
+uint16_t YoExtras::batRaw(){ return analogReadMilliVolts(EXT_BAT_PIN) * 2; }
+
+/*  Розрядна крива літій-іонної банки під малим навантаженням.  */
+static int8_t liionPct(uint16_t mv){
+  static const uint16_t V[] = { 3300, 3500, 3600, 3700, 3750, 3800, 3900, 4000, 4100, 4200 };
+  static const uint8_t  P[] = {    0,    4,   10,   24,   35,   46,   62,   76,   88,  100 };
+  if(mv <= V[0]) return 0;
+  for(uint8_t i = 1; i < sizeof(V)/sizeof(V[0]); i++)
+    if(mv <= V[i]) return P[i-1] + (int)(P[i] - P[i-1]) * (mv - V[i-1]) / (V[i] - V[i-1]);
+  return 100;
+}
+
+void YoExtras::_batLoop(uint32_t now){
+  if(now - _batTick < 250) return;
+  _batTick = now;
+  _batAcc += analogReadMilliVolts(EXT_BAT_PIN);
+  if(++_batN < 16) return;                 /* 16 вимірів = 4 секунди */
+  uint16_t mv = (_batAcc / _batN) * 2;
+  _batAcc = 0; _batN = 0;
+  _batMv = _batMv ? (_batMv * 3 + mv) / 4 : mv;
+  /*  Заряджання. Вивід CHRG зарядника TP4054 на цій платі нікуди не
+      заведено, тож судимо з напруги: кабель підключили — вона за секунди
+      стрибає вгору на 50..150 мВ, відключили — так само вниз. Повільний
+      хід за п'ять хвилин підтверджує напрям, якщо стрибок проґавили.  */
+  if(_batPrev){
+    int d = (int)mv - (int)_batPrev;
+    if(d >= 35) _charging = true;
+    else if(d <= -35) _charging = false;
+  }else if(mv >= 4180) _charging = true;   /* на старті: таке буває лише від зарядника */
+  _batPrev = mv;
+  if(!_batMinT || now - _batMinT >= 60000){
+    _batMinT = now;
+    if(_batMinN == 6){ memmove(_batMin, _batMin + 1, 5 * sizeof(uint16_t)); _batMinN = 5; }
+    _batMin[_batMinN++] = mv;
+    if(_batMinN == 6){
+      int tr = (int)_batMin[5] - (int)_batMin[0];
+      if(tr >= 20) _charging = true;
+      else if(tr <= -20) _charging = false;
+    }
+  }
+  /*  Живлення від USB. Вивід VBUS на цій платі до ESP32 не заведено
+      (див. схему: VBUS іде лише на TP4054 і ключ Q3), тож: комп'ютер
+      видно напевно — по службових кадрах USB (HWCDC::isPlugged), а
+      простий зарядний блок — лише за стрибком напруги вище.  */
+  bool host = HWCDC::isPlugged();
+  _power = host || _charging;
+  if(!_power) _full = false;
+  else if(_batMv >= 4180) _full = true;          /* дійшли до 4.2 В — заряджено */
+  else if(_batMv < 4120) _full = false;
+  _usb = _power;
+  _batPct = liionPct(_batMv);
+}
+
+/*  ---------- світлодіод ---------- */
+
+void YoExtras::_led(uint8_t r, uint8_t g, uint8_t b){
+  if(r == _ledR && g == _ledG && b == _ledB) return;
+  _ledR = r; _ledG = g; _ledB = b;
+  rgbLedWrite(EXT_LED_PIN, r, g, b);
+}
+
+void YoExtras::ledTest(uint8_t r, uint8_t g, uint8_t b, uint16_t ms){
+  _ledTestUntil = millis() + ms;
+  _led(r, g, b);
+}
+
+static void hsv(uint16_t h, uint8_t v, uint8_t& r, uint8_t& g, uint8_t& b){
+  h %= 360;
+  uint8_t sct = h / 60, f = (h % 60) * 255 / 60;
+  uint8_t q = (uint16_t)v * (255 - f) / 255, t = (uint16_t)v * f / 255;
+  switch(sct){
+    case 0: r=v; g=t; b=0; break;
+    case 1: r=q; g=v; b=0; break;
+    case 2: r=0; g=v; b=t; break;
+    case 3: r=0; g=q; b=v; break;
+    case 4: r=t; g=0; b=v; break;
+    default: r=v; g=0; b=q; break;
+  }
+}
+
+void YoExtras::_ledLoop(uint32_t now){
+  if(now - _ledTick < 30) return;
+  _ledTick = now;
+  if(_ledTestUntil){
+    if((int32_t)(now - _ledTestUntil) < 0) return;
+    _ledTestUntil = 0;
+  }
+  bool awake = (int32_t)(_wakeUntil - now) > 0;
+  if(s.ledMode == LED_OFF || _dark || (_night && !awake)){ _led(0, 0, 0); return; }
+
+  bool net = (network.status == CONNECTED || network.status == SDREADY);
+  bool playing = player.status() == PLAYING;
+  /*  повільне «дихання» 0..1 з періодом близько двох секунд  */
+  float br = 0.5f - 0.5f * cosf((now % 2000) * 6.2832f / 2000.0f);
+
+  if(!net){ _led((uint8_t)(4 + LED_MAX * br), 0, 0); return; }
+  if(rampState){ uint8_t w = 3 + (LED_MAX - 3) * br; _led(w, w * 3 / 4, w / 3); return; }
+  if(recorder.active()){ _led((now / 500) % 2 ? LED_MAX : 2, 0, 0); return; }   /* запис — червоне блимання */
+  if(lowBattery()){ _led((now % 2000) < 150 ? LED_MAX : 0, 0, 0); return; }     /* сідає батарея — короткий червоний спалах */
+
+  if(s.ledMode == LED_MUSIC && playing){
+    uint16_t v = player.get_VUlevel(255);
+    int l = 255 - (int)(v >> 8), r = 255 - (int)(v & 0xFF);
+    float lvl = (l > r ? l : r) / 255.0f;
+    if(lvl > _ledEnv) _ledEnv = lvl; else _ledEnv *= 0.86f;
+    uint8_t R, G, B;
+    hsv((now / 60) % 360, (uint8_t)(1 + (LED_MAX - 1) * _ledEnv), R, G, B);
+    _led(R, G, B);
+    return;
+  }
+  if(!playing){ _led(6, 3, 0); return; }                       /* стоїть — бурштин */
+  if(_sleepEnd){ _led(10, 0, 18); return; }                    /* чекає сну — фіолет */
+  if(config.getMode() == PM_SDCARD){ _led(0, 6, 22); return; } /* картка — синій */
+  _led(0, 18, 3);                                              /* радіо — зелений */
+}

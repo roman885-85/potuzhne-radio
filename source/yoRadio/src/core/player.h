@@ -1,0 +1,100 @@
+#ifndef player_h
+#define player_h
+
+#if I2S_DOUT!=255 || I2S_INTERNAL
+  #include "../audioI2S/AudioEx.h"
+#else
+  #include "../audioVS1053/audioVS1053Ex.h"
+#endif
+
+#ifndef MQTT_BURL_SIZE
+  #define MQTT_BURL_SIZE  512
+#endif
+/*  Відтворення довільного посилання (browseUrl) потрібне проповідям із
+    сайту, тож вмикаємо його й без MQTT.  */
+#define YO_BROWSEURL
+
+#ifndef PLQ_SEND_DELAY
+  #define PLQ_SEND_DELAY pdMS_TO_TICKS(1000) //portMAX_DELAY
+#endif
+
+enum playerRequestType_e : uint8_t { PR_PLAY = 1, PR_STOP = 2, PR_PREV = 3, PR_NEXT = 4, PR_VOL = 5, PR_CHECKSD = 6, PR_VUTONUS = 7, PR_BURL = 8, PR_TOGGLE = 9 };
+struct playerRequestParams_t
+{
+  playerRequestType_e type;
+  int payload;
+};
+
+enum plStatus_e : uint8_t{ PLAYING = 1, STOPPED = 2 };
+
+class Player: public Audio {
+  private:
+    uint32_t    _volTicks;   /* delayed volume save  */
+    bool        _volTimer;   /* delayed volume save  */
+    uint32_t    _resumeFilePos;
+    plStatus_e  _status;
+    //char        _plError[PLERR_LN];
+  private:
+    void _stop(bool alreadyStopped = false);
+    void _play(uint16_t stationId);
+    void _loadVol(uint8_t volume);
+    bool _hasError;
+  public:
+    bool lockOutput = true;
+    bool resumeAfterUrl = false;
+    volatile bool connproc = true;
+    uint32_t sd_min, sd_max;
+    #if defined(MQTT_ROOT_TOPIC) || defined(YO_BROWSEURL)
+    char      burl[MQTT_BURL_SIZE];  /* buffer for browseUrl  */
+    char      burlTitle[96] = {0};   /* другий рядок під назвою: хто проповідує */
+    /*  Перемотка проповіді: сервер віддає файл з будь-якого байта (Range),
+        тож секунду переводимо в байт через розмір і тривалість.  */
+    uint32_t  burlSize = 0;          /* повний розмір файлу, з першого з'єднання */
+    uint32_t  burlDur = 0;           /* тривалість, с — із сайту */
+    uint32_t  burlBase = 0;          /* з якої секунди йде поточне з'єднання */
+    uint32_t  burlResume = 0;        /* де зупинились — звідти й продовжимо */
+    bool      burlRanged = false;
+    int8_t    burlResumeRadio = -1;  /* 1/0 — чи грало радіо до проповіді (задає той, хто зупинив потік) */
+    void      burlSeek(uint32_t sec);
+    #endif
+  public:
+    Player();
+    void init();
+    void loop();
+    void initHeaders(const char *file);
+    void setError();
+    void setError(const char *e);
+    //bool hasError() { return strlen(_plError)>0; }
+    void sendCommand(playerRequestParams_t request);
+    void resetQueue();
+    #if defined(MQTT_ROOT_TOPIC) || defined(YO_BROWSEURL)
+    void browseUrl();
+    #endif
+    bool remoteStationName = false;
+    plStatus_e status() { return _status; }
+    void prev();
+    void next();
+    void toggle();
+    void stepVol(bool up);
+    void setVol(uint8_t volume);
+    uint8_t volToI2S(uint8_t volume);
+    void stopInfo();
+    void setOutputPins(bool isPlaying);
+    void setResumeFilePos(uint32_t pos) { _resumeFilePos = pos; }
+    /*  Будильник і таймер сну ведуть гучність самі: поки тут не -1, запуск
+        станції бере це значення, а не збережене, і не вмикається на повну
+        посеред наростання. Налаштування при цьому не змінюються.  */
+    int16_t volOverride = -1;
+    void applyVol(uint8_t v) { setVolume(volToI2S(v)); }
+    uint32_t posSec();               /* де грає: для проповіді — з урахуванням перемотки */
+    uint32_t durSec();
+};
+
+extern Player player;
+
+extern __attribute__((weak)) void player_on_start_play();
+extern __attribute__((weak)) void player_on_stop_play();
+extern __attribute__((weak)) void player_on_track_change();
+extern __attribute__((weak)) void player_on_station_change();
+
+#endif

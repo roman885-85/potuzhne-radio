@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Чорне все: тло вікна (його видно й на заставці запуску, поки не
+      намальовано екран), рядок стану, смуга навігації. На Android 15+
+      застосунок і так малює під смугами — там чорноту дає тло кореня,
+      а відступи ставить SystemBars.
+    -->
+    <style name="Radio" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:colorBackground">@color/bg</item>
+        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:colorPrimary">@color/pan</item>
+        <item name="android:colorPrimaryDark">@color/bg</item>
+        <item name="android:colorAccent">@color/acc</item>
+        <item name="android:textColorPrimary">@color/txt</item>
+        <item name="android:textColorSecondary">@color/dim</item>
+        <item name="android:alertDialogTheme">@style/Radio.Dialog</item>
+    </style>
+
+    <!-- Вікна запитань — панель #1b1b1b, жовті кнопки, як діалоги на сторінці радіо. -->
+    <style name="Radio.Dialog" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/dialog_bg</item>
+        <item name="android:colorAccent">@color/acc</item>
+        <item name="android:colorBackground">@color/pan2</item>
+        <item name="android:textColorPrimary">@color/txt</item>
+        <item name="android:textColorSecondary">@color/dim</item>
+        <item name="android:textColorAlertDialogListItem">@color/txt</item>
+    </style>
+</resources>

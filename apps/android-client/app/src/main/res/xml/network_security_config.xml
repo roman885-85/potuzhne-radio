@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Радіо говорить лише http: у нього немає сертифіката, і взятися йому
+  нізвідки — адреса локальна й щоразу може бути інша. Android 9+ без цього
+  дозволу відмовляє в будь-якому незашифрованому з'єднанні, тож дозволяємо.
+
+  Звужувати до конкретних адрес не виходить: мережа в кожного своя
+  (192.168.x.x, 10.x.x.x, 172.16–31.x.x), а в режимі точки доступу радіо
+  взагалі має власну. Для Android 5–8 те саме каже
+  android:usesCleartextTraffic у маніфесті.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

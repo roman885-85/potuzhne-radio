@@ -1,0 +1,8 @@
+Suspilne UA Radio	http://radio.nrcu.gov.ua:8000/ur1-mp3	0
+SomaFM Groove Salad	http://ice1.somafm.com/groovesalad-128-mp3	0
+SomaFM Drone Zone	http://ice1.somafm.com/dronezone-128-mp3	0
+Radio Paradise MP3	http://stream.radioparadise.com/mp3-128	0
+Radio Paradise AAC	http://stream.radioparadise.com/aac-128	0
+BBC World Service	http://stream.live.vc.bbcmedia.co.uk/bbc_world_service	0
+FIP France	http://icecast.radiofrance.fr/fip-midfi.mp3	0
+France Inter	http://icecast.radiofrance.fr/franceinter-midfi.mp3	0
