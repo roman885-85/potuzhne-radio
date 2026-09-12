@@ -761,6 +761,14 @@ static uint16_t batColor(uint8_t pct){
 /*  Смуга заряду на 50 поділок: одна поділка — два відсотки, тож рівень видно
     точно, а не «десь між чвертями». Під час заряджання поверх рівня біжить
     світла хвиля до кінця смуги.  */
+/*  Блискавка ліворуч від батарейки на час заряджання: так видно одразу,
+    що батарея набирає, а не просто щось блимає.  */
+static void chargeBolt(int16_t x, uint16_t c, uint16_t bg){
+  const int16_t y = 210;
+  dsp.fillRect(x, y, 8, 13, bg);
+  dsp.fillTriangle(x+5, y,    x,   y+7,  x+4, y+7,  c);
+  dsp.fillTriangle(x+3, y+6,  x+8, y+6,  x+3, y+12, c);
+}
 #define BAT_N   25                 /* поділок: по 4% — і смуга лишається схожою на батарейку */
 #define BAT_W   (BAT_N + 4)        /* рамка */
 static void batIcon(int16_t x, uint8_t pct, bool chg, bool low, uint8_t ph, uint16_t bg, bool full = false){
@@ -776,12 +784,15 @@ static void batIcon(int16_t x, uint8_t pct, bool chg, bool low, uint8_t ph, uint
   if(lvl < 1) lvl = 1;
   dsp.fillRect(x + 2, by + 2, lvl, H - 4, lc);
   if(chg && !full){
-    /*  Заряджання: заповнена частина спокійно дихає — розгоряється й
-        притухає у своєму ж кольорі. Нічого не бігає туди-сюди.  */
-    uint8_t t = ph < BAT_N/2 ? (uint8_t)(ph * 255 / (BAT_N/2))
-                             : (uint8_t)((BAT_N - 1 - ph) * 255 / (BAT_N/2));
-    uint16_t dim = lerp565(0x0000, lc, 90);            /* той самий колір, але притухлий */
-    dsp.fillRect(x + 2, by + 2, lvl, H - 4, lerp565(dim, lc, t));
+    /*  Заряджання — як у телефонах: від рівня поділки одна за одною
+        доливаються до кінця, мить стоїть повна, і знову від рівня. Рух лише
+        в один бік, до повної, — з блиманням розрядженої не сплутати.  */
+    int16_t span = BAT_N - lvl;
+    if(span > 0){
+      int16_t g = (int16_t)((millis() / 90) % (span + 5));   /* +5 кадрів — пауза повною */
+      if(g > span) g = span;
+      if(g > 0) dsp.fillRect(x + 2 + lvl, by + 2, g, H - 4, lerp565(0x0000, lc, 170));
+    }
   }
 }
 
@@ -830,7 +841,7 @@ void Display::_statusBar(){
   bool chg = extras.charging(), low = extras.lowBattery();
   if(_sbSig != 0xFFFFFFFF && now - _sbTick < ((chg || low) ? 100 : 500)) return;
   _sbTick = now;
-  uint8_t ph = chg ? (uint8_t)((now / 60) % BAT_N) : (low ? (uint8_t)((now / 500) % 2) : 0);
+  uint8_t ph = chg ? (uint8_t)(now / 90) : (low ? (uint8_t)((now / 500) % 2) : 0);   /* заряджання: лише щоб знати, коли перемалювати */
 
   int rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127;
   uint8_t wl = rssi > -55 ? 4 : rssi > -65 ? 3 : rssi > -75 ? 2 : rssi > -85 ? 1 : 0;
@@ -845,7 +856,7 @@ void Display::_statusBar(){
   uint16_t recMin = rec ? (uint16_t)(recorder.seconds() / 60) : 0;
   pct = (pct + 2) / 4 * 4;                 /* 25 поділок: крок 4% */
   usb = extras.charged();
-  uint32_t sig = wl | (bat << 3) | (usb << 4) | (alarm << 5) | ((uint32_t)pct << 6) | ((uint32_t)sl << 13) | ((uint32_t)rec << 21) | ((uint32_t)low << 22) | ((uint32_t)(recMin & 0x1FF) << 23);
+  uint32_t sig = wl | (bat << 3) | (usb << 4) | (alarm << 5) | ((uint32_t)pct << 6) | ((uint32_t)sl << 13) | ((uint32_t)rec << 21) | ((uint32_t)low << 22) | ((uint32_t)(recMin & 0xFF) << 23) | ((uint32_t)chg << 31);
   if(sig == _sbSig){
     /*  змінилась лише фаза анімації — перемальовуємо саму батарею  */
     if(bat && (chg || low) && ph != _sbPh && _sbBatX >= 0){ _sbPh = ph; batIcon(_sbBatX, pct, chg, low, ph, config.theme.background); }
@@ -872,6 +883,7 @@ void Display::_statusBar(){
     x -= BAT_W + 9;
     _sbBatX = x;
     batIcon(x, pct, chg, low, ph, bg, extras.charged());
+    if(chg && !extras.charged()){ x -= 11; chargeBolt(x, 0xFFE0, bg); }
   }
   /*  будильник: дзвіночок  */
   if(alarm){
