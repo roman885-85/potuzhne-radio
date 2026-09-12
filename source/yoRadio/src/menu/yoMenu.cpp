@@ -1404,7 +1404,7 @@ void YoMenu::_wifiPick(uint8_t i){
   if(_scan[i].enc == WIFI_AUTH_OPEN){ _wPass[0] = 0; _wifiConnect(); return; }
   _kbdNext = 2;
   snprintf(_kbdTitleBuf, sizeof(_kbdTitleBuf), "пароль: %s", _wSsid);
-  _openKbd(_wPass, YOM_PASS_LEN, false, _kbdTitleBuf);
+  _openKbd(_wPass, YOM_PASS_LEN, true, _kbdTitleBuf);   /* пароль — зірочками: його видно з-за плеча */
 }
 
 /*  До п'яти мереж: вибрана стає першою, решта збережених іде за нею,
@@ -1851,7 +1851,7 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
         if(_kbdNext == 1 && _wSsid[0]){            /* назву є — тепер пароль */
           _kbdNext = 2;
           snprintf(_kbdTitleBuf, sizeof(_kbdTitleBuf), "пароль: %s", _wSsid);
-          _openKbd(_wPass, YOM_PASS_LEN, false, _kbdTitleBuf);
+          _openKbd(_wPass, YOM_PASS_LEN, true, _kbdTitleBuf);   /* пароль — зірочками: його видно з-за плеча */
           return;
         }
         if(_kbdNext == 2){ _kbdNext = 0; _wifiConnect(); return; }
