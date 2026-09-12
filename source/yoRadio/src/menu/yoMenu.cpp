@@ -833,8 +833,9 @@ void YoMenu::_smDraw(bool bandOnly){
   int n = _listCount();
   int play = _listPlay();
   int16_t pad = (_cur == PG_WIFI) ? WIFI_PAD : 0;      /* місце під замок і сигнал */
-  int16_t wrap = _smMqW > PL_LIST_W - 16 - pad ? _smMqW + 40 : 0;
-  plGenericDraw((float)_smSel, n ? n : 1, smName, _smShift, bandOnly, play, wrap, pad);
+  int16_t room = PL_LIST_W - 16 - ((_cur == PG_WIFI && _smSel <= _scanN) ? WIFI_PAD : 0);
+  int16_t wrap = _smMqW > room ? _smMqW + 40 : 0;
+  plGenericDraw((float)_smSel, n ? n : 1, smName, _smShift, bandOnly, play, wrap, pad, _scanN);
   _wifiBars((float)_smSel, bandOnly);
 }
 
@@ -842,7 +843,7 @@ void YoMenu::_smDraw(bool bandOnly){
 void YoMenu::_smMarquee(){
   uint32_t now = millis();
   if(!_smMqW){ _smMqW = plTextWidth(smName(_smSel)); if(!_smMqW) _smMqW = 1; }
-  const int16_t room = PL_LIST_W - 16 - ((_cur == PG_WIFI) ? WIFI_PAD : 0);
+  const int16_t room = PL_LIST_W - 16 - ((_cur == PG_WIFI && _smSel <= _scanN) ? WIFI_PAD : 0);
   if(_smMqW <= room) return;
   if((int32_t)(now - _smMqT) < 0) return;
   _smMqT = now + 25;                         /* по колу, без зупинок — як і в станцій */
@@ -1711,12 +1712,12 @@ void YoMenu::render(){
     int nn = _listCount();
     int play = _listPlay();
     if(_dActive){
-      if(_smDragDirty){ _smDragDirty = false; plGenericDraw(_smCur, nn ? nn : 1, smName, 0, false, play, 0, (_cur == PG_WIFI) ? WIFI_PAD : 0); }
+      if(_smDragDirty){ _smDragDirty = false; plGenericDraw(_smCur, nn ? nn : 1, smName, 0, false, play, 0, (_cur == PG_WIFI) ? WIFI_PAD : 0, _scanN); }
       return;
     }
     if(_smFling){
       static uint32_t ft = 0;
-      if(now - ft < 15) return;
+      if(now - ft < 10) return;          /* кадр накату — під темп екрана (100/с) */
       float dt = (now - (ft ? ft : now - 16)) / 1000.0f; ft = now;
       if(dt > 0.1f) dt = 0.1f;
       _smCur += _dVel * dt;
@@ -1729,7 +1730,7 @@ void YoMenu::render(){
         _smFrom = _smCur; _smSel = (int16_t)to; _smT0 = now; _smAnim = true;   /* дотягуємо пружиною */
         _smShift = 0; _smMqT = now + 600; _smMqW = 0;
       }else{
-        plGenericDraw(_smCur, n, smName, 0, false, play, 0, (_cur == PG_WIFI) ? WIFI_PAD : 0);
+        plGenericDraw(_smCur, n, smName, 0, false, play, 0, (_cur == PG_WIFI) ? WIFI_PAD : 0, _scanN);
         return;
       }
     }
@@ -1741,7 +1742,7 @@ void YoMenu::render(){
         const float zw = 11.0f, wd = 16.7f;
         float e = 1.0f - expf(-zw * ts) * (cosf(wd * ts) + (zw / wd) * sinf(wd * ts));
         _smCur = _smFrom + ((float)_smSel - _smFrom) * e;
-        plGenericDraw(_smCur, nn ? nn : 1, smName, 0, false, play, 0, (_cur == PG_WIFI) ? WIFI_PAD : 0);
+        plGenericDraw(_smCur, nn ? nn : 1, smName, 0, false, play, 0, (_cur == PG_WIFI) ? WIFI_PAD : 0, _scanN);
         return;
       }
     }
@@ -1916,7 +1917,10 @@ void YoMenu::onPress(uint16_t x, uint16_t y){
     _smHold = b; _smHoldT = millis(); _smRep = false; _smBtnDraw = b;
     return;
   }
-  /*  палець зупиняє накат чи пружину й бере список там, де він є  */
+  /*  палець зупиняє накат чи пружину й бере список там, де він є. Такий
+      дотик нічого не вибирає: інакше палець, що ловить список на ходу,
+      вмикав випадковий сусідній рядок.  */
+  _dCaught = (_smFling || _smAnim);
   _smFling = false; _smAnim = false;
   _dActive = true; _dMoved = false;
   _dY0 = _dLastY = y; _dPos0 = _smCur; _dVel = 0.0f; _dLastT = millis();
@@ -1926,8 +1930,12 @@ void YoMenu::onDrag(uint16_t x, uint16_t y){
   (void)x;
   if(!_dActive || !_isList(_cur)) return;
   int16_t dy = (int16_t)y - _dY0;
-  if(!_dMoved && abs(dy) > 8) _dMoved = true;
-  if(!_dMoved) return;
+  if(!_dMoved){
+    if(abs(dy) <= 8) return;               /* поки це дотик, а не прокрутка */
+    /*  Рушаємо від цієї точки, а не від місця натискання: інакше список
+        стрибав одразу на весь поріг — саме це відчувалось як ривок.  */
+    _dMoved = true; _dY0 = y; _dLastY = y; _dLastT = millis(); dy = 0;
+  }
   int n = _listCount(); if(n < 1) n = 1;
   float pos = _dPos0 - dy / (float)PL_ROW_H;
   /*  за краями список пружинить, а не їде далі  */
@@ -1940,7 +1948,9 @@ void YoMenu::onDrag(uint16_t x, uint16_t y){
     _dVel = _dVel * 0.6f + v * 0.4f;
     _dLastY = y; _dLastT = now;
   }
-  _smCur = pos;
+  /*  Палець веде нерівно, і список від того смикається. Трохи згладжуємо:
+      рух лишається миттєвим, а дрібне тремтіння з'їдається.  */
+  _smCur += (pos - _smCur) * 0.5f;
   _smDragDirty = true;
 }
 
@@ -1960,6 +1970,13 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
     if(_cur == PG_SERM){
       if(sermons.loading()) return;
       if(n == 0){ sermons.fetch(); _smDirty = true; return; }
+    }
+    if(_dCaught){                                  /* спіймали список на ходу */
+      _dCaught = false;
+      int16_t to = (int16_t)lroundf(_smCur);
+      if(to < 1) to = 1; if(to > n) to = n;
+      _smGo(to);                                   /* дотягуємо до рядка, нічого не вмикаючи */
+      return;
     }
     if(y < PL_TOP) return;
     int r = ((int)y - PL_TOP) / PL_ROW_H;

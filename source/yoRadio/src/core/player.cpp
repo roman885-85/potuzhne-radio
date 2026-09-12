@@ -156,7 +156,10 @@ void resetPlayer(){
   #define PL_QUEUE_TICKS 0
 #endif
 #ifndef PL_QUEUE_TICKS_ST
-  #define PL_QUEUE_TICKS_ST 15
+  /*  Скільки чекати на черзі, коли нічого не грає. Дотик опитується раз на
+      оберт головного циклу, тож довге чекання = рідкий опит пальця й ривки
+      при прокручуванні списків.  */
+  #define PL_QUEUE_TICKS_ST 4
 #endif
 void Player::loop() {
   if(playerQueue==NULL) return;

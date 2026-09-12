@@ -1548,7 +1548,7 @@ uint16_t plTextWidth(const char* utf8){
   return w;
 }
 
-void plGenericDraw(float pos, int count, const char* (*nameAt)(int), int16_t shift, bool bandOnly, int playIdx, int16_t wrapW, int16_t rightPad){
+void plGenericDraw(float pos, int count, const char* (*nameAt)(int), int16_t shift, bool bandOnly, int playIdx, int16_t wrapW, int16_t rightPad, int padUntil){
   static uint16_t* row = nullptr;
   if(!row){
     row = (uint16_t*)heap_caps_malloc((size_t)PL_LIST_W * PL_ROW_H * 2, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
@@ -1563,7 +1563,6 @@ void plGenericDraw(float pos, int count, const char* (*nameAt)(int), int16_t shi
   int16_t off = (int16_t)(frac * PL_ROW_H);
   _rowCanvas.setBuffer(row, PL_LIST_W, PL_ROW_H);
   _rowCanvas.setSwap(true);
-  _rowCanvas.setClipW(rightPad > 0 ? PL_LIST_W - rightPad : 0);
   dsp.startWrite();
   for(int r = -1; r <= PL_ROWS; r++){
     if(bandOnly && r != PL_CUR) continue;
@@ -1578,6 +1577,8 @@ void plGenericDraw(float pos, int count, const char* (*nameAt)(int), int16_t shi
     _rowCanvas.fillLines(0, PL_ROW_H, stripe);
     if(lb1 > 0 && lb0 < PL_ROW_H) _rowCanvas.fillLines(lb0, lb1, PL_C_BAND);
     _rowCanvas.setBand(lb0, lb1, PL_C_BANDTXT);
+    /*  Місце під значки тримаємо лише там, де вони є (рядки мереж).  */
+    _rowCanvas.setClipW((rightPad > 0 && idx <= padUntil) ? PL_LIST_W - rightPad : 0);
     if(nm && nm[0]){
       bool band = (r == PL_CUR && off == 0);
       plRowText(nm, lb0, lb1, band ? shift : 0, idx == playIdx, band ? wrapW : 0);

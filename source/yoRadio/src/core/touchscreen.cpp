@@ -345,6 +345,7 @@ void TouchScreen::loop(){
           _plTap = true; _plTapX = touchX; _plTapY = touchY; _plTapMs = millis();
           _plCaught = _plActive || _plAnim;       /* палець зупинив рух, що ще тривав */
           _plAnim = false;                        /* _plPos уже там, де зупинилось */
+          _plPrevY = touchY;                      /* рахуємо зсув від пальця, без стрибка */
           if(!_plActive){ _plActive = true; if(!_plCaught) _plPos = display.currentPlItem; }
         }
       }
@@ -371,7 +372,10 @@ void TouchScreen::loop(){
       if(_plTap && abs((int)touchY - _plTapY) <= 8 && abs((int)touchX - _plTapX) <= 12){
         /* ще дотик */
       }else{
-      _plTap = false;
+      if(_plTap){                               /* перший рух після дотику */
+        _plTap = false;
+        _plPrevY = touchY;                      /* без ривка на весь поріг */
+      }
       if(!_plActive){ _plActive = true; _plPos = display.currentPlItem; _plVel = 0.0f; _plPrevY = touchY; }
       int16_t dy = (int16_t)touchY - _plPrevY;
       if(dy != 0){
