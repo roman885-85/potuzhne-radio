@@ -1547,11 +1547,19 @@ void YoMenu::_wifiBars(float pos, bool bandOnly){
 /*  Вибрали мережу: відкрита — одразу підключаємось, закрита — пароль.
     Якщо мережу вже збережено, пароль підставляємо з пам'яті.  */
 void YoMenu::_wifiPick(uint8_t i){
+  /*  Та сама мережа, що й щойно? Тоді лишаємо набраний пароль: людина
+      щойно його вводила, спроба не вдалася — і повертатись до старого,
+      негодящого, безглуздо. Інша мережа — починаємо з чистого.  */
+  bool again = !strcmp(_wSsid, _scan[i].ssid) && _wPass[0];
   strlcpy(_wSsid, _scan[i].ssid, sizeof(_wSsid));
-  _wPass[0] = 0;
   bool known = false;
   for(uint8_t k = 0; k < config.ssidsCount && k < YOM_SSIDS; k++)
-    if(!strcmp(config.ssids[k].ssid, _wSsid)){ strlcpy(_wPass, config.ssids[k].password, sizeof(_wPass)); known = true; }
+    if(!strcmp(config.ssids[k].ssid, _wSsid)) known = true;
+  if(!again){
+    _wPass[0] = 0;
+    for(uint8_t k = 0; k < config.ssidsCount && k < YOM_SSIDS; k++)
+      if(!strcmp(config.ssids[k].ssid, _wSsid)) strlcpy(_wPass, config.ssids[k].password, sizeof(_wPass));
+  }
   /*  Знайому мережу не треба набирати наново: питаємо, що з нею зробити —
       підключитись, змінити пароль чи забути.  */
   if(known){ _loadWifi(); _wpArm = -1; _show(PG_WPICK); return; }

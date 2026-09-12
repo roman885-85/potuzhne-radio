@@ -42,6 +42,7 @@ class MyNetwork {
     char     _tryS[33] = {0}, _tryP[65] = {0};
     uint32_t _tryAt = 0;
     bool     _staReady = false;      /* setWifiParams уже зроблено */
+    bool     _apWas = false;         /* на час спроби точку доступу прибрали */
     void     _staUp();               /* мережа з'явилась на ходу: підняти служби */
     void raiseSoftAP();
     static void WiFiLostConnection(WiFiEvent_t event, WiFiEventInfo_t info);

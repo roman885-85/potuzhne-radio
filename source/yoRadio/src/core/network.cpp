@@ -281,6 +281,12 @@ void MyNetwork::raiseSoftAP() {
 void MyNetwork::loop(){
   if(_try == TRY_RUN && millis() - _tryAt > 15000) _try = TRY_FAIL;   /* мовчить — годі чекати */
   if(_try == TRY_OK && status != CONNECTED) _staUp();
+  /*  Не вийшло — точку доступу повертаємо, щоб радіо не лишилось без нічого.  */
+  if(_apWas && (_try == TRY_BADPASS || _try == TRY_NOTFOUND || _try == TRY_FAIL)){
+    _apWas = false;
+    WiFi.mode(WIFI_AP_STA);
+  }
+  if(_try == TRY_OK) _apWas = false;
   if(_try != TRY_NONE) return;               /* поки триває спроба людини — не заважаємо */
   if(status == SOFT_AP || !linkLost) return;
   if(WiFi.status() == WL_CONNECTED) return;            /* подія про адресу ось-ось прийде */
@@ -329,8 +335,11 @@ void MyNetwork::connectTo(const char* ssid, const char* pass){
   _tryAt = millis();
   staPaused = false;
   WiFi.setAutoReconnect(false);
-  if(WiFi.getMode() == WIFI_AP)      WiFi.mode(WIFI_AP_STA);
-  else if(WiFi.getMode() == WIFI_OFF) WiFi.mode(WIFI_STA);
+  /*  Своя точка доступу на час спроби йде геть: у парі «точка + станція»
+      обидві мусять сидіти на одному каналі, і підключення до мережі на
+      іншому каналі зривається. Не вийде — повернемо її назад.  */
+  _apWas = (WiFi.getMode() & WIFI_MODE_AP) != 0;
+  WiFi.mode(WIFI_STA);
   esp_wifi_disconnect();
   WiFi.begin(_tryS, _tryP);
 }
