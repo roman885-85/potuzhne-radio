@@ -65,6 +65,9 @@ static const char* TITLES[7] = { "інформація", "еквалайзер",
 
 /*  Wi-Fi: знайдені мережі показує спільний список (plGenericDraw), той
     самий, що станції й проповіді.  */
+/*  Wi-Fi: знайома мережа — три дії  */
+#define WP_Y(i)    (44 + (i) * 62)
+#define WP_H       54
 /*  Wi-Fi: відомі мережі  */
 #define WS_TOP     44
 #define WS_ROW     32
@@ -230,6 +233,8 @@ static void drawStar(int16_t cx, int16_t cy, int16_t R, uint16_t c){
   for(uint8_t i=0;i<10;i++){ uint8_t j = (i+1) % 10; dsp.fillTriangle(cx, cy, px[i], py[i], px[j], py[j], c); }
 }
 
+static void fitText(char* t, uint16_t w);      /* оголошення: сама вона нижче */
+
 void YoMenu::_chrome(const char* title, uint8_t icon){
   dsp.fillRect(0, 0, SW, HDR, C_ACC);
   if(icon == 1) drawStar(14, 15, 10, C_BG);
@@ -240,13 +245,18 @@ void YoMenu::_chrome(const char* title, uint8_t icon){
     dsp.fillRect(5, 13, 4, 3, C_BG); dsp.fillRect(19, 13, 4, 3, C_BG);
   }
   dsp.setFont(&yoUI12b); dsp.setTextSize(1); dsp.setTextColor(C_BG);
-  dsp.setCursor(34, 20); dsp.print(utf8Rus(title, true));
+  /*  Довга назва (а надто «пароль: <мережа>») наповзала на стрілку
+      повернення праворуч — обрізаємо по місцю, що лишилось.  */
+  char tt[64];
+  snprintf(tt, sizeof(tt), "%s", utf8Rus(title, true));
+  fitText(tt, SW - 34 - 46);
+  dsp.setCursor(34, 20); dsp.print(tt);
   _titleEnd = dsp.getCursorX();              /* підказку в шапці ставимо лише правіше */
   dsp.setFont();
   /*  У режимі точки доступу виходу з налаштувань немає, доки мережу не
       задано, тож і стрілку не малюємо: намальована, але мертва кнопка
       виглядає поламаною.  */
-  if(!(_apLock && _cur != PG_KBD && _cur != PG_WSAVED)){
+  if(!(_apLock && _cur != PG_KBD && _cur != PG_WSAVED && _cur != PG_WPICK)){
     dsp.fillTriangle(SW-26, 14, SW-16, 8, SW-16, 20, C_BG);
     dsp.fillRect(SW-16, 12, 8, 5, C_BG);
   }
@@ -262,8 +272,8 @@ void YoMenu::_show(int8_t p){
   /*  Пошук мереж і спроби повернутися в мережу живуть в одному радіомодулі:
       поки людина вибирає мережу, спроби спинено — інакше ні пошуку, ні
       підключення не діждешся.  */
-  network.pauseSta(p == PG_WIFI || p == PG_WSAVED ||
-                   (p == PG_KBD && (_kbdBack == PG_WIFI || _kbdBack == PG_WSAVED)));
+  network.pauseSta(p == PG_WIFI || p == PG_WSAVED || p == PG_WPICK ||
+                   (p == PG_KBD && (_kbdBack == PG_WIFI || _kbdBack == PG_WSAVED || _kbdBack == PG_WPICK)));
   if(_cur >= 0 && _pg[_cur]) _pg[_cur]->setActive(false);
   _cur = p;
   _fadeStep = 0;
@@ -336,6 +346,11 @@ void YoMenu::_paint(){
     _chrome("живлення", 0);
     _pwrArm = -1; _pwrGo = -1;
     _drawPower();
+  }else if(p == PG_WPICK){
+    _chrome(_wSsid, 2);
+    _wpArm = -1;
+    _drawWpick();
+    _favDirty = false;
   }else if(p == PG_WSAVED){
     _chrome("відомі мережі", 2);
     _wsArm = -1;
@@ -770,7 +785,7 @@ int8_t YoMenu::_parent(int8_t p) const {
   if(p == PG_DAC) return PG_DEV;
   if(p == PG_DACINFO) return PG_DAC;
   if(p == PG_POWER) return PG_SETUP;
-  if(p == PG_WSAVED) return PG_WIFI;
+  if(p == PG_WSAVED || p == PG_WPICK) return PG_WIFI;
   return PG_HOME;
 }
 
@@ -1183,24 +1198,54 @@ void YoMenu::_drawHome(){
 
 /*  Пошук асинхронний: WiFi сам обходить канали, а ми лише питаємо, чи
     готово. У режимі точки доступу для пошуку потрібна ще й станція.  */
+/*  Сторінка лише просить пошук. Саму роботу з радіомодулем робить головний
+    цикл (wifiTick): виклики Wi-Fi іноді тривають секунди, а в задачі дисплея
+    це зупиняє малювання, забиває чергу запитів — і сторожовий таймер
+    перезавантажує радіо.  */
 void YoMenu::_wifiScan(){
-  if(WiFi.getMode() == WIFI_AP) WiFi.mode(WIFI_AP_STA);
-  /*  Поки радіо намагається повернутися в мережу, пошук не стартує зовсім:
-      радіомодуль один. Тому спершу спиняємо спроби.  */
-  network.pauseSta(true);
-  WiFi.scanDelete();
-  _scanAgain = 0;
-  if(WiFi.scanNetworks(true, false) == WIFI_SCAN_FAILED){
-    /*  модуль ще зайнятий попередньою спробою — за мить повторимо  */
-    _scanning = false;
-    if(_scanFails < 6){ _scanFails++; _scanAgain = millis() + 800; }
-  }else{
-    _scanning = true; _scanFails = 0; _scanT0 = millis();
-  }
+  _scanReq = true;
   _wlDirty = true;
 }
 
+void YoMenu::wifiTick(){
+  if(_cur == PG_OFF) return;
+  /*  Раз на 200 мс запам'ятовуємо, у якій ми мережі: далі малювання бере
+      готове, а не смикає радіомодуль по десять разів на кадр.  */
+  static uint32_t ask = 0;
+  if(millis() - ask >= 200){
+    ask = millis();
+    bool up = (WiFi.status() == WL_CONNECTED);
+    char now[33] = {0};
+    if(up) strlcpy(now, WiFi.SSID().c_str(), sizeof(now));
+    if(up != _staUp || strcmp(now, _curSsid)){ _staUp = up; strlcpy(_curSsid, now, sizeof(_curSsid)); _wlDirty = true; }
+  }
+  if(_cur != PG_WIFI && !_scanning && !_scanReq) return;
+  if(_scanReq){
+    _scanReq = false;
+    if(WiFi.getMode() == WIFI_AP) WiFi.mode(WIFI_AP_STA);
+    /*  Поки радіо намагається повернутися в мережу, пошук не стартує зовсім:
+        радіомодуль один. Тому спершу спиняємо спроби.  */
+    network.pauseSta(true);
+    WiFi.scanDelete();
+    _scanAgain = 0;
+    if(WiFi.scanNetworks(true, false) == WIFI_SCAN_FAILED){
+      /*  модуль ще зайнятий попередньою спробою — за мить повторимо  */
+      _scanning = false;
+      if(_scanFails < 6){ _scanFails++; _scanAgain = millis() + 800; }
+    }else{
+      _scanning = true; _scanFails = 0; _scanT0 = millis();
+    }
+    _wlDirty = true;
+  }
+  _wifiPoll();
+}
+
 void YoMenu::_wifiPoll(){
+  /*  Питати радіомодуль щооберта не можна: поки триває пошук, він зайнятий
+      перебором каналів, і кожне таке питання відбирає в циклу мілісекунди.  */
+  static uint32_t askT = 0;
+  if(millis() - askT < 200) return;
+  askT = millis();
   if(!_scanning){
     if(_scanAgain && (int32_t)(millis() - _scanAgain) >= 0){ _scanAgain = 0; _wifiScan(); }
     return;
@@ -1240,6 +1285,51 @@ static bool wifiSaved(const char* ssid){
   return false;
 }
 
+/*  ---------- знайома мережа: що з нею зробити ---------- */
+
+/*  Мережу, яку радіо вже знає, не треба щоразу набирати наново: одразу
+    видно, що можна підключитись, змінити пароль або забути її тут-таки —
+    саме там, де людина її й вибрала.  */
+void YoMenu::_drawWpick(){
+  dsp.fillRect(0, HDR, SW, SH - HDR, C_BG);
+  static const char* t1[3] = { "підключитись", "змінити пароль", "забути мережу" };
+  static const char* t2[3] = { "радіо перезавантажиться", "якщо його змінили", "разом із паролем" };
+  char t[64];
+  for(uint8_t i = 0; i < 3; i++){
+    int16_t y = WP_Y(i);
+    bool armed = (i == 2 && _wpArm == 0);
+    uint16_t bg = armed ? C_ACC : C_PANEL, fg = armed ? C_BG : C_TXT,
+             sub = armed ? C_BG : C_DIM, ic = armed ? C_BG : C_ACC;
+    dsp.fillRect(CX, y, CW, WP_H, bg);
+    int16_t cx = CX + 28, cy = y + WP_H / 2;
+    if(i == 0){                                  /* значок мережі: три дуги */
+      for(int r = 5; r <= 15; r += 5) for(int a = -140; a <= -40; a += 3){
+        float rad = a * 3.14159f / 180.0f;
+        dsp.drawPixel(cx + (int)(r * cosf(rad)), cy + 8 + (int)(r * sinf(rad)), ic);
+        dsp.drawPixel(cx + (int)((r+1) * cosf(rad)), cy + 8 + (int)((r+1) * sinf(rad)), ic);
+      }
+      dsp.fillCircle(cx, cy + 8, 3, ic);
+    }else if(i == 1){                            /* олівець */
+      for(int8_t d = 0; d < 14; d++) dsp.drawFastHLine(cx - 7 + d, cy + 6 - d, 3, ic);
+      dsp.fillTriangle(cx - 9, cy + 8, cx - 5, cy + 8, cx - 9, cy + 4, ic);
+    }else{                                       /* × */
+      for(int8_t d = -8; d <= 8; d++){
+        dsp.drawPixel(cx + d, cy + d, ic); dsp.drawPixel(cx + d + 1, cy + d, ic);
+        dsp.drawPixel(cx + d, cy - d, ic); dsp.drawPixel(cx + d + 1, cy - d, ic);
+      }
+    }
+    dsp.setFont(&yoUI11); dsp.setTextSize(1); dsp.setTextColor(fg);
+    snprintf(t, sizeof(t), "%s", utf8Rus(armed ? "ще раз - і забуду" : t1[i], false));
+    fitText(t, CW - 60);
+    dsp.setCursor(CX + 52, y + 24); dsp.print(t);
+    dsp.setFont(&yoUI8); dsp.setTextColor(sub);
+    snprintf(t, sizeof(t), "%s", utf8Rus(armed ? "" : t2[i], false));
+    fitText(t, CW - 60);
+    dsp.setCursor(CX + 52, y + 42); dsp.print(t);
+  }
+  dsp.setFont();
+}
+
 /*  ---------- Wi-Fi: відомі мережі ---------- */
 
 /*  Список мереж, які радіо пам'ятає. Перша — та, з якої воно починає; коли
@@ -1262,11 +1352,11 @@ void YoMenu::_drawSaved(){
     dsp.setFont();
     return;
   }
-  bool sta = WiFi.status() == WL_CONNECTED;
+  bool sta = _staUp;
   for(uint8_t i = 0; i < n; i++){
     int16_t y = WS_TOP + i * WS_ROW;
     bool armed = (_wsArm == (int8_t)i);
-    bool cur = sta && WiFi.SSID() == _ssid[i];
+    bool cur = sta && !strcmp(_curSsid, _ssid[i]);
     dsp.fillRect(CX, y, CW, WS_H, armed ? C_ACC : (cur ? C_PAN2 : C_PANEL));
     dsp.setFont(&yoUI9b); dsp.setTextSize(1);
     dsp.setTextColor(armed ? C_BG : (cur ? C_ACC : C_TXT));
@@ -1317,7 +1407,7 @@ const char* YoMenu::_wifiRowName(int idx){
   static char buf[72];
   if(idx >= 1 && idx <= _scanN){
     const WScan& w = _scan[idx-1];
-    bool cur = WiFi.status() == WL_CONNECTED && WiFi.SSID() == w.ssid;
+    bool cur = _staUp && !strcmp(_curSsid, w.ssid);
     /*  Мережу, у якій радіо зараз, позначає той самий значок, що й станцію,
         яка грає, — інакше слово в назві розганяло її бігти рядком.  */
     snprintf(buf, sizeof(buf), "%s%s", w.ssid,
@@ -1340,9 +1430,8 @@ int YoMenu::_listCount() const {
 int YoMenu::_listPlay() const {
   if(_cur == PG_SERM)
     return (player.remoteStationName && player.status() == PLAYING) ? sermons.playing() + 1 : -1;
-  if(_cur == PG_WIFI && WiFi.status() == WL_CONNECTED){
-    String cur = WiFi.SSID();
-    for(uint8_t i = 0; i < _scanN; i++) if(cur == _scan[i].ssid) return i + 1;
+  if(_cur == PG_WIFI && _staUp){
+    for(uint8_t i = 0; i < _scanN; i++) if(!strcmp(_curSsid, _scan[i].ssid)) return i + 1;
   }
   return -1;
 }
@@ -1399,8 +1488,12 @@ void YoMenu::_wifiBars(float pos, bool bandOnly){
 void YoMenu::_wifiPick(uint8_t i){
   strlcpy(_wSsid, _scan[i].ssid, sizeof(_wSsid));
   _wPass[0] = 0;
+  bool known = false;
   for(uint8_t k = 0; k < config.ssidsCount && k < YOM_SSIDS; k++)
-    if(!strcmp(config.ssids[k].ssid, _wSsid)) strlcpy(_wPass, config.ssids[k].password, sizeof(_wPass));
+    if(!strcmp(config.ssids[k].ssid, _wSsid)){ strlcpy(_wPass, config.ssids[k].password, sizeof(_wPass)); known = true; }
+  /*  Знайому мережу не треба набирати наново: питаємо, що з нею зробити —
+      підключитись, змінити пароль чи забути.  */
+  if(known){ _loadWifi(); _wpArm = -1; _show(PG_WPICK); return; }
   if(_scan[i].enc == WIFI_AUTH_OPEN){ _wPass[0] = 0; _wifiConnect(); return; }
   _kbdNext = 2;
   snprintf(_kbdTitleBuf, sizeof(_kbdTitleBuf), "пароль: %s", _wSsid);
@@ -1500,6 +1593,11 @@ void YoMenu::render(){
     if(_favDirty){ _favDirty = false; _drawSaved(); }
     return;
   }
+  if(_cur == PG_WPICK){
+    if(_wpArm >= 0 && millis() - _wpArmT > 4000){ _wpArm = -1; _favDirty = true; }
+    if(_favDirty){ _favDirty = false; _drawWpick(); }
+    return;
+  }
   if(_cur == PG_POWER){
     if(_pwrArm >= 0 && _pwrGo < 0 && millis() - _pwrArmT > 4000){ _pwrArm = -1; _favDirty = true; }   /* не підтвердили — знімаємо */
     if(_favDirty){ _favDirty = false; _drawPower(); }
@@ -1518,8 +1616,7 @@ void YoMenu::render(){
   }
   if(_isList(_cur)){
     if(_cur == PG_WIFI){
-      /*  пошук іде своїм ходом: список перемальовуємо, коли він скінчився  */
-      _wifiPoll();
+      /*  пошук веде головний цикл; тут лише перемальовуємо, коли є що  */
       if(_wlDirty){
         _wlDirty = false;
         if(_smSel > _listCount()) _smSel = _listCount();
@@ -1818,7 +1915,7 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
       return;
     }
     /*  Стрілка — на рівень вгору: зі сторінки в її меню, з меню на плеєр.  */
-    if(_apLock && _cur != PG_WSAVED) return;    /* із відомих мереж вихід є завжди */
+    if(_apLock && _cur != PG_WSAVED && _cur != PG_WPICK) return;   /* звідси вихід є завжди */
     if(_cur == PG_HOME) close();
     else _show(_parent(_cur));
     return;
@@ -1905,6 +2002,36 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
       if(i==3) config.setTone((int8_t)v, m, t);
       break;
     }
+    case PG_WPICK: {
+      if(y < WP_Y(0)) return;
+      uint8_t i = (y - WP_Y(0)) / 62;
+      if(i > 2 || y >= WP_Y(i) + WP_H){ if(_wpArm >= 0){ _wpArm = -1; _favDirty = true; } return; }
+      if(i == 0){ _wifiConnect(); return; }                     /* підключитись */
+      if(i == 1){                                               /* змінити пароль */
+        _wpArm = -1; _kbdNext = 2;
+        snprintf(_kbdTitleBuf, sizeof(_kbdTitleBuf), "пароль: %s", _wSsid);
+        _openKbd(_wPass, YOM_PASS_LEN, true, _kbdTitleBuf);
+        return;
+      }
+      /*  забути: перше торкання питає, друге виконує  */
+      /*  Підтвердження має бути окремим дотиком, а не тим самим: між
+          питанням і виконанням мусить пройти хоч трохи часу.  */
+      if(_wpArm == 0 && millis() - _wpArmT > 400){
+        _wpArm = -1;
+        uint8_t k = 0;
+        while(k < YOM_SSIDS && strcmp(_ssid[k], _wSsid)) k++;
+        if(k < YOM_SSIDS){
+          for(uint8_t j = k; j + 1 < YOM_SSIDS; j++){
+            strlcpy(_ssid[j], _ssid[j+1], YOM_SSID_LEN);
+            strlcpy(_pass[j], _pass[j+1], YOM_PASS_LEN);
+          }
+          _ssid[YOM_SSIDS-1][0] = 0; _pass[YOM_SSIDS-1][0] = 0;
+          _savedWrite();
+        }
+        _show(PG_WIFI);
+      }else{ _wpArm = 0; _wpArmT = millis(); _favDirty = true; }
+      return;
+    }
     case PG_WSAVED: {
       uint8_t n = 0;
       for(uint8_t k = 0; k < YOM_SSIDS; k++) if(_ssid[k][0]) n++;
@@ -1915,7 +2042,7 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
         return;
       }
       if((int)x >= CX + CW - 36){                       /* × — забути */
-        if(_wsArm == (int8_t)i){
+        if(_wsArm == (int8_t)i && millis() - _wsArmT > 400){
           _wsArm = -1;
           for(uint8_t k = i; k + 1 < YOM_SSIDS; k++){
             strlcpy(_ssid[k], _ssid[k+1], YOM_SSID_LEN);

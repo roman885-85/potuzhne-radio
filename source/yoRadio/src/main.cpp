@@ -13,6 +13,7 @@
 #include "menu/yoDebug.h"
 #include "core/timekeeper.h"
 #include "extras/yoExtras.h"
+#include "menu/yoMenu.h"
 #ifdef USE_NEXTION
 #include "displays/nextion.h"
 #endif
@@ -114,11 +115,17 @@ void setup() {
 
 #ifdef YO_DEBUG
 /*  Хто саме тримає головний цикл: дотик, звук і меню живуть тут же, і будь-яка
-    затримка довша за глибину буфера звуку чутна й видна. Пише лише коли
-    справді довго, тож у звичайній роботі мовчить.  */
+    затримка довша за глибину буфера звуку чутна й видна. Нічого не друкуємо:
+    запис у USB-порт сам блокує цикл, коли з того боку ніхто не читає, — лише
+    запам'ятовуємо найдовший крок, а показує його команда «page».  */
+char     yoSlowWhat[40] = {0};
+uint32_t yoSlowMs = 0;
+/*  Як часто взагалі крутиться цикл: дотик опитується раз на оберт, тож
+    рідкий цикл — це і є «тормоза», навіть коли жоден крок не довгий.  */
+uint32_t yoLoopN = 0, yoLoopMax = 0, yoLoopFrom = 0;
 static inline void yoSlow(const char* what, uint32_t t0){
   uint32_t d = millis() - t0;
-  if(d > 300) Serial.printf("##SLOW#\t%s: %u мс\n", what, (unsigned)d);
+  if(d > 100 && d > yoSlowMs){ yoSlowMs = d; strlcpy(yoSlowWhat, what, sizeof(yoSlowWhat)); }
 }
   #define STEP(call) { uint32_t _t0 = millis(); call; yoSlow(#call, _t0); }
 #else
@@ -127,6 +134,13 @@ static inline void yoSlow(const char* what, uint32_t t0){
 
 void loop() {
 #ifdef YO_DEBUG
+  {
+    static uint32_t prev = 0;
+    uint32_t now = millis();
+    if(!yoLoopFrom) yoLoopFrom = now;
+    if(prev){ uint32_t d = now - prev; if(d > yoLoopMax) yoLoopMax = d; }
+    prev = now; yoLoopN++;
+  }
   yodbgLoop();
 #endif
   STEP(timekeeper.loop1());
@@ -140,6 +154,9 @@ void loop() {
 #endif
   }
   STEP(loopControls());
+#ifdef USE_YOMENU
+  STEP(yomenu.wifiTick());        /* пошук мереж — тут, а не в задачі дисплея */
+#endif
   STEP(extras.loop());
   #ifdef NETSERVER_LOOP1
   STEP(netserver.loop());

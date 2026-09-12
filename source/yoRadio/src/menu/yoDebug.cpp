@@ -9,6 +9,7 @@
 #include "../core/sdmanager.h"
 #include "../displays/dspcore.h"
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <SPIFFS.h>
 #include "../ES8311/yoES8311.h"
 #include "yoMenu.h"
@@ -306,7 +307,30 @@ void yodbgLoop(){
         timekeeper.waitAndDo((uint8_t)(hold > 250 ? 250 : hold), [](){ network.pauseSta(false); });
       }
     }
+    else if(!strcmp(buf,"wifikeep")){
+      /*  Записати мережу, у якій радіо зараз, у список — назву й пароль
+          бере в самого радіомодуля, тож набирати нічого не треба.  */
+      wifi_config_t c;
+      if(esp_wifi_get_config(WIFI_IF_STA, &c) != ESP_OK || !c.sta.ssid[0]){
+        Serial.println("радіомодуль не пам'ятає жодної мережі");
+      }else{
+        char line[110];
+        snprintf(line, sizeof(line), "%s\t%s\n", (const char*)c.sta.ssid, (const char*)c.sta.password);
+        config.saveWifiList(line);
+        config.setLastSSID(1);
+        Serial.printf("мережу %s збережено до списку\n", (const char*)c.sta.ssid);
+      }
+    }
     else if(!strcmp(buf,"page")){
+      extern char yoSlowWhat[40]; extern uint32_t yoSlowMs;
+      extern uint32_t yoLoopN, yoLoopMax, yoLoopFrom;
+      uint32_t secs = (millis() - yoLoopFrom) / 1000;
+      Serial.printf("цикл: %u обертів за %u с (%u/с), найдовший проміжок %u мс\n",
+                    (unsigned)yoLoopN, (unsigned)secs, (unsigned)(secs ? yoLoopN/secs : 0), (unsigned)yoLoopMax);
+      yoLoopN = 0; yoLoopMax = 0; yoLoopFrom = millis();
+      if(yoSlowMs) Serial.printf("найдовший крок циклу: %s %u мс\n", yoSlowWhat, (unsigned)yoSlowMs);
+      else         Serial.println("довгих кроків циклу не було");
+      yoSlowMs = 0; yoSlowWhat[0] = 0;
       Serial.printf("сторінка меню=%d активне=%d | режим екрана=%d\n",
         (int)yomenu.page(), yomenu.active()?1:0, (int)display.mode());
       Serial.printf("мережа: статус=%d втрачено=%d спроби спинено=%d спроб=%u status()=%d ssid='%s'\n",

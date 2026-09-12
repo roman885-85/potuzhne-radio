@@ -35,6 +35,7 @@ class YoMenu {
     bool active() const { return _cur != PG_OFF; }
     int8_t page() const { return _cur; }        /* для службової консолі */
     const char* rowName(int idx);               /* рядок списку — для plGenericDraw */
+    void wifiTick();                            /* з головного циклу: пошук мереж */
     bool fading() const { return _fadeStep >= 0; }   /* триває плавна зміна */
     void open();                 /* шестерня у шапці плеєра */
     void openWifi(bool lock = true);   /* одразу Wi-Fi; lock — без виходу (точка доступу) */
@@ -51,7 +52,7 @@ class YoMenu {
     /*  Сторінки 5 і 6 — мої доповнення, у Nextion їх немає.  */
     enum page_e { PG_OFF=-1, PG_INFO=0, PG_EQ=1, PG_WIFI=2, PG_TIME=3, PG_SYS=4,
                   PG_SLEEP=5, PG_NIGHT=6, PG_KBD=7, PG_FAV=8, PG_SERM=9, PG_HOME=10, PG_SETUP=11,
-                  PG_DEV=12, PG_DAC=13, PG_DACINFO=14, PG_POWER=15, PG_WSAVED=16, PG_N };   /* PG_N — завжди останній: розмір масиву сторінок */
+                  PG_DEV=12, PG_DAC=13, PG_DACINFO=14, PG_POWER=15, PG_WSAVED=16, PG_WPICK=17, PG_N };   /* PG_N — завжди останній: розмір масиву сторінок */
     static const uint8_t NSIDE = 7;   /* значків у лівій колонці */
 
     int8_t _cur = PG_OFF;
@@ -133,6 +134,12 @@ class YoMenu {
     char     _kbdTitleBuf[48] = {0};
     uint8_t  _kbdNext = 0;            /* 1 — після назви пароль, 2 — після пароля підключення */
     uint32_t _scanT0 = 0, _scanAgain = 0;   /* пошук не почався — за мить спробуємо ще */
+    volatile bool _scanReq = false;         /* сторінка попросила пошук; робить головний цикл */
+    /*  Стан мережі для малювання: питати радіомодуль із задачі дисплея не
+        можна — поки він перебирає канали, кожне питання коштує мілісекунд,
+        а таких питань на кожен кадр десяток.  */
+    char     _curSsid[33] = {0};
+    bool     _staUp = false;
     uint8_t  _scanFails = 0;
     /*  Списки проповідей і мереж — однакові: повноекранний список станцій
         з «лупою», кнопками ▲▼▶↶, прокруткою пальцем і накатом.  */
@@ -152,6 +159,9 @@ class YoMenu {
     int8_t   _wsArm = -1;             /* рядок, де спитали «забути?» */
     uint32_t _wsArmT = 0;
     void _drawSaved();
+    void _drawWpick();                /* що зробити з уже знайомою мережею */
+    int8_t   _wpArm = -1;             /* «забути?» на сторінці мережі */
+    uint32_t _wpArmT = 0;
     void _savedWrite();               /* _ssid/_pass → файл, без перезавантаження */
     void _stepper(int16_t x, int16_t y, int16_t w, int16_t h, bool plus);
     UiText    _info[8][2];
