@@ -776,10 +776,12 @@ static void batIcon(int16_t x, uint8_t pct, bool chg, bool low, uint8_t ph, uint
   if(lvl < 1) lvl = 1;
   dsp.fillRect(x + 2, by + 2, lvl, H - 4, lc);
   if(chg && !full){
-    /*  хвиля: від рівня до кінця, ph — її місце (0..BAT_N-1)  */
-    int16_t wp = lvl + (int16_t)((BAT_N - lvl) * (int)ph / BAT_N);
-    if(wp > lvl) dsp.fillRect(x + 2 + lvl, by + 2, wp - lvl, H - 4, 0x0320);   /* пройдене — тьмяно */
-    if(wp < BAT_N) dsp.fillRect(x + 2 + wp, by + 2, 2, H - 4, 0x07E0);         /* голова хвилі */
+    /*  Заряджання: заповнена частина спокійно дихає — розгоряється й
+        притухає у своєму ж кольорі. Нічого не бігає туди-сюди.  */
+    uint8_t t = ph < BAT_N/2 ? (uint8_t)(ph * 255 / (BAT_N/2))
+                             : (uint8_t)((BAT_N - 1 - ph) * 255 / (BAT_N/2));
+    uint16_t dim = lerp565(0x0000, lc, 90);            /* той самий колір, але притухлий */
+    dsp.fillRect(x + 2, by + 2, lvl, H - 4, lerp565(dim, lc, t));
   }
 }
 
