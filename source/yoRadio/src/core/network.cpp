@@ -24,6 +24,7 @@
 MyNetwork network;
 
 void MyNetwork::WiFiReconnected(WiFiEvent_t event, WiFiEventInfo_t info){
+  if(network._try == TRY_RUN) network._try = TRY_OK;
   network.beginReconnect = false;
   network.linkLost = false;
   network._reTry = 0;
@@ -51,6 +52,16 @@ void MyNetwork::WiFiReconnected(WiFiEvent_t event, WiFiEventInfo_t info){
 }
 
 void MyNetwork::WiFiLostConnection(WiFiEvent_t event, WiFiEventInfo_t info){
+  /*  Спроба, яку замовила людина: одразу кажемо, чому не вийшло.  */
+  if(network._try == TRY_RUN){
+    uint8_t r = info.wifi_sta_disconnected.reason;
+    if(r == WIFI_REASON_NO_AP_FOUND)            network._try = TRY_NOTFOUND;
+    else if(r == WIFI_REASON_AUTH_FAIL || r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
+            r == WIFI_REASON_HANDSHAKE_TIMEOUT || r == WIFI_REASON_AUTH_EXPIRE ||
+            r == WIFI_REASON_MIC_FAILURE)        network._try = TRY_BADPASS;
+    else if(millis() - network._tryAt > 6000)    network._try = TRY_FAIL;
+    return;                      /* нічого не зупиняємо: ми ще не були в мережі */
+  }
   if(!network.beginReconnect){
     Serial.printf("Lost connection, reconnecting to %s...\n", config.ssids[config.store.lastSSID-1].ssid);
     if(config.getMode()==PM_SDCARD) {
@@ -161,6 +172,11 @@ void searchWiFi(void * pvParameters){
 
 void MyNetwork::begin() {
   BOOTLOG("network.begin");
+  /*  Вимикаємо перш за все: інакше в режимі точки доступу ядро саме
+      підключається до запам'ятованої мережі, раз за разом, без пауз —
+      і забирає ядро 0 собі. Екран у цей час ледве повзе, а сторожовий
+      таймер перезавантажує радіо.  */
+  WiFi.setAutoReconnect(false);
   config.initNetwork();
   if (config.ssidsCount == 0 && !DBGAP && wifiRemembered()) {
     /*  Список пропав, але драйвер Wi-Fi пам'ятає останню мережу сам —
@@ -242,6 +258,10 @@ void rebootTime() {
 }
 
 void MyNetwork::raiseSoftAP() {
+  /*  Станцію зупиняємо: жодних спроб у фоні, поки людина сама не вибере
+      мережу. Дані мережі при цьому лишаються (erase=false).  */
+  WiFi.setAutoReconnect(false);
+  esp_wifi_disconnect();
   WiFi.mode(WIFI_AP);
   WiFi.softAP(apSsid, apPassword);
   Serial.println("##[BOOT]#");
@@ -259,6 +279,9 @@ void MyNetwork::raiseSoftAP() {
     збережені мережі перебираємо по черзі. Якщо тієї, що була, більше немає —
     радіо саме перейде на іншу знайому, і все це не чіпає ні звук, ні дотики.  */
 void MyNetwork::loop(){
+  if(_try == TRY_RUN && millis() - _tryAt > 15000) _try = TRY_FAIL;   /* мовчить — годі чекати */
+  if(_try == TRY_OK && status != CONNECTED) _staUp();
+  if(_try != TRY_NONE) return;               /* поки триває спроба людини — не заважаємо */
   if(status == SOFT_AP || !linkLost) return;
   if(WiFi.status() == WL_CONNECTED) return;            /* подія про адресу ось-ось прийде */
   if(staPaused){
@@ -295,6 +318,35 @@ void MyNetwork::pauseSta(bool on){
     _reTry = 0;
     _reAt = millis() + 800;
   }
+}
+
+/*  Підключитись просто зараз: без перезавантаження й з негайною відповіддю.
+    Відповідь дає подія: невірний пароль, мережі не видно чи вийшло.  */
+void MyNetwork::connectTo(const char* ssid, const char* pass){
+  strlcpy(_tryS, ssid, sizeof(_tryS));
+  strlcpy(_tryP, pass ? pass : "", sizeof(_tryP));
+  _try = TRY_RUN;
+  _tryAt = millis();
+  staPaused = false;
+  WiFi.setAutoReconnect(false);
+  if(WiFi.getMode() == WIFI_AP)      WiFi.mode(WIFI_AP_STA);
+  else if(WiFi.getMode() == WIFI_OFF) WiFi.mode(WIFI_STA);
+  esp_wifi_disconnect();
+  WiFi.begin(_tryS, _tryP);
+}
+
+/*  Мережа з'явилась на ходу (були в точці доступу) — піднімаємо служби, як
+    це робить пошук мережі при старті.  */
+void MyNetwork::_staUp(){
+  status = CONNECTED;
+  if(!_staReady){
+    _staReady = true;
+    netserver.begin(true);
+    telnet.begin(true);
+    setWifiParams();
+  }
+  display.putRequest(NEWIP, 0);
+  display.putRequest(NEWMODE, PLAYER);
 }
 
 void MyNetwork::requestWeatherSync(){

@@ -147,8 +147,11 @@ void loop() {
   STEP(config.eepromLoop());      /* відкладений запис налаштувань */
   STEP(network.loop());           /* мережа зникла — повертаємось у неї без зупинок */
   STEP(telnet.loop());
+  /*  Плеєр крутимо завжди: навіть без мережі його чергу треба розгрібати,
+      інакше вона забивається, а той, хто в неї пише (задача екрана), стоїть
+      на кожній посилці. Саме через це радіо «тормозило» без мережі.  */
+  STEP(player.loop());
   if (network.status == CONNECTED || network.status==SDREADY) {
-    STEP(player.loop());
 #if USE_OTA
     STEP(ArduinoOTA.handle());
 #endif

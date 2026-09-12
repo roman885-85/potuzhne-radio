@@ -9,6 +9,9 @@
 class RowCanvas : public Adafruit_GFX {
   public:
     RowCanvas() : Adafruit_GFX(1,1) {}
+    /*  Обмежити письмо тексту зліва направо: далі в рядку намальовані
+        значки (замок, сигнал), і бігуча назва не повинна лізти під них.  */
+    void setClipW(int16_t w){ _clipW = w > 0 ? w : 32767; }
     void setBuffer(uint16_t* buf, int16_t w, int16_t h){
       _buf = buf; _bw = w; _bh = h; _width = w; _height = h;
     }
@@ -59,13 +62,13 @@ class RowCanvas : public Adafruit_GFX {
             bit++;
             if((bits & 0x80) && on){
               int16_t px = gx + xx;
-              if(px >= 0 && px < _bw) line[px] = col;
+              if(px >= 0 && px < _bw && px < _clipW) line[px] = col;
             }
             bits <<= 1;
           }
         }
         x += pgm_read_byte(&g->xAdvance);
-        if(x >= _bw) break;
+        if(x >= _bw || x >= _clipW) break;
       }
     }
     /*  Заливка кількох рядків буфера одним кольором — по два пікселі за раз.  */
@@ -93,6 +96,7 @@ class RowCanvas : public Adafruit_GFX {
     }
   private:
     uint16_t* _buf = nullptr; int16_t _bw = 0, _bh = 0;
+    int16_t _clipW = 32767;          /* праворуч від цього в рядку живуть значки */
     int16_t _b0 = 0, _b1 = 0; uint16_t _fgBand = 0; bool _swap = false;
 };
 static RowCanvas _rowCanvas;
@@ -1544,7 +1548,7 @@ uint16_t plTextWidth(const char* utf8){
   return w;
 }
 
-void plGenericDraw(float pos, int count, const char* (*nameAt)(int), int16_t shift, bool bandOnly, int playIdx, int16_t wrapW){
+void plGenericDraw(float pos, int count, const char* (*nameAt)(int), int16_t shift, bool bandOnly, int playIdx, int16_t wrapW, int16_t rightPad){
   static uint16_t* row = nullptr;
   if(!row){
     row = (uint16_t*)heap_caps_malloc((size_t)PL_LIST_W * PL_ROW_H * 2, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
@@ -1559,6 +1563,7 @@ void plGenericDraw(float pos, int count, const char* (*nameAt)(int), int16_t shi
   int16_t off = (int16_t)(frac * PL_ROW_H);
   _rowCanvas.setBuffer(row, PL_LIST_W, PL_ROW_H);
   _rowCanvas.setSwap(true);
+  _rowCanvas.setClipW(rightPad > 0 ? PL_LIST_W - rightPad : 0);
   dsp.startWrite();
   for(int r = -1; r <= PL_ROWS; r++){
     if(bandOnly && r != PL_CUR) continue;
@@ -1586,6 +1591,7 @@ void plGenericDraw(float pos, int count, const char* (*nameAt)(int), int16_t shi
   }
   dsp.endWrite();
   _rowCanvas.setSwap(false);
+  _rowCanvas.setClipW(0);
 }
 
 void PlayListWidget::_printPLitem(uint8_t pos, const char* item){

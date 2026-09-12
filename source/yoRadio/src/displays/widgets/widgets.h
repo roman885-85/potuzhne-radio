@@ -342,7 +342,7 @@ class BitrateWidget: public Widget {
     bandOnly — перемалювати лише його.  */
 void plGenericChrome();
 void plGenericButton(uint8_t i, bool on);
-void plGenericDraw(float pos, int count, const char* (*nameAt)(int), int16_t shift, bool bandOnly, int playIdx = -1, int16_t wrapW = 0);
+void plGenericDraw(float pos, int count, const char* (*nameAt)(int), int16_t shift, bool bandOnly, int playIdx = -1, int16_t wrapW = 0, int16_t rightPad = 0);
 uint16_t plTextWidth(const char* utf8);
 enum { PLB_UP = 0, PLB_DOWN, PLB_PLAY, PLB_BACK };
 

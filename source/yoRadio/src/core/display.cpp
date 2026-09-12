@@ -37,7 +37,7 @@ Nextion nextion;
   #define CORE_STACK_SIZE  1024*4
 #endif
 #ifndef DSP_TASK_PRIORITY
-  #define DSP_TASK_PRIORITY  2
+  #define DSP_TASK_PRIORITY  4
 #endif
 #ifndef DSP_TASK_CORE_ID
   #define DSP_TASK_CORE_ID  0
@@ -55,16 +55,45 @@ Nextion nextion;
 
 QueueHandle_t displayQueue;
 
+#ifdef YO_DEBUG
+uint32_t yoDspN = 0, yoDspMax = 0, yoDspFrom = 0, yoDspDraw = 0, yoDspNet = 0;
+uint32_t yoMenuMs = 0, yoFadeMs = 0;   /* скільки триває саме меню й наплив */
+char     yoDspWhat[24] = {0};          /* найдовший крок відмальовки плеєра */
+uint32_t yoDspWhatMs = 0;
+#define DSTEP(call) { uint32_t _s0 = millis(); call; uint32_t _sd = millis() - _s0; \
+                      if(_sd > yoDspWhatMs){ yoDspWhatMs = _sd; strlcpy(yoDspWhat, #call, sizeof(yoDspWhat)); } }
+#endif
+
 static void loopDspTask(void * pvParameters){
   while(true){
   #ifndef DUMMYDISPLAY
     if(displayQueue==NULL) break;
+#ifdef YO_DEBUG
+    /*  Скільки встигає задача екрана й хто в ній довгий: саме тут і дотик
+        «відстає від пальця», навіть коли головний цикл летить.  */
+    {
+      static uint32_t prev = 0;
+      uint32_t t0 = millis();
+      if(!yoDspFrom) yoDspFrom = t0;
+      if(prev){ uint32_t d = t0 - prev; if(d > yoDspMax) yoDspMax = d; }
+      prev = t0; yoDspN++;
+      if(timekeeper.loop0()){
+        display.loop();
+        uint32_t t1 = millis(); if(t1 - t0 > yoDspDraw) yoDspDraw = t1 - t0;
+      #ifndef NETSERVER_LOOP1
+        netserver.loop();
+        uint32_t t2 = millis(); if(t2 - t1 > yoDspNet) yoDspNet = t2 - t1;
+      #endif
+      }
+    }
+#else
     if(timekeeper.loop0()){
       display.loop();
     #ifndef NETSERVER_LOOP1
       netserver.loop();
     #endif
     }
+#endif
   #else
     timekeeper.loop0();
     #ifndef NETSERVER_LOOP1
@@ -1206,7 +1235,11 @@ void Display::loop() {
   if(displayQueue==NULL || _locked) return;
   /*  Такт плавної зміни — до всіх дострокових виходів: якщо піти раніше,
       зміна застрягне на погашеній підсвітці.  */
+#ifdef YO_DEBUG
+  { uint32_t f0 = millis(); fadeLoop(); uint32_t d = millis() - f0; if(d > yoFadeMs) yoFadeMs = d; }
+#else
   fadeLoop();
+#endif
 #if DSP_MODEL==DSP_ILI9341
   if(_plFinal){
     _plFinal = false;
@@ -1229,7 +1262,11 @@ void Display::loop() {
       опустошается — иначе накопившиеся запросы вывалятся на экран разом,
       как только меню закроют.  */
   if(yomenu.active() || yomenu.fading()){
+#ifdef YO_DEBUG
+    { uint32_t m0 = millis(); yomenu.render(); uint32_t d = millis() - m0; if(d > yoMenuMs) yoMenuMs = d; }
+#else
     yomenu.render();
+#endif
     requestParams_t drop;
     while(xQueueReceive(displayQueue, &drop, 0)) { }
     return;
@@ -1254,12 +1291,21 @@ void Display::loop() {
 #endif
   /*  веб змінив те, що видно на плеєрі (IP, батарея, картка), — перемалювати  */
   if(_redrawReq && _mode == PLAYER && !fading()){ _redrawReq = false; forceRedraw(); }
+#ifdef YO_DEBUG
+  DSTEP(_pager->loop());
+  DSTEP(_statusBar());
+  DSTEP(_sermonLayout());
+  DSTEP(_stationLogo());
+  DSTEP(_favMain());
+  DSTEP(_lowBat());
+#else
   _pager->loop();
   _statusBar();
   _sermonLayout();
   _stationLogo();
   _favMain();
   _lowBat();
+#endif
 #ifdef USE_NEXTION
   nextion.loop();
 #endif

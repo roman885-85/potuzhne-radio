@@ -10,6 +10,7 @@
 #include "../displays/dspcore.h"
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include "freertos_stats.h"
 #include <SPIFFS.h>
 #include "../ES8311/yoES8311.h"
 #include "yoMenu.h"
@@ -307,6 +308,16 @@ void yodbgLoop(){
         timekeeper.waitAndDo((uint8_t)(hold > 250 ? 250 : hold), [](){ network.pauseSta(false); });
       }
     }
+    else if(!strcmp(buf,"tasks")){
+      /*  Хто скільки процесора з'їв: список задач FreeRTOS від самого ядра.  */
+      printRunningTasks(Serial);
+    }
+    else if(!strcmp(buf,"wifioff")){
+      /*  Погасити радіомодуль зовсім — перевірити, чи це він душить екран.  */
+      WiFi.scanDelete();
+      WiFi.mode(WIFI_OFF);
+      Serial.println("радіомодуль вимкнено");
+    }
     else if(!strcmp(buf,"wifikeep")){
       /*  Записати мережу, у якій радіо зараз, у список — назву й пароль
           бере в самого радіомодуля, тож набирати нічого не треба.  */
@@ -328,11 +339,24 @@ void yodbgLoop(){
       Serial.printf("цикл: %u обертів за %u с (%u/с), найдовший проміжок %u мс\n",
                     (unsigned)yoLoopN, (unsigned)secs, (unsigned)(secs ? yoLoopN/secs : 0), (unsigned)yoLoopMax);
       yoLoopN = 0; yoLoopMax = 0; yoLoopFrom = millis();
+      extern uint32_t yoDspN, yoDspMax, yoDspFrom, yoDspDraw, yoDspNet;
+      uint32_t ds = (millis() - yoDspFrom) / 1000;
+      Serial.printf("екран: %u кадрів за %u с (%u/с), найдовший проміжок %u мс; малювання %u мс, веб %u мс\n",
+                    (unsigned)yoDspN, (unsigned)ds, (unsigned)(ds ? yoDspN/ds : 0),
+                    (unsigned)yoDspMax, (unsigned)yoDspDraw, (unsigned)yoDspNet);
+      extern uint32_t yoMenuMs, yoFadeMs, yoDspWhatMs; extern char yoDspWhat[24];
+      Serial.printf("  з них: меню %u мс, наплив %u мс, плеєр: %s %u мс\n",
+                    (unsigned)yoMenuMs, (unsigned)yoFadeMs,
+                    yoDspWhat[0] ? yoDspWhat : "-", (unsigned)yoDspWhatMs);
+      yoMenuMs = 0; yoFadeMs = 0; yoDspWhatMs = 0; yoDspWhat[0] = 0;
+      yoDspN = 0; yoDspMax = 0; yoDspDraw = 0; yoDspNet = 0; yoDspFrom = millis();
       if(yoSlowMs) Serial.printf("найдовший крок циклу: %s %u мс\n", yoSlowWhat, (unsigned)yoSlowMs);
       else         Serial.println("довгих кроків циклу не було");
       yoSlowMs = 0; yoSlowWhat[0] = 0;
       Serial.printf("сторінка меню=%d активне=%d | режим екрана=%d\n",
         (int)yomenu.page(), yomenu.active()?1:0, (int)display.mode());
+      Serial.printf("пошук: іде=%d знайдено=%u scanComplete=%d режим=%d\n",
+        yomenu.scanning()?1:0, (unsigned)yomenu.scanCount(), (int)WiFi.scanComplete(), (int)WiFi.getMode());
       Serial.printf("мережа: статус=%d втрачено=%d спроби спинено=%d спроб=%u status()=%d ssid='%s'\n",
         (int)network.status, network.linkLost?1:0, network.staPaused?1:0,
         (unsigned)network.lostTries(), (int)WiFi.status(), WiFi.SSID().c_str());

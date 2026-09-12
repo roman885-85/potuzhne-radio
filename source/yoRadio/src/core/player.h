@@ -15,7 +15,13 @@
 #define YO_BROWSEURL
 
 #ifndef PLQ_SEND_DELAY
-  #define PLQ_SEND_DELAY pdMS_TO_TICKS(1000) //portMAX_DELAY
+  /*  Черга плеєра на п'ять місць. Якщо її ніхто не розгрібає (а без мережі
+      player.loop() не викликався зовсім), то кожна посилка чекала цілу
+      секунду — і це заморожувало того, хто посилає. А посилає задача екрана,
+      двічі на дві секунди: екран оживав раз на дві секунди, дотик наче
+      зависав. Команда рівня чи перевірки картки не варта жодної секунди —
+      краще її загубити.  */
+  #define PLQ_SEND_DELAY pdMS_TO_TICKS(20) //portMAX_DELAY
 #endif
 
 enum playerRequestType_e : uint8_t { PR_PLAY = 1, PR_STOP = 2, PR_PREV = 3, PR_NEXT = 4, PR_VOL = 5, PR_CHECKSD = 6, PR_VUTONUS = 7, PR_BURL = 8, PR_TOGGLE = 9 };
