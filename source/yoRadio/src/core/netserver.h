@@ -24,7 +24,7 @@ const char emptyfs_html[] PROGMEM = R"~(
 </form>
 <form name="wifiform" method="post" enctype="multipart/form-data" id="wupload">
 <section class="card"><h2>Wi-Fi</h2>
-<p class="note">Необов'язково: якщо з комп'ютера не відкривається 192.168.4.1, спершу підключіть радіо до своєї мережі.</p>
+<p class="note">Сторінка радіо доступна, лише коли воно в мережі. Мережу виберіть на самому радіо: торкніться екрана й візьміть її зі списку.</p>
 <label class="f" for="ssid">Назва мережі</label><input type="text" id="ssid" name="ssid" value="" maxlength="30" autocomplete="off">
 <label class="f" for="pass">Пароль</label><input type="password" id="pass" name="pass" value="" maxlength="40" autocomplete="off">
 <div class="bar"><button class="btn" type="submit">Зберегти мережу</button></div>

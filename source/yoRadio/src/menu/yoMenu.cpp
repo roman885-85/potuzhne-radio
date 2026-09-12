@@ -1400,9 +1400,9 @@ void YoMenu::_drawSaved(){
     snprintf(t, sizeof(t), "%s", utf8Rus("жодної мережі не збережено", false));
     dsp.setCursor((SW - (int16_t)textW(t)) / 2, 110); dsp.print(t);
     dsp.setFont(&yoUI8); dsp.setTextColor(C_ACC);
-    snprintf(t, sizeof(t), "%s", utf8Rus("після перезавантаження радіо", false));
+    snprintf(t, sizeof(t), "%s", utf8Rus("виберіть мережу зі списку —", false));
     dsp.setCursor((SW - (int16_t)textW(t)) / 2, 140); dsp.print(t);
-    snprintf(t, sizeof(t), "%s", utf8Rus("підніме точку доступу PotuzhneRadio", false));
+    snprintf(t, sizeof(t), "%s", utf8Rus("радіо запам'ятає її саме", false));
     dsp.setCursor((SW - (int16_t)textW(t)) / 2, 156); dsp.print(t);
     dsp.setFont();
     return;
