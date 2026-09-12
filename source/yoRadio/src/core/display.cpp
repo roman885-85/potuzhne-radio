@@ -325,13 +325,13 @@ void Display::_apScreen() {
     TextWidget *apname = (TextWidget*) &_boot->addWidget(new TextWidget(apNameConf, 30, false, config.theme.title1, config.theme.background));
     apname->setText(LANG::apNameTxt);
     TextWidget *apname2 = (TextWidget*) &_boot->addWidget(new TextWidget(apName2Conf, 30, false, config.theme.clock, config.theme.background));
-    apname2->setText(apSsid);
+    apname2->setText("");
     TextWidget *appass = (TextWidget*) &_boot->addWidget(new TextWidget(apPassConf, 30, false, config.theme.title1, config.theme.background));
     appass->setText(LANG::apPassTxt);
     TextWidget *appass2 = (TextWidget*) &_boot->addWidget(new TextWidget(apPass2Conf, 30, false, config.theme.clock, config.theme.background));
-    appass2->setText(apPassword);
+    appass2->setText("щоб вибрати мережу");
     ScrollWidget *bootSett = (ScrollWidget*) &_boot->addWidget(new ScrollWidget("*", apSettConf, config.theme.title2, config.theme.background));
-    bootSett->setText(config.ipToStr(WiFi.softAPIP()), LANG::apSettFmt);
+    bootSett->setText("", LANG::apSettFmt);
     _pager->addPage(_boot);
     _pager->setPage(_boot);
   #else

@@ -55,11 +55,21 @@ void MyNetwork::WiFiLostConnection(WiFiEvent_t event, WiFiEventInfo_t info){
   /*  Спроба, яку замовила людина: одразу кажемо, чому не вийшло.  */
   if(network._try == TRY_RUN){
     uint8_t r = info.wifi_sta_disconnected.reason;
+    Serial.printf("##WIFI#\t%s: відмова %u (%s)\n", network._tryS, (unsigned)r,
+                  WiFi.disconnectReasonName((wifi_err_reason_t)r));
+    /*  Перша відмова часто хибна: маршрутизатор буває зайнятий, а драйвер
+        одразу каже «не той пароль». Одну спробу робимо мовчки ще раз.  */
+    if(network._tryAgain < 1 && r != WIFI_REASON_NO_AP_FOUND){
+      network._tryAgain++;
+      network._tryAt = millis();
+      WiFi.begin(network._tryS, network._tryP);
+      return;
+    }
     if(r == WIFI_REASON_NO_AP_FOUND)            network._try = TRY_NOTFOUND;
     else if(r == WIFI_REASON_AUTH_FAIL || r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
             r == WIFI_REASON_HANDSHAKE_TIMEOUT || r == WIFI_REASON_AUTH_EXPIRE ||
             r == WIFI_REASON_MIC_FAILURE)        network._try = TRY_BADPASS;
-    else if(millis() - network._tryAt > 6000)    network._try = TRY_FAIL;
+    else                                         network._try = TRY_FAIL;
     return;                      /* нічого не зупиняємо: ми ще не були в мережі */
   }
   if(!network.beginReconnect){
@@ -177,6 +187,13 @@ void MyNetwork::begin() {
       і забирає ядро 0 собі. Екран у цей час ледве повзе, а сторожовий
       таймер перезавантажує радіо.  */
   WiFi.setAutoReconnect(false);
+  /*  Події підписуємо одразу, а не лише коли мережа знайшлась на старті:
+      у режимі точки доступу setWifiParams() не викликався ніколи, і спроба
+      підключитись із меню не мала як сказати ні про успіх, ні про відмову —
+      просто мовчала до кінця очікування.  */
+  WiFi.onEvent(WiFiReconnected, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
+  WiFi.onEvent(WiFiLostConnection, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  _evReady = true;
   config.initNetwork();
   if (config.ssidsCount == 0 && !DBGAP && wifiRemembered()) {
     /*  Список пропав, але драйвер Wi-Fi пам'ятає останню мережу сам —
@@ -225,8 +242,11 @@ void MyNetwork::setWifiParams(){
   /*  Перепідключенням керуємо самі (loop()): у ядра воно без пауз і без
       переходу на інші збережені мережі.  */
   WiFi.setAutoReconnect(false);
-  WiFi.onEvent(WiFiReconnected, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
-  WiFi.onEvent(WiFiLostConnection, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  if(!_evReady){
+    WiFi.onEvent(WiFiReconnected, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
+    WiFi.onEvent(WiFiLostConnection, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+    _evReady = true;
+  }
   //config.setTimeConf(); //??
   if(strlen(config.store.mdnsname)>0 && MDNS.begin(config.store.mdnsname)){
     /*  Оголошуємо радіо в мережі, щоб програми-клієнти (Mac, Windows,
@@ -257,35 +277,42 @@ void rebootTime() {
   ESP.restart();
 }
 
+/*  Власної точки доступу більше немає — на прохання власника. Мережу
+    вибирають на самому радіо, в меню, а точка лише заважала: у парі
+    «точка + станція» обидві мусять сидіти на одному каналі, і підключення
+    до мережі на іншому каналі зривалось навіть із правильним паролем.
+    Стан лишається той самий (SOFT_AP = «мережі немає»), його знає решта коду. */
 void MyNetwork::raiseSoftAP() {
-  /*  Станцію зупиняємо: жодних спроб у фоні, поки людина сама не вибере
-      мережу. Дані мережі при цьому лишаються (erase=false).  */
   WiFi.setAutoReconnect(false);
   esp_wifi_disconnect();
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(apSsid, apPassword);
+  WiFi.mode(WIFI_STA);
+  status = SOFT_AP;
   Serial.println("##[BOOT]#");
   BOOTLOG("************************************************");
-  BOOTLOG("Running in AP mode");
-  BOOTLOG("Connect to AP %s with password %s", apSsid, apPassword);
-  BOOTLOG("and go to http:/192.168.4.1/ to configure");
+  BOOTLOG("Мережі немає. Торкніться екрана радіо й виберіть її зі списку.");
   BOOTLOG("************************************************");
-  status = SOFT_AP;
-  if(config.store.softapdelay>0)
-    timekeeper.waitAndDo(config.store.softapdelay*60, rebootTime);
 }
 
 /*  Повернення в мережу: одна спроба за раз, пауза між ними росте, а
     збережені мережі перебираємо по черзі. Якщо тієї, що була, більше немає —
     радіо саме перейде на іншу знайому, і все це не чіпає ні звук, ні дотики.  */
 void MyNetwork::loop(){
-  if(_try == TRY_RUN && millis() - _tryAt > 15000) _try = TRY_FAIL;   /* мовчить — годі чекати */
+  /*  Не покладаємось лише на події: питаємо і сам стан станції.  */
+  if(_try == TRY_RUN){
+    wl_status_t st = WiFi.status();
+    if(st == WL_CONNECTED)            _try = TRY_OK;
+    else if(st == WL_NO_SSID_AVAIL && millis() - _tryAt > 4000)  _try = TRY_NOTFOUND;
+    else if(st == WL_CONNECT_FAILED && millis() - _tryAt > 4000) _try = TRY_BADPASS;
+    else if(st == WL_DISCONNECTED && _tryAgain < 2 && millis() - _tryAt > 2500){
+      /*  Модуль навіть не взявся за справу — просимо ще раз.  */
+      _tryAgain++; _tryAt = millis();
+      Serial.printf("##WIFI#\t%s: мовчить, прошу ще раз (%u)\n", _tryS, (unsigned)_tryAgain);
+      WiFi.begin(_tryS, _tryP);
+    }
+    else if(millis() - _tryAt > 15000) _try = TRY_FAIL;          /* мовчить — годі чекати */
+  }
   if(_try == TRY_OK && status != CONNECTED) _staUp();
   /*  Не вийшло — точку доступу повертаємо, щоб радіо не лишилось без нічого.  */
-  if(_apWas && (_try == TRY_BADPASS || _try == TRY_NOTFOUND || _try == TRY_FAIL)){
-    _apWas = false;
-    WiFi.mode(WIFI_AP_STA);
-  }
   if(_try == TRY_OK) _apWas = false;
   if(_try != TRY_NONE) return;               /* поки триває спроба людини — не заважаємо */
   if(status == SOFT_AP || !linkLost) return;
@@ -338,10 +365,17 @@ void MyNetwork::connectTo(const char* ssid, const char* pass){
   /*  Своя точка доступу на час спроби йде геть: у парі «точка + станція»
       обидві мусять сидіти на одному каналі, і підключення до мережі на
       іншому каналі зривається. Не вийде — повернемо її назад.  */
-  _apWas = (WiFi.getMode() & WIFI_MODE_AP) != 0;
-  WiFi.mode(WIFI_STA);
+  _tryAgain = 0;
+  if(WiFi.getMode() != WIFI_STA){ WiFi.mode(WIFI_STA); delay(60); }
+  /*  Поки триває пошук мереж, підключення просто не починається: радіомодуль
+      зайнятий перебором каналів, і команду мовчки відкидають. Спершу пошук
+      зупиняємо й чекаємо, доки він справді скінчиться.  */
+  esp_wifi_scan_stop();
+  for(uint8_t i = 0; i < 20 && WiFi.scanComplete() == WIFI_SCAN_RUNNING; i++) delay(50);
+  WiFi.scanDelete();
   esp_wifi_disconnect();
-  WiFi.begin(_tryS, _tryP);
+  wl_status_t r = WiFi.begin(_tryS, _tryP);
+  Serial.printf("##WIFI#\tспроба підключитись до %s (begin=%d)\n", _tryS, (int)r);
 }
 
 /*  Мережа з'явилась на ходу (були в точці доступу) — піднімаємо служби, як

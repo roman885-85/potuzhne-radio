@@ -764,7 +764,7 @@ void YoMenu::_infoLive(){
     snprintf(b, sizeof(b), "%d dBm", (int)WiFi.RSSI());
   }else{
     _info[1][1].setText("точка доступу");
-    _info[2][1].setText(WiFi.softAPIP().toString().c_str());
+    _info[2][1].setText("немає");
     snprintf(b, sizeof(b), "-");
   }
   _info[3][1].setText(b);
@@ -1233,7 +1233,7 @@ void YoMenu::wifiTick(){
   if(_cur != PG_WIFI && !_scanning && !_scanReq) return;
   if(_scanReq){
     _scanReq = false;
-    if(WiFi.getMode() == WIFI_AP) WiFi.mode(WIFI_AP_STA);
+    if(WiFi.getMode() != WIFI_STA) WiFi.mode(WIFI_STA);   /* точки доступу в нас немає */
     /*  Поки радіо намагається повернутися в мережу, пошук не стартує зовсім:
         радіомодуль один. Тому спершу спиняємо спроби.  */
     network.pauseSta(true);
@@ -1575,6 +1575,7 @@ void YoMenu::_wifiPick(uint8_t i){
     до наступної збереженої, а ми після старту скажемо, що не вдалося.  */
 void YoMenu::_wifiConnect(){
   if(!_wSsid[0]) return;
+  _scanReq = false; _scanning = false;      /* пошук більше не потрібен — він лише заважає */
   /*  Пробуємо просто зараз. У список мережу запишемо, лише коли вийде —
       невірний пароль там ні до чого.  */
   network.tryClear();
@@ -2171,6 +2172,9 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
           _ssid[YOM_SSIDS-1][0] = 0; _pass[YOM_SSIDS-1][0] = 0;
           _savedWrite();
         }
+        /*  Забули — значить і в пам'яті меню пароля більше нема: наступного
+            разу поле має бути порожнім, а не зі старим, негодящим.  */
+        _wPass[0] = 0; _wSsid[0] = 0;
         _show(PG_WIFI);
       }else{ _wpArm = 0; _wpArmT = millis(); _favDirty = true; }
       return;
@@ -2193,6 +2197,7 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
           }
           _ssid[YOM_SSIDS-1][0] = 0; _pass[YOM_SSIDS-1][0] = 0;
           _savedWrite();
+          _wPass[0] = 0; _wSsid[0] = 0;
         }else{ _wsArm = i; _wsArmT = millis(); }
         _favDirty = true;
         return;
