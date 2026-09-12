@@ -186,6 +186,11 @@ class YoMenu {
     size_t _kbdMax = 0;
     uint8_t _kbdPage = 0;
     bool   _kbdIsPass = false;
+    bool   _kbdShow = true;           /* пароль видно, поки не сховали оком */
+    int16_t _kbFlashX = -1, _kbFlashY = 0, _kbFlashW = 0, _kbFlashH = 0;
+    uint32_t _kbFlashT = 0;           /* підсвітка натиснутої клавіші */
+    void   _kbdRefresh();             /* рядок вводу: зірочки чи самі знаки */
+    void   _drawKbdEye();
     int8_t _kbdBack = PG_WIFI;
     const char* _kbdTitle = "";
 
