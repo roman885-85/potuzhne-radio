@@ -1243,7 +1243,7 @@ VIEWS.wifi = page => {
       h('span', { class: 'pill' + (i === 0 ? ' acc' : '') }, i + 1),
       h('div', { class: 'lbl' }, h('b', null, s), s === data.cur ? h('small', null, 'підключено') : null),
       i > 0 ? btn('Першою', 'up', async () => { await setx({ wifiFirst: s }); load(); }, 'sm ghost') : null,
-      data.saved.length > 1 ? ibtn('trash', 'Забути', async () => { if (await confirmBox('Забути мережу?', `«${s}» і її пароль буде видалено з радіо.`, 'Забути', true)) { await setx({ wifiForget: s }); load(); } }, 'ghost sm') : null)));
+      ibtn('trash', 'Забути', async () => { if (await confirmBox('Забути мережу?', data.saved.length > 1 ? `«${s}» і її пароль буде видалено з радіо.` : `«${s}» і її пароль буде видалено з радіо. Це остання збережена мережа: після перезавантаження радіо підніме власну точку доступу PotuzhneRadio.`, 'Забути', true)) { await setx({ wifiForget: s }); load(); } }, 'ghost sm'))));
     scan.textContent = '';
     if (data.busy) scan.append(h('div', { class: 'none' }, 'Шукаю мережі…'));
     else if (!data.scan.length) scan.append(h('div', { class: 'none' }, 'Натисніть «Шукати».'));

@@ -1125,7 +1125,12 @@ void Display::_swichMode(displayMode_e newmode) {
     #endif
     _nums->setText(config.store.volume, numtxtFmt);
   }
-  if (newmode == LOST)      _showDialog(LANG::const_DlgLost);
+  if (newmode == LOST){
+    _showDialog(LANG::const_DlgLost);
+    /*  Замість адреси, якої вже немає, — що робити далі: дотик по цьому
+        екрану веде просто до списку мереж.  */
+    if(_volip) _volip->setText("дотик - вибрати мережу");
+  }
   if (newmode == UPDATING)  _showDialog(LANG::const_DlgUpdate);
   if (newmode == SLEEPING)  _showDialog("SLEEPING");
   if (newmode == SDCHANGE)  _showDialog(LANG::const_waitForSD);

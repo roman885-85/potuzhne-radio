@@ -10,6 +10,7 @@
 #include "telnet.h"
 #include "rtcsupport.h"
 #include "../displays/tools/l10n.h"
+#include <Preferences.h>
 #ifdef USE_SD
 #include "sdmanager.h"
 #endif
@@ -922,7 +923,39 @@ bool Config::parseSsid(const char* line, char* ssid, char* pass) {
   return true;
 }
 
+/*  ---------- список мереж: файл і його копія в NVS ----------
+    Файл на SPIFFS одного разу лишився порожнім — і радіо після
+    перезавантаження опинилось без жодної мережі, у точці доступу, звідки
+    без пароля не вийти. Тепер поруч у NVS лежить копія: старт підхоплює її,
+    якщо файл порожній. Забули всі мережі свідомо — копія теж зникає.  */
+static void wifiBackupSave(const char* text){
+  Preferences p;
+  if(!p.begin("wifibk", false)) return;
+  if(text && *text){ p.putString("list", text); p.remove("wiped"); }
+  else             { p.remove("list");          p.putBool("wiped", true); }
+  p.end();
+}
+
+/*  Список спорожнили свідомо («забути» останню мережу) — тоді й підхоплювати
+    з пам'яті радіомодуля нічого не треба, інакше «забути» не забуває.  */
+bool Config::wifiWiped(){
+  Preferences p; bool v = false;
+  if(!p.begin("wifibk", true)) return false;
+  v = p.getBool("wiped", false);
+  p.end();
+  return v;
+}
+
+static String wifiBackupLoad(){
+  Preferences p; String v;
+  if(!p.begin("wifibk", true)) return v;
+  v = p.getString("list", "");
+  p.end();
+  return v;
+}
+
 bool Config::saveWifiFromNextion(const char* post){
+  wifiBackupSave(post);
   File file = SPIFFS.open(SSIDS_PATH, "w");
   if (!file) {
     return false;
@@ -933,6 +966,23 @@ bool Config::saveWifiFromNextion(const char* post){
     ESP.restart();
     return true;
   }
+}
+
+/*  Забути мережу, підняти її першою — усе це міняє список, але не привід
+    перезавантажувати радіо: перечитуємо його прямо в пам'ять.  */
+bool Config::saveWifiList(const char* text){
+  File file = SPIFFS.open(SSIDS_PATH, "w");
+  if(!file) return false;
+  file.print(text);
+  file.close();
+  wifiBackupSave(text);
+  reloadWifi();
+  return true;
+}
+
+void Config::reloadWifi(){
+  initNetwork();
+  if(store.lastSSID > ssidsCount) setLastSSID(ssidsCount ? 1 : 0);
 }
 
 bool Config::saveWifi() {
@@ -951,14 +1001,15 @@ void Config::setTimeConf(){
   }
 }
 
-bool Config::initNetwork() {
+bool Config::_readSsids() {
+  ssidsCount = 0;               /* список перечитують і після правки, не лише на старті */
   File file = SPIFFS.open(SSIDS_PATH, "r");
   if (!file || file.isDirectory()) {
     return false;
   }
   char ssidval[30], passval[40];
   uint8_t c = 0;
-  while (file.available()) {
+  while (file.available() && c < 5) {
     if (parseSsid(file.readStringUntil('\n').c_str(), ssidval, passval)) {
       strlcpy(ssids[c].ssid, ssidval, 30);
       strlcpy(ssids[c].password, passval, 40);
@@ -968,6 +1019,21 @@ bool Config::initNetwork() {
   }
   file.close();
   return true;
+}
+
+bool Config::initNetwork() {
+  bool ok = _readSsids();
+  if (ssidsCount == 0) {
+    /*  Файл порожній або зник — беремо копію з NVS і кладемо назад.  */
+    String bk = wifiBackupLoad();
+    if (bk.length() > 2) {
+      File w = SPIFFS.open(SSIDS_PATH, "w");
+      if (w) { w.print(bk); w.close(); }
+      ok = _readSsids();
+      BOOTLOG("wifi list restored from backup: %u", (unsigned)ssidsCount);
+    }
+  }
+  return ok;
 }
 
 void Config::setBrightness(bool dosave){

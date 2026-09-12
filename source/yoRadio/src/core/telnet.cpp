@@ -69,6 +69,10 @@ void Telnet::cleanupClients() {
 }
 
 void Telnet::handleSerial(){
+  /*  readStringUntil чекає кінець рядка до секунди (типовий timeout Stream) —
+      у головному циклі це чутно на звуці; недочитаний рядок краще відкласти.  */
+  static bool once = true;
+  if(once){ once = false; Serial.setTimeout(50); }
   if(Serial.available()){
     String request = Serial.readStringUntil('\n'); request.trim();
     on_input(request.c_str(), 100);
@@ -109,12 +113,20 @@ void Telnet::loop() {
         }
       }
     } else {
-      for (i = 0; i < MAX_TLN_CLIENTS; i++) {
-        if (clients[i]) {
-          clients[i].stop();
+      /*  Тут в оригіналі стояв delay(1000) — і щойно зникав зв'язок, увесь
+          приймач засинав на секунду в КОЖНОМУ оберті головного циклу: дотик
+          оброблявся раз на секунду, звук затинався, меню не встигало за
+          пальцем, а вибрати іншу мережу було просто неможливо. Прибирати
+          мертвих клієнтів досить зрідка — і нікого не приспляючи.  */
+      static uint32_t lastCleanup = 0;
+      if (millis() - lastCleanup > 1000) {
+        lastCleanup = millis();
+        for (i = 0; i < MAX_TLN_CLIENTS; i++) {
+          if (clients[i]) {
+            clients[i].stop();
+          }
         }
       }
-      delay(1000);
     }
   handleSerial();
 }

@@ -284,13 +284,19 @@ void TouchScreen::loop(){
   }
   /*  Без сети управлять плеером нечем, но в меню попасть надо — там как раз
       и настраивают Wi-Fi. Поэтому обрабатываем только долгое нажатие.  */
-  bool netReady = (network.status == CONNECTED || network.status == SDREADY);
+  /*  Зв'язок зник: на екрані діалог «немає зв'язку», сторінки плеєра немає,
+      і дотик раніше не робив геть нічого — вибрати іншу мережу з радіо було
+      неможливо. Тепер цей екран сам веде до списку мереж.  */
+  bool lostLink = (display.mode() == LOST);
+  bool netReady = (network.status == CONNECTED || network.status == SDREADY) && !lostLink;
   if(!netReady){
     if(istouched){
       if(!wastouched) touchLongPress = millis();
     }else if(wastouched){
       uint32_t t = millis() - touchLongPress;
-      if(t > 50) yomenu.openWifi();   /* без мережі є сенс лише в Wi-Fi, як apScreen() у Nextion */
+      /*  без мережі є сенс лише в Wi-Fi, як apScreen() у Nextion; при втраті
+          зв'язку меню не замикаємо — мережа може повернутись сама  */
+      if(t > 50) yomenu.openWifi(!lostLink);
     }
     wastouched = istouched;
     return;

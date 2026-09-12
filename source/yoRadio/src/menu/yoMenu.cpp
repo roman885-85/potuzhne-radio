@@ -63,11 +63,12 @@ static const char* TITLES[7] = { "інформація", "еквалайзер",
 #define NT_LVL_Y   188
 #define SY_LED_Y   164      /* світлодіод — на сторінці «система» */
 
-/*  Wi-Fi: список знайдених мереж  */
-#define WL_TOP     32
-#define WL_ROW     27
-#define WL_ROWS    6
-#define WL_BTN_Y   200
+/*  Wi-Fi: знайдені мережі показує спільний список (plGenericDraw), той
+    самий, що станції й проповіді.  */
+/*  Wi-Fi: відомі мережі  */
+#define WS_TOP     44
+#define WS_ROW     32
+#define WS_H       28
 
 static const uint16_t SLEEP_MIN[5] = { 0, 15, 30, 60, 90 };
 static const char* const SLEEP_LBL[5] = { "вимк", "15", "30", "60", "90" };
@@ -245,7 +246,7 @@ void YoMenu::_chrome(const char* title, uint8_t icon){
   /*  У режимі точки доступу виходу з налаштувань немає, доки мережу не
       задано, тож і стрілку не малюємо: намальована, але мертва кнопка
       виглядає поламаною.  */
-  if(!(_apLock && _cur != PG_KBD)){
+  if(!(_apLock && _cur != PG_KBD && _cur != PG_WSAVED)){
     dsp.fillTriangle(SW-26, 14, SW-16, 8, SW-16, 20, C_BG);
     dsp.fillRect(SW-16, 12, 8, 5, C_BG);
   }
@@ -258,6 +259,11 @@ void YoMenu::_chrome(const char* title, uint8_t icon){
     приходить дотик, крутиться декодер звуку, і пауза там чутна.  */
 void YoMenu::_show(int8_t p){
   _lastAct = millis();
+  /*  Пошук мереж і спроби повернутися в мережу живуть в одному радіомодулі:
+      поки людина вибирає мережу, спроби спинено — інакше ні пошуку, ні
+      підключення не діждешся.  */
+  network.pauseSta(p == PG_WIFI || p == PG_WSAVED ||
+                   (p == PG_KBD && (_kbdBack == PG_WIFI || _kbdBack == PG_WSAVED)));
   if(_cur >= 0 && _pg[_cur]) _pg[_cur]->setActive(false);
   _cur = p;
   _fadeStep = 0;
@@ -284,6 +290,7 @@ void YoMenu::_fade(){
     if(++_fadeStep == STEPS){
       if(_closeReq){                           /* вихід із меню — теж у темряві */
         _closeReq = false;
+        network.pauseSta(false);
         if(_cur >= 0 && _pg[_cur]) _pg[_cur]->setActive(false);
         _cur = PG_OFF;
         dsp.setFont();
@@ -329,6 +336,11 @@ void YoMenu::_paint(){
     _chrome("живлення", 0);
     _pwrArm = -1; _pwrGo = -1;
     _drawPower();
+  }else if(p == PG_WSAVED){
+    _chrome("відомі мережі", 2);
+    _wsArm = -1;
+    _drawSaved();
+    _favDirty = false;
   }else if(p == PG_DEV){
     _chrome("розробник", 0);
     _chkBat.setValue(!extras.s.noBat);
@@ -342,6 +354,15 @@ void YoMenu::_paint(){
     static const char* nm[5] = { "ES8311", "PCM5102A", "UDA1334A", "MAX98357A", "VS1053B" };
     _chrome(nm[_dacSel], 0);
     _drawDacInfo();
+  }else if(p == PG_WIFI){
+    /*  Мережі — тим самим списком, що станції й проповіді: «лупа» на
+        вибраному рядку, кнопки ▲ ▼ ▶ ↶ збоку, прокрутка пальцем.  */
+    _smSel = 1; _smCur = 1.0f; _smShift = 0; _smMqW = 0; _smMqT = millis() + 600;
+    _smAnim = false; _smFling = false; _dActive = false; _smHold = -1;
+    plGenericChrome();
+    _smDraw(false);
+    _smDirty = false;
+    if(!_scanning) _wifiScan();
   }else if(p == PG_SERM){
     /*  Проповіді — точнісінько як список станцій: той самий код малювання  */
     _smVer = sermons.version(); _smLoad = sermons.loading();
@@ -357,13 +378,6 @@ void YoMenu::_paint(){
   }else{
     /*  зі сторінок головного меню — «☰», з параметрів — шестерня  */
     _chrome(TITLES[p], _parent(p) == PG_SETUP ? 0 : 2);
-    if(p == PG_WIFI){
-      /*  Список мереж шукаємо щоразу, як сторінку відкрито: той, що
-          лишився з минулого разу, міг давно застаріти.  */
-      _scanTop = 0;
-      _drawWifiList();
-      if(!_scanning) _wifiScan();
-    }
     if(p == PG_TIME){
       for(uint8_t i=0;i<2;i++){
         int16_t x = CX+60 + i*100;
@@ -756,12 +770,21 @@ int8_t YoMenu::_parent(int8_t p) const {
   if(p == PG_DAC) return PG_DEV;
   if(p == PG_DACINFO) return PG_DAC;
   if(p == PG_POWER) return PG_SETUP;
+  if(p == PG_WSAVED) return PG_WIFI;
   return PG_HOME;
 }
 
 /*  ---------- список проповідей у вигляді списку станцій ---------- */
 
-static const char* smName(int idx){
+/*  Один список на дві сторінки: рядки бере в того, хто зараз відкритий.  */
+static const char* smName(int idx){ return yomenu.rowName(idx); }
+
+const char* YoMenu::rowName(int idx){
+  if(_cur == PG_WIFI) return _wifiRowName(idx);
+  return _sermRowName(idx);
+}
+
+const char* YoMenu::_sermRowName(int idx){
   static char msg[48];
   if(sermons.loading()){
     if(sermons.loadedSoFar()) snprintf(msg, sizeof(msg), "завантажую з сайту... %u", sermons.loadedSoFar());
@@ -783,10 +806,11 @@ void YoMenu::_smGo(int16_t sel){
 }
 
 void YoMenu::_smDraw(bool bandOnly){
-  int n = sermons.count();
-  int play = (player.remoteStationName && player.status() == PLAYING) ? sermons.playing() + 1 : -1;
+  int n = _listCount();
+  int play = _listPlay();
   int16_t wrap = _smMqW > PL_LIST_W - 16 ? _smMqW + 40 : 0;
   plGenericDraw((float)_smSel, n ? n : 1, smName, _smShift, bandOnly, play, wrap);
+  _wifiBars((float)_smSel, bandOnly);
 }
 
 /*  Бігучий рядок у жовтій смузі — довгі назви проповідей видно цілком.  */
@@ -1161,15 +1185,31 @@ void YoMenu::_drawHome(){
     готово. У режимі точки доступу для пошуку потрібна ще й станція.  */
 void YoMenu::_wifiScan(){
   if(WiFi.getMode() == WIFI_AP) WiFi.mode(WIFI_AP_STA);
+  /*  Поки радіо намагається повернутися в мережу, пошук не стартує зовсім:
+      радіомодуль один. Тому спершу спиняємо спроби.  */
+  network.pauseSta(true);
   WiFi.scanDelete();
-  if(WiFi.scanNetworks(true, false) == WIFI_SCAN_FAILED){ _scanning = false; _scanN = 0; }
-  else _scanning = true;
+  _scanAgain = 0;
+  if(WiFi.scanNetworks(true, false) == WIFI_SCAN_FAILED){
+    /*  модуль ще зайнятий попередньою спробою — за мить повторимо  */
+    _scanning = false;
+    if(_scanFails < 6){ _scanFails++; _scanAgain = millis() + 800; }
+  }else{
+    _scanning = true; _scanFails = 0; _scanT0 = millis();
+  }
   _wlDirty = true;
 }
 
 void YoMenu::_wifiPoll(){
-  if(!_scanning) return;
+  if(!_scanning){
+    if(_scanAgain && (int32_t)(millis() - _scanAgain) >= 0){ _scanAgain = 0; _wifiScan(); }
+    return;
+  }
   int16_t n = WiFi.scanComplete();
+  /*  пошук завис — не тримаємо напис «шукаю мережі...» довіку  */
+  if(n == WIFI_SCAN_RUNNING && millis() - _scanT0 > 20000UL){
+    WiFi.scanDelete(); _scanning = false; _scanN = 0; _wlDirty = true; return;
+  }
   if(n == WIFI_SCAN_RUNNING) return;
   _scanning = false;
   _scanN = 0;
@@ -1200,67 +1240,158 @@ static bool wifiSaved(const char* ssid){
   return false;
 }
 
-void YoMenu::_drawWifiList(){
-  dsp.fillRect(CX-4, HDR+1, SW-CX+4, SH-HDR-1, C_BG);
-  char t[72];
-  /*  підказка або результат минулої спроби — у шапці  */
-  int16_t hx0 = _titleEnd + 8;
-  dsp.fillRect(hx0, 0, SW-40-hx0, HDR, C_ACC);
-  dsp.setFont(&yoUI9); dsp.setTextSize(1); dsp.setTextColor(C_BG);
-  if(extras.wifiFail[0]) snprintf(t, sizeof(t), "%s", utf8Rus("не вдалося підключитись", false));
-  else if(WiFi.status() == WL_CONNECTED){ snprintf(t, sizeof(t), "%s", utf8Rus(WiFi.SSID().c_str(), false)); }
-  else t[0] = 0;
-  fitText(t, SW-44-hx0);
-  dsp.setCursor(SW-44 - textW(t), 19); dsp.print(t);
+/*  ---------- Wi-Fi: відомі мережі ---------- */
 
-  if(_scanning || _scanN == 0){
-    dsp.setFont(&yoUI11); dsp.setTextColor(_scanning ? C_TXT : C_ACC);
-    snprintf(t, sizeof(t), "%s", utf8Rus(_scanning ? "шукаю мережі..." : "мереж не знайдено", false));
-    dsp.setCursor(CX + (CW - (int16_t)textW(t)) / 2, 110); dsp.print(t);
-  }else{
-    for(uint8_t r = 0; r < WL_ROWS; r++){
-      uint8_t i = _scanTop + r;
-      if(i >= _scanN) break;
-      const WScan& w = _scan[i];
-      int16_t y = WL_TOP + r * WL_ROW;
-      bool cur = WiFi.status() == WL_CONNECTED && WiFi.SSID() == w.ssid;
-      bool saved = wifiSaved(w.ssid);
-      dsp.fillRect(CX-2, y, CW+2, WL_ROW-3, cur ? C_PAN2 : C_PANEL);
-      /*  рівень сигналу: чотири стовпчики  */
-      uint8_t lv = w.rssi > -55 ? 4 : w.rssi > -65 ? 3 : w.rssi > -75 ? 2 : w.rssi > -85 ? 1 : 0;
-      for(uint8_t b = 0; b < 4; b++){
-        int16_t h = 4 + b * 3;
-        dsp.fillRect(CX+CW-18 + b*4, y + 19 - h, 3, h, b < lv ? C_TXT : C_PAN2);
-      }
-      /*  замок — мережа з паролем  */
-      if(w.enc != WIFI_AUTH_OPEN){
-        int16_t lx = CX+CW-34, ly = y + 6;
-        dsp.drawRoundRect(lx+2, ly, 7, 8, 3, C_DIM);
-        dsp.fillRect(lx, ly+5, 11, 8, C_DIM);
-      }
-      dsp.setFont(&yoUI9b); dsp.setTextColor(saved ? C_ACC : C_TXT);
-      snprintf(t, sizeof(t), "%s", utf8Rus(w.ssid, false));
-      fitText(t, CW - 56);
-      dsp.setCursor(CX + 4, y + 17); dsp.print(t);
+/*  Список мереж, які радіо пам'ятає. Перша — та, з якої воно починає; коли
+    її немає в ефірі, радіо саме перебирає решту. Тут мережу можна підняти
+    першою або забути зовсім — без перезавантаження.  */
+void YoMenu::_drawSaved(){
+  dsp.fillRect(0, HDR, SW, SH-HDR, C_BG);
+  char t[72];
+  uint8_t n = 0;
+  for(uint8_t i = 0; i < YOM_SSIDS; i++) if(_ssid[i][0]) n++;
+  if(!n){
+    dsp.setFont(&yoUI11); dsp.setTextSize(1); dsp.setTextColor(C_DIM);
+    snprintf(t, sizeof(t), "%s", utf8Rus("жодної мережі не збережено", false));
+    dsp.setCursor((SW - (int16_t)textW(t)) / 2, 110); dsp.print(t);
+    dsp.setFont(&yoUI8); dsp.setTextColor(C_ACC);
+    snprintf(t, sizeof(t), "%s", utf8Rus("після перезавантаження радіо", false));
+    dsp.setCursor((SW - (int16_t)textW(t)) / 2, 140); dsp.print(t);
+    snprintf(t, sizeof(t), "%s", utf8Rus("підніме точку доступу PotuzhneRadio", false));
+    dsp.setCursor((SW - (int16_t)textW(t)) / 2, 156); dsp.print(t);
+    dsp.setFont();
+    return;
+  }
+  bool sta = WiFi.status() == WL_CONNECTED;
+  for(uint8_t i = 0; i < n; i++){
+    int16_t y = WS_TOP + i * WS_ROW;
+    bool armed = (_wsArm == (int8_t)i);
+    bool cur = sta && WiFi.SSID() == _ssid[i];
+    dsp.fillRect(CX, y, CW, WS_H, armed ? C_ACC : (cur ? C_PAN2 : C_PANEL));
+    dsp.setFont(&yoUI9b); dsp.setTextSize(1);
+    dsp.setTextColor(armed ? C_BG : (cur ? C_ACC : C_TXT));
+    if(armed) snprintf(t, sizeof(t), "%s", utf8Rus("ще раз - і забуду", false));
+    else      snprintf(t, sizeof(t), "%s", utf8Rus(_ssid[i], false));
+    fitText(t, CW - 92);
+    dsp.setCursor(CX + 26, y + 19); dsp.print(t);
+    /*  номер у черзі: видно, хто перший  */
+    dsp.setFont(&yoUI8); dsp.setTextColor(armed ? C_BG : C_DIM);
+    snprintf(t, sizeof(t), "%u", (unsigned)(i + 1));
+    dsp.setCursor(CX + 9, y + 18); dsp.print(t);
+    uint16_t ic = armed ? C_BG : C_ACC;
+    /*  ↑ — підняти першою (у першого рядка нема куди)  */
+    if(i > 0){
+      int16_t ax = CX + CW - 72 + 17, ay = y + WS_H / 2;
+      dsp.fillTriangle(ax, ay - 8, ax - 7, ay + 1, ax + 7, ay + 1, ic);
+      dsp.fillRect(ax - 3, ay + 1, 6, 7, ic);
+    }
+    /*  × — забути  */
+    int16_t bx = CX + CW - 36 + 17, by2 = y + WS_H / 2;
+    for(int8_t d = -7; d <= 7; d++){
+      dsp.drawPixel(bx + d, by2 + d, ic); dsp.drawPixel(bx + d + 1, by2 + d, ic);
+      dsp.drawPixel(bx + d, by2 - d, ic); dsp.drawPixel(bx + d + 1, by2 - d, ic);
     }
   }
-  /*  кнопки: гортання, пошук ще раз, прихована мережа  */
-  int16_t by = WL_BTN_Y, bh = SH - WL_BTN_Y - 4;
-  bool up = _scanTop > 0, dn = _scanTop + WL_ROWS < _scanN;
-  dsp.fillRect(CX, by, 50, bh, C_PAN2);
-  dsp.fillTriangle(CX+25, by+10, CX+15, by+26, CX+35, by+26, up ? C_ACC : C_PANEL);
-  dsp.fillRect(CX+56, by, 50, bh, C_PAN2);
-  dsp.fillTriangle(CX+81, by+26, CX+71, by+10, CX+91, by+10, dn ? C_ACC : C_PANEL);
-  const char* lb[2] = { "оновити", "вручну" };
-  for(uint8_t k = 0; k < 2; k++){
-    int16_t bx = CX + 112 + k * 90, bw = 86;
-    dsp.fillRect(bx, by, bw, bh, C_PAN2);
-    dsp.setFont(&yoUI9); dsp.setTextColor(C_TXT);
-    snprintf(t, sizeof(t), "%s", utf8Rus(lb[k], false));
-    fitText(t, bw - 8);
-    dsp.setCursor(bx + (bw - (int16_t)textW(t)) / 2, by + 23); dsp.print(t);
-  }
+  dsp.setFont(&yoUI8); dsp.setTextColor(C_DIM);
+  /*  Довге тире перетворювач у CP1251 не знає — на екрані з нього виходить
+      «вЂ”», тому в написах лише дефіс. І рядки вище краю: на SH-8 хвостики
+      літер зрізало.  */
+  dsp.setCursor(CX, SH - 26); dsp.print(utf8Rus("перша - з неї радіо починає;", false));
+  dsp.setCursor(CX, SH - 12); dsp.print(utf8Rus("немає її в ефірі - перебере решту", false));
   dsp.setFont();
+}
+
+/*  Записуємо список і одразу перечитуємо його в пам'ять: перезавантаження
+    заради забутої мережі — зайве.  */
+void YoMenu::_savedWrite(){
+  String out;
+  for(uint8_t i = 0; i < YOM_SSIDS; i++)
+    if(_ssid[i][0]) out += String(_ssid[i]) + "\t" + String(_pass[i]) + "\n";
+  config.saveWifiList(out.c_str());
+  _loadWifi();
+}
+
+/*  Рядки списку мереж: спершу знайдені, далі три дії. Дії живуть у самому
+    списку, бо кнопок збоку лише чотири й усі зайняті: ▲ ▼ ▶ і назад.  */
+const char* YoMenu::_wifiRowName(int idx){
+  static char buf[72];
+  if(idx >= 1 && idx <= _scanN){
+    const WScan& w = _scan[idx-1];
+    bool cur = WiFi.status() == WL_CONNECTED && WiFi.SSID() == w.ssid;
+    /*  Мережу, у якій радіо зараз, позначає той самий значок, що й станцію,
+        яка грає, — інакше слово в назві розганяло її бігти рядком.  */
+    snprintf(buf, sizeof(buf), "%s%s", w.ssid,
+             (!cur && wifiSaved(w.ssid)) ? "  (збережена)" : "");
+    return buf;
+  }
+  switch(idx - _scanN){
+    case 1:  return _scanning ? "шукаю мережі" : "шукати ще раз";
+    case 2:  return "додати вручну";
+    default: return "відомі мережі";
+  }
+}
+
+int YoMenu::_listCount() const {
+  if(_cur == PG_WIFI) return _scanN + WIFI_ACTS;
+  return sermons.count();
+}
+
+/*  Рядок, позначений як «зараз»: проповідь, що грає, або мережа, у якій радіо.  */
+int YoMenu::_listPlay() const {
+  if(_cur == PG_SERM)
+    return (player.remoteStationName && player.status() == PLAYING) ? sermons.playing() + 1 : -1;
+  if(_cur == PG_WIFI && WiFi.status() == WL_CONNECTED){
+    String cur = WiFi.SSID();
+    for(uint8_t i = 0; i < _scanN; i++) if(cur == _scan[i].ssid) return i + 1;
+  }
+  return -1;
+}
+
+/*  Вибір рядка: у проповідях — грати, у мережах — підключитись або дія.  */
+void YoMenu::_listPick(int idx){
+  if(_cur == PG_SERM){
+    if(sermons.count() && sermons.play(idx - 1)) close();
+    return;
+  }
+  if(idx >= 1 && idx <= _scanN){ _wifiPick(idx - 1); return; }
+  switch(idx - _scanN){
+    case 1: if(!_scanning){ _scanFails = 0; _wifiScan(); _smDirty = true; } break;
+    case 2: _wSsid[0] = 0; _wPass[0] = 0; _kbdNext = 1;
+            _openKbd(_wSsid, YOM_SSID_LEN, false, "назва мережі"); break;
+    default: _loadWifi(); _wsArm = -1; _show(PG_WSAVED); break;
+  }
+}
+
+/*  Рівень сигналу малюємо поверх рядків: сам список уміє лише текст, а без
+    смуг не видно, яка мережа ближча. Лише коли список стоїть — під час
+    прокрутки рядки й так летять.  */
+void YoMenu::_wifiBars(float pos, bool bandOnly){
+  if(_cur != PG_WIFI) return;
+  int base = (int)floorf(pos);
+  int16_t off = (int16_t)((pos - base) * PL_ROW_H);
+  const int16_t top = PL_TOP, bot = PL_TOP + PL_ROWS * PL_ROW_H;
+  for(int r = -1; r <= PL_ROWS; r++){
+    if(bandOnly && r != PL_CUR) continue;
+    int idx = base - PL_CUR + r;
+    if(idx < 1 || idx > _scanN) continue;
+    int16_t y = top + r * PL_ROW_H - off;
+    if(y < top || y + PL_ROW_H > bot) continue;          /* напіврядки не чіпаємо */
+    bool band = (r == PL_CUR && off == 0);
+    uint8_t lv = _scan[idx-1].rssi > -55 ? 4 : _scan[idx-1].rssi > -65 ? 3 :
+                 _scan[idx-1].rssi > -75 ? 2 : _scan[idx-1].rssi > -85 ? 1 : 0;
+    for(uint8_t b = 0; b < 4; b++){
+      int16_t h = 4 + b * 3;
+      int16_t bx = PL_X0 + PL_LIST_W - 24 + b * 5, by = y + PL_ROW_H/2 + 7 - h;
+      dsp.fillRect(bx, by, 3, h, b < lv ? (band ? C_BG : C_TXT) : (band ? C_ACC : C_PAN2));
+    }
+    /*  замок — мережа з паролем  */
+    if(_scan[idx-1].enc != WIFI_AUTH_OPEN){
+      int16_t lx = PL_X0 + PL_LIST_W - 40, ly = y + PL_ROW_H/2 - 6;
+      uint16_t c = band ? C_BG : C_DIM;
+      dsp.drawRoundRect(lx+2, ly, 7, 8, 3, c);
+      dsp.fillRect(lx, ly+5, 11, 8, c);
+    }
+  }
 }
 
 /*  Вибрали мережу: відкрита — одразу підключаємось, закрита — пароль.
@@ -1329,10 +1460,12 @@ void YoMenu::openFav(){
   _show(PG_FAV);
 }
 
-/*  Як apScreen() у Nextion: без мережі одразу Wi-Fi і без переходів далі. */
-void YoMenu::openWifi(){
+/*  Як apScreen() у Nextion: без мережі одразу Wi-Fi і без переходів далі.
+    Коли зв'язок просто зник (мережа ще збережена), виходу не замикаємо:
+    мережа може повернутися сама, і людина має змогу піти на плеєр.  */
+void YoMenu::openWifi(bool lock){
   if(_cur != PG_OFF) return;
-  _build(); _apLock=true; _loadWifi();
+  _build(); _apLock = lock; _loadWifi();
   _show(PG_WIFI);
 }
 
@@ -1361,11 +1494,12 @@ void YoMenu::render(){
   /*  Крок анімації смуг — щоразу, коли задача дисплея проходить повз, а не
       раз на секунду разом із оновленням даних.  */
   if(_cur >= 0 && _pg[_cur]) _pg[_cur]->loop();
-  if(_cur == PG_WIFI){
-    _wifiPoll();
-    if(_wlDirty){ _wlDirty = false; _drawWifiList(); }
-  }
   if(_cur == PG_DACINFO && _favDirty){ _favDirty = false; _drawDacInfo(); return; }
+  if(_cur == PG_WSAVED){
+    if(_wsArm >= 0 && millis() - _wsArmT > 4000){ _wsArm = -1; _favDirty = true; }   /* не підтвердили */
+    if(_favDirty){ _favDirty = false; _drawSaved(); }
+    return;
+  }
   if(_cur == PG_POWER){
     if(_pwrArm >= 0 && _pwrGo < 0 && millis() - _pwrArmT > 4000){ _pwrArm = -1; _favDirty = true; }   /* не підтвердили — знімаємо */
     if(_favDirty){ _favDirty = false; _drawPower(); }
@@ -1382,15 +1516,24 @@ void YoMenu::render(){
     if(_live){ _live = false; if(recorder.active()) _drawHomeTile(4); }
     return;
   }
-  if(_cur == PG_SERM){
-    if(sermons.version() != _smVer || sermons.loading() != _smLoad){
+  if(_isList(_cur)){
+    if(_cur == PG_WIFI){
+      /*  пошук іде своїм ходом: список перемальовуємо, коли він скінчився  */
+      _wifiPoll();
+      if(_wlDirty){
+        _wlDirty = false;
+        if(_smSel > _listCount()) _smSel = _listCount();
+        _smShift = 0; _smMqW = 0; _smMqT = millis() + 600; _smDirty = true;
+      }
+    }
+    if(_cur == PG_SERM && (sermons.version() != _smVer || sermons.loading() != _smLoad)){
       _smVer = sermons.version(); _smLoad = sermons.loading();
       if(_smSel > sermons.count()) _smSel = sermons.count() ? sermons.count() : 1;
       _smShift = 0; _smMqT = millis() + 600; _smDirty = true;
     }
     /*  поки вантажиться — оновлюємо лічильник у рядку, не частіше ніж раз на 0,4 с  */
     static uint16_t shownGot = 0; static uint32_t gotT = 0;
-    if(sermons.loading() && sermons.loadedSoFar() != shownGot && millis() - gotT > 400){
+    if(_cur == PG_SERM && sermons.loading() && sermons.loadedSoFar() != shownGot && millis() - gotT > 400){
       shownGot = sermons.loadedSoFar(); gotT = millis(); _smDirty = true;
     }
     if(_smBtn >= 0 && millis() - _smBtnT > 150){ plGenericButton(_smBtn, false); _smBtn = -1; }
@@ -1400,8 +1543,8 @@ void YoMenu::render(){
     if(_smHold == 0 || _smHold == 1){
       if(now - _smHoldT > 420 && now - _smRepT > 140){ _smRepT = now; _smRep = true; _smStep(_smHold ? 1 : -1); }
     }
-    int nn = sermons.count();
-    int play = (player.remoteStationName && player.status() == PLAYING) ? sermons.playing() + 1 : -1;
+    int nn = _listCount();
+    int play = _listPlay();
     if(_dActive){
       if(_smDragDirty){ _smDragDirty = false; plGenericDraw(_smCur, nn ? nn : 1, smName, 0, false, play); }
       return;
@@ -1579,15 +1722,16 @@ void YoMenu::onRelease(uint16_t x, uint16_t y, uint32_t held){
   if(_fadeStep >= 0) return;               /* сторінка ще набігає */
   _held = held;
   _lastAct = millis();
-  if(_cur == PG_SERM){
+  if(_isList(_cur)){
     if(_smHold >= 0){                      /* відпустили кнопку списку */
       int8_t b = _smHold; _smHold = -1; _smBtnDraw = 4 + b;   /* 4+ — намалювати відпущеною */
-      int16_t n = sermons.count();
       if(!_smRep){
         if(b == 0) _smStep(-1);
         else if(b == 1) _smStep(1);
-        else if(b == 2){ if(n && sermons.play(_smSel - 1)) close(); }
-        else _show(PG_HOME);
+        else if(b == 2) _listPick(_smSel);
+        /*  назад: у проповідей — меню, у мереж — «параметри»; у режимі
+            точки доступу виходу немає, доки мережу не задано  */
+        else if(!_apLock) _show(_parent(_cur));
       }
       return;
     }
@@ -1601,7 +1745,7 @@ void YoMenu::onRelease(uint16_t x, uint16_t y, uint32_t held){
 
 void YoMenu::onPress(uint16_t x, uint16_t y){
   _lastAct = millis();
-  if(_fadeStep >= 0 || _cur != PG_SERM) return;
+  if(_fadeStep >= 0 || !_isList(_cur)) return;
   if(x >= PL_BTN_X - 7){
     int b = ((int)y - 3) / 58; if(b < 0) b = 0; if(b > 3) b = 3;
     _smHold = b; _smHoldT = millis(); _smRep = false; _smBtnDraw = b;
@@ -1615,11 +1759,11 @@ void YoMenu::onPress(uint16_t x, uint16_t y){
 
 void YoMenu::onDrag(uint16_t x, uint16_t y){
   (void)x;
-  if(!_dActive || _cur != PG_SERM) return;
+  if(!_dActive || !_isList(_cur)) return;
   int16_t dy = (int16_t)y - _dY0;
   if(!_dMoved && abs(dy) > 8) _dMoved = true;
   if(!_dMoved) return;
-  int n = sermons.count(); if(n < 1) n = 1;
+  int n = _listCount(); if(n < 1) n = 1;
   float pos = _dPos0 - dy / (float)PL_ROW_H;
   /*  за краями список пружинить, а не їде далі  */
   if(pos < 1.0f) pos = 1.0f - (1.0f - pos) * 0.35f;
@@ -1636,7 +1780,7 @@ void YoMenu::onDrag(uint16_t x, uint16_t y){
 }
 
 void YoMenu::_smStep(int8_t d){
-  int n = sermons.count();
+  int n = _listCount();
   int16_t to = (int16_t)roundf(_smAnim ? (float)_smSel : _smCur) + d;
   if(to < 1 || to > n) return;
   _smGo(to);
@@ -1645,16 +1789,18 @@ void YoMenu::_smStep(int8_t d){
 void YoMenu::_hit(uint16_t x, uint16_t y){
   /*  Список проповідей — на весь екран, як список станцій: шапки немає,
       тож дотики розбираємо до перевірок шапки.  */
-  if(_cur == PG_SERM){
-    int16_t n = sermons.count();
+  if(_isList(_cur)){
+    int16_t n = _listCount();
     if(x >= PL_BTN_X - 7) return;              /* кнопки — у onPress/onRelease */
-    if(sermons.loading()) return;
-    if(n == 0){ sermons.fetch(); _smDirty = true; return; }
+    if(_cur == PG_SERM){
+      if(sermons.loading()) return;
+      if(n == 0){ sermons.fetch(); _smDirty = true; return; }
+    }
     if(y < PL_TOP) return;
     int r = ((int)y - PL_TOP) / PL_ROW_H;
     if(r >= PL_ROWS) return;
     int idx = _smSel - PL_CUR + r;
-    if(r == PL_CUR){ if(sermons.play(_smSel - 1)) close(); return; }   /* дотик по смузі — грати */
+    if(r == PL_CUR){ _listPick(_smSel); return; }        /* дотик по смузі — вибрати */
     if(idx >= 1 && idx <= n) _smGo(idx);
     return;
   }
@@ -1672,7 +1818,7 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
       return;
     }
     /*  Стрілка — на рівень вгору: зі сторінки в її меню, з меню на плеєр.  */
-    if(_apLock) return;
+    if(_apLock && _cur != PG_WSAVED) return;    /* із відомих мереж вихід є завжди */
     if(_cur == PG_HOME) close();
     else _show(_parent(_cur));
     return;
@@ -1759,20 +1905,43 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
       if(i==3) config.setTone((int8_t)v, m, t);
       break;
     }
-    case PG_WIFI: {
-      if(y >= WL_TOP && y < WL_TOP + WL_ROWS * WL_ROW){
-        uint8_t i = _scanTop + (y - WL_TOP) / WL_ROW;
-        if(i < _scanN && !_scanning) _wifiPick(i);
+    case PG_WSAVED: {
+      uint8_t n = 0;
+      for(uint8_t k = 0; k < YOM_SSIDS; k++) if(_ssid[k][0]) n++;
+      uint8_t i = (y >= WS_TOP) ? (y - WS_TOP) / WS_ROW : 255;
+      /*  повз рядки або в проміжок між ними — просто знімаємо питання  */
+      if(i >= n || y >= WS_TOP + i * WS_ROW + WS_H){
+        if(_wsArm >= 0){ _wsArm = -1; _favDirty = true; }
         return;
       }
-      if(y < WL_BTN_Y - 4) return;
-      if((int)x < CX+53)       { if(_scanTop == 0) return; _scanTop = _scanTop >= WL_ROWS ? _scanTop - WL_ROWS : 0; _wlDirty = true; }
-      else if((int)x < CX+109) { if(_scanTop + WL_ROWS >= _scanN) return; _scanTop += WL_ROWS; _wlDirty = true; }
-      else if((int)x < CX+200) { if(!_scanning){ _scanTop = 0; _wifiScan(); } }
-      else {                                   /* прихована мережа — назву вручну */
-        _wSsid[0] = 0; _wPass[0] = 0; _kbdNext = 1;
-        _openKbd(_wSsid, YOM_SSID_LEN, false, "назва мережі");
+      if((int)x >= CX + CW - 36){                       /* × — забути */
+        if(_wsArm == (int8_t)i){
+          _wsArm = -1;
+          for(uint8_t k = i; k + 1 < YOM_SSIDS; k++){
+            strlcpy(_ssid[k], _ssid[k+1], YOM_SSID_LEN);
+            strlcpy(_pass[k], _pass[k+1], YOM_PASS_LEN);
+          }
+          _ssid[YOM_SSIDS-1][0] = 0; _pass[YOM_SSIDS-1][0] = 0;
+          _savedWrite();
+        }else{ _wsArm = i; _wsArmT = millis(); }
+        _favDirty = true;
+        return;
       }
+      if((int)x >= CX + CW - 72 && i > 0){              /* ↑ — підняти першою */
+        char a[YOM_SSID_LEN], b[YOM_PASS_LEN];
+        strlcpy(a, _ssid[i], sizeof(a)); strlcpy(b, _pass[i], sizeof(b));
+        for(int8_t k = i; k > 0; k--){
+          strlcpy(_ssid[k], _ssid[k-1], YOM_SSID_LEN);
+          strlcpy(_pass[k], _pass[k-1], YOM_PASS_LEN);
+        }
+        strlcpy(_ssid[0], a, YOM_SSID_LEN); strlcpy(_pass[0], b, YOM_PASS_LEN);
+        _wsArm = -1;
+        config.setLastSSID(1);
+        _savedWrite();
+        _favDirty = true;
+        return;
+      }
+      if(_wsArm >= 0){ _wsArm = -1; _favDirty = true; }
       return;
     }
     case PG_TIME: {

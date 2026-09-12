@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Надіслати кілька команд у пристрій одним з'єднанням і показати відповідь."""
 import os, sys, time, termios, fcntl, struct, select
-PORT="/dev/cu.usbmodem1442101"
+PORT=os.environ.get("PORT") or (sorted(__import__("glob").glob("/dev/cu.usbmodem*"))[0] if __import__("glob").glob("/dev/cu.usbmodem*") else "/dev/cu.usbmodem1442101")
 def main(cmds, wait=3.0):
     fd=os.open(PORT, os.O_RDWR|os.O_NOCTTY|os.O_NONBLOCK)
     a=termios.tcgetattr(fd); a[0]=a[1]=a[3]=0

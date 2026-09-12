@@ -33,9 +33,11 @@ class Page;
 class YoMenu {
   public:
     bool active() const { return _cur != PG_OFF; }
+    int8_t page() const { return _cur; }        /* для службової консолі */
+    const char* rowName(int idx);               /* рядок списку — для plGenericDraw */
     bool fading() const { return _fadeStep >= 0; }   /* триває плавна зміна */
     void open();                 /* шестерня у шапці плеєра */
-    void openWifi();             /* режим точки доступу: одразу Wi-Fi */
+    void openWifi(bool lock = true);   /* одразу Wi-Fi; lock — без виходу (точка доступу) */
     void openFav();              /* обране */
     void openHome();             /* кнопка «☰» у шапці плеєра: головне меню */
     void close();
@@ -49,7 +51,7 @@ class YoMenu {
     /*  Сторінки 5 і 6 — мої доповнення, у Nextion їх немає.  */
     enum page_e { PG_OFF=-1, PG_INFO=0, PG_EQ=1, PG_WIFI=2, PG_TIME=3, PG_SYS=4,
                   PG_SLEEP=5, PG_NIGHT=6, PG_KBD=7, PG_FAV=8, PG_SERM=9, PG_HOME=10, PG_SETUP=11,
-                  PG_DEV=12, PG_DAC=13, PG_DACINFO=14, PG_POWER=15, PG_N };   /* PG_N — завжди останній: розмір масиву сторінок */
+                  PG_DEV=12, PG_DAC=13, PG_DACINFO=14, PG_POWER=15, PG_WSAVED=16, PG_N };   /* PG_N — завжди останній: розмір масиву сторінок */
     static const uint8_t NSIDE = 7;   /* значків у лівій колонці */
 
     int8_t _cur = PG_OFF;
@@ -125,16 +127,32 @@ class YoMenu {
     struct WScan { char ssid[33]; int8_t rssi; uint8_t enc; };
     static const uint8_t WS_MAX = 16;
     WScan    _scan[WS_MAX];
-    uint8_t  _scanN = 0, _scanTop = 0;
+    uint8_t  _scanN = 0;
     volatile bool _scanning = false, _wlDirty = false;
     char     _wSsid[YOM_SSID_LEN] = {0}, _wPass[YOM_PASS_LEN] = {0};
     char     _kbdTitleBuf[48] = {0};
     uint8_t  _kbdNext = 0;            /* 1 — після назви пароль, 2 — після пароля підключення */
+    uint32_t _scanT0 = 0, _scanAgain = 0;   /* пошук не почався — за мить спробуємо ще */
+    uint8_t  _scanFails = 0;
+    /*  Списки проповідей і мереж — однакові: повноекранний список станцій
+        з «лупою», кнопками ▲▼▶↶, прокруткою пальцем і накатом.  */
+    bool _isList(int8_t p) const { return p == PG_SERM || p == PG_WIFI; }
+    int  _listCount() const;
+    int  _listPlay() const;                     /* рядок «зараз»: проповідь чи мережа */
+    void _listPick(int idx);
+    const char* _sermRowName(int idx);
+    const char* _wifiRowName(int idx);
+    static const uint8_t WIFI_ACTS = 3;         /* «шукати ще раз», «вручну», «відомі» */
     void _wifiScan();
     void _wifiPoll();
-    void _drawWifiList();
+    void _wifiBars(float pos, bool bandOnly);   /* смуги сигналу поверх рядків */
     void _wifiPick(uint8_t i);
     void _wifiConnect();
+    /*  відомі мережі: забути або підняти першою  */
+    int8_t   _wsArm = -1;             /* рядок, де спитали «забути?» */
+    uint32_t _wsArmT = 0;
+    void _drawSaved();
+    void _savedWrite();               /* _ssid/_pass → файл, без перезавантаження */
     void _stepper(int16_t x, int16_t y, int16_t w, int16_t h, bool plus);
     UiText    _info[8][2];
     UiSlider  _eq[4];

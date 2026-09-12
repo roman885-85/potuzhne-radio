@@ -213,9 +213,14 @@ class Config {
     bool parseSsid(const char* line, char* ssid, char* pass);
     bool loadStation(uint16_t station);
     bool initNetwork();
+    bool _readSsids();            /* читання /data/wifi.csv у ssids[] */
     bool saveWifi();
     void setTimeConf();
     bool saveWifiFromNextion(const char* post);
+    /*  правка списку відомих мереж без перезавантаження  */
+    bool saveWifiList(const char* text);
+    void reloadWifi();
+    static bool wifiWiped();      /* усі мережі прибрано свідомо */
     void setSmartStart(uint8_t ss);
     void setBitrateFormat(BitrateFormat fmt) { configFmt = fmt; }
     void initPlaylist();

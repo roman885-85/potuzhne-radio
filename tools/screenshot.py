@@ -9,7 +9,7 @@
 """
 import os, sys, time, termios, fcntl, struct, select, base64, zlib, binascii
 
-PORT = "/dev/cu.usbmodem1442101"
+PORT = os.environ.get("PORT") or (sorted(__import__("glob").glob("/dev/cu.usbmodem*"))[0] if __import__("glob").glob("/dev/cu.usbmodem*") else "/dev/cu.usbmodem1442101")
 
 def open_port():
     fd = os.open(PORT, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)

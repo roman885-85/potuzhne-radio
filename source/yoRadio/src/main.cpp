@@ -112,23 +112,37 @@ void setup() {
   pm.on_end_setup();
 }
 
+#ifdef YO_DEBUG
+/*  Хто саме тримає головний цикл: дотик, звук і меню живуть тут же, і будь-яка
+    затримка довша за глибину буфера звуку чутна й видна. Пише лише коли
+    справді довго, тож у звичайній роботі мовчить.  */
+static inline void yoSlow(const char* what, uint32_t t0){
+  uint32_t d = millis() - t0;
+  if(d > 300) Serial.printf("##SLOW#\t%s: %u мс\n", what, (unsigned)d);
+}
+  #define STEP(call) { uint32_t _t0 = millis(); call; yoSlow(#call, _t0); }
+#else
+  #define STEP(call) call
+#endif
+
 void loop() {
 #ifdef YO_DEBUG
   yodbgLoop();
 #endif
-  timekeeper.loop1();
-  config.eepromLoop();      /* відкладений запис налаштувань */
-  telnet.loop();
+  STEP(timekeeper.loop1());
+  STEP(config.eepromLoop());      /* відкладений запис налаштувань */
+  STEP(network.loop());           /* мережа зникла — повертаємось у неї без зупинок */
+  STEP(telnet.loop());
   if (network.status == CONNECTED || network.status==SDREADY) {
-    player.loop();
+    STEP(player.loop());
 #if USE_OTA
-    ArduinoOTA.handle();
+    STEP(ArduinoOTA.handle());
 #endif
   }
-  loopControls();
-  extras.loop();
+  STEP(loopControls());
+  STEP(extras.loop());
   #ifdef NETSERVER_LOOP1
-  netserver.loop();
+  STEP(netserver.loop());
   #endif
 }
 

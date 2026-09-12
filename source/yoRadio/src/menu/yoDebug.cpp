@@ -294,8 +294,27 @@ void yodbgLoop(){
       if(config.getMode() != PM_SDCARD) Serial.println("sdindex: спершу перемкніть на картку");
       else{ sdman.indexSDPlaylist(); config.initPlaylistMode(); Serial.printf("sdindex: треків %u\n", (unsigned)config.playlistLength()); }
     }
+    else if(!strncmp(buf,"wifidrop",8)){
+      /*  Обрив зв'язку на замовлення: так перевіряють, як радіо повертається
+          в мережу й чи лишається живим екран і звук. З числом — скільки
+          секунд не намагатися назад (щоб устигнути подивитись на екран).  */
+      int hold = atoi(buf + 8);
+      Serial.printf("розриваю зв'язок з мережею, тримаю %d с\n", hold);
+      WiFi.disconnect();
+      if(hold > 0){
+        network.pauseSta(true);
+        timekeeper.waitAndDo((uint8_t)(hold > 250 ? 250 : hold), [](){ network.pauseSta(false); });
+      }
+    }
+    else if(!strcmp(buf,"page")){
+      Serial.printf("сторінка меню=%d активне=%d | режим екрана=%d\n",
+        (int)yomenu.page(), yomenu.active()?1:0, (int)display.mode());
+      Serial.printf("мережа: статус=%d втрачено=%d спроби спинено=%d спроб=%u status()=%d ssid='%s'\n",
+        (int)network.status, network.linkLost?1:0, network.staPaused?1:0,
+        (unsigned)network.lostTries(), (int)WiFi.status(), WiFi.SSID().c_str());
+    }
     else if(!strcmp(buf,"menu"))   yomenu.open();
-    else if(!strcmp(buf,"mwifi"))  yomenu.openWifi();
+    else if(!strcmp(buf,"mwifi"))  yomenu.openWifi(false);   /* без замка: це перевірка, а не режим точки доступу */
     else if(!strcmp(buf,"mclose")) yomenu.close();
     else if(!strncmp(buf,"tap ",4)){
       /*  Імітація дотику: дозволяє перевірити меню без людини біля екрана. */

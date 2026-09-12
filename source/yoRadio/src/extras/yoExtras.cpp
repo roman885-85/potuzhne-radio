@@ -147,6 +147,25 @@ void YoExtras::wifiPending(const char* ssid){
   p.end();
 }
 
+/*  Мережі є в пам'яті, а файл порожній — таке вже траплялось (обірвана
+    заливка обрізає файл першим же байтом). Мовчки кладемо список назад:
+    інакше після перезавантаження радіо лишилось би без жодної мережі.  */
+void YoExtras::_wifiFileGuard(uint32_t now){
+  static bool done = false;
+  if(done || now < 20000) return;
+  done = true;
+  if(config.ssidsCount == 0) return;
+  File f = SPIFFS.open(SSIDS_PATH, "r");
+  size_t sz = f ? f.size() : 0;
+  if(f) f.close();
+  if(sz > 2) return;
+  String out;
+  for(uint8_t i = 0; i < config.ssidsCount; i++)
+    out += String(config.ssids[i].ssid) + "\t" + String(config.ssids[i].password) + "\n";
+  if(config.saveWifiList(out.c_str()))
+    Serial.printf("##WIFI#\tсписок мереж (%u) відновлено з пам'яті\n", (unsigned)config.ssidsCount);
+}
+
 /*  Через кілька секунд після старту мережа вже або є, або плата пішла
     в точку доступу. Порівнюємо з тим, чого просили, і забуваємо запит.  */
 void YoExtras::_wifiCheck(uint32_t now){
@@ -206,6 +225,7 @@ void YoExtras::loop(){
   recorder.loop();
   yoWebApiLoop();                    /* команди з веб-сторінки */
   _wifiCheck(now);
+  _wifiFileGuard(now);
   if(_dirty && now - _dirtyMs > 3000){ _dirty = false; _save(); }
   if(_pwrMode && (int32_t)(now - _pwrAt) >= 0){
     uint8_t m = _pwrMode; _pwrMode = 0;

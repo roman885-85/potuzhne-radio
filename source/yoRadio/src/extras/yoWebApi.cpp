@@ -103,12 +103,6 @@ static uint8_t readWifi(char ssid[][33], char pass[][65]){
   return n;
 }
 
-static void writeWifi(char ssid[][33], char pass[][65], uint8_t n){
-  File f = SPIFFS.open(SSIDS_PATH, "w");
-  if(!f) return;
-  for(uint8_t i = 0; i < n; i++){ f.print(ssid[i]); f.print('\t'); f.print(pass[i]); f.print('\n'); }
-  f.close();
-}
 
 /*  Відбиток файлів сторінки: змінився — відкрита сторінка перезавантажиться
     сама, а не показуватиме старе, як було з головною yoRadio.  */
@@ -513,7 +507,8 @@ static void apply(const WebCmd& c){
       if(hexName(f, crc)){ dropLogo(crc); logos.bump(); }
     }
     else if(!strcmp(k, "wifiScan")){
-      if(!_scanning){ WiFi.scanDelete(); WiFi.scanNetworks(true, false); _scanning = true; _scanT0 = millis(); }
+      /*  спроби повернутися в мережу спиняємо: інакше пошук не стартує  */
+      if(!_scanning){ network.pauseSta(true); WiFi.scanDelete(); WiFi.scanNetworks(true, false); _scanning = true; _scanT0 = millis(); }
     }
     else if(!strcmp(k, "wifiJoin")){
       const char* t = strchr(v, '\t');
@@ -538,7 +533,8 @@ static void apply(const WebCmd& c){
       int f = -1; for(uint8_t i = 0; i < n; i++) if(!strcmp(ss[i], v)) f = i;
       if(f < 0) return;
       if(!strcmp(k, "wifiForget")){
-        if(n <= 1){ _msg = "останню мережу не прибрати"; return; }
+        /*  Прибрати можна й останню: радіо тоді підніме власну точку доступу,
+            а сторінка про це попереджає.  */
         for(uint8_t i = f; i + 1 < n; i++){ strcpy(ss[i], ss[i+1]); strcpy(pw[i], pw[i+1]); }
         n--;
       }else{
@@ -546,7 +542,11 @@ static void apply(const WebCmd& c){
         for(int i = f; i > 0; i--){ strcpy(ss[i], ss[i-1]); strcpy(pw[i], pw[i-1]); }
         strcpy(ss[0], a); strcpy(pw[0], b);
       }
-      writeWifi(ss, pw, n);
+      /*  Запис іде через config: там і копія списку в NVS, і перечитування
+          в пам'ять — без перезавантаження.  */
+      String out;
+      for(uint8_t i = 0; i < n; i++) out += String(ss[i]) + "\t" + String(pw[i]) + "\n";
+      config.saveWifiList(out.c_str());
     }
     else if(!strcmp(k, "plSave")){
       if(config.getMode() != PM_WEB || !SPIFFS.exists(TMP_PATH)) return;
@@ -591,6 +591,7 @@ void yoWebApiLoop(){
       _scanN = m;
       WiFi.scanDelete();
       _scanning = false;
+      network.pauseSta(false);
     }
   }
 }
