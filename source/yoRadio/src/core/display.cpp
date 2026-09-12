@@ -738,19 +738,49 @@ void Display::_fmRow(){
 /*  Батарея 20x10 із носиком. Колір заливки — за рівнем: зелений, жовтий,
     помаранчевий, червоний. Під час заряджання заливка біжить від рівня до
     повної; нижче 10% без зарядника — блимає червоним.  */
+/*  Колір заряду тече від зеленого через жовтий до червоного: різкі
+    «сходинки» кольору читались як помилка, а не як рівень.  */
+static uint16_t lerp565(uint16_t a, uint16_t b, uint8_t t){
+  int ar = (a>>11)&31, ag = (a>>5)&63, ab = a&31;
+  int br = (b>>11)&31, bg = (b>>5)&63, bb = b&31;
+  int r = ar + (br-ar)*t/255, g = ag + (bg-ag)*t/255, l = ab + (bb-ab)*t/255;
+  return (uint16_t)((r<<11)|(g<<5)|l);
+}
+
+/*  Шкала кольорів, а не два кольори: червоний → жовтогарячий → жовтий →
+    салатовий → зелений, і між сусідніми відтінок перетікає плавно.  */
+static uint16_t batColor(uint8_t pct){
+  static const uint16_t stop[6] = { 0xF800, 0xFA00, 0xFC80, 0xFFE0, 0x8FE0, 0x07E0 };
+  if(pct > 100) pct = 100;
+  uint8_t i = pct / 20;                     /* 0..5 */
+  if(i >= 5) return stop[5];
+  uint8_t t = (uint8_t)((pct - i * 20) * 255 / 20);
+  return lerp565(stop[i], stop[i+1], t);
+}
+
+/*  Смуга заряду на 50 поділок: одна поділка — два відсотки, тож рівень видно
+    точно, а не «десь між чвертями». Під час заряджання поверх рівня біжить
+    світла хвиля до кінця смуги.  */
+#define BAT_N   25                 /* поділок: по 4% — і смуга лишається схожою на батарейку */
+#define BAT_W   (BAT_N + 4)        /* рамка */
 static void batIcon(int16_t x, uint8_t pct, bool chg, bool low, uint8_t ph, uint16_t bg, bool full = false){
-  const int16_t by = 212, W = 20, H = 10, IN = W - 4;
+  const int16_t by = 212, H = 10;
   const uint16_t outl = 0x8410;
-  uint16_t lc = pct > 50 ? 0x07E0 : pct > 20 ? 0xFFE0 : pct > 10 ? 0xFD20 : 0xF800;
-  dsp.fillRect(x, by, W + 3, H, bg);
-  dsp.drawRect(x, by, W, H, (low && ph) ? 0xF800 : outl);
-  dsp.fillRect(x + W, by + 3, 2, 4, (low && ph) ? 0xF800 : outl);
-  int16_t w = IN * pct / 100;
-  if(full){ w = IN; lc = 0x07E0; }                       /* заряджено: повна, без руху */
-  else if(chg){ w = w + (IN - w) * ph / 4; lc = 0x07E0; }
-  if(w < 2) w = 2;
-  if(low && !ph) return;                     /* блимання: порожня фаза */
-  dsp.fillRect(x + 2, by + 2, w, H - 4, lc);
+  uint16_t lc = batColor(pct);
+  dsp.fillRect(x, by, BAT_W + 3, H, bg);
+  dsp.drawRect(x, by, BAT_W, H, (low && ph) ? 0xF800 : outl);
+  dsp.fillRect(x + BAT_W, by + 3, 2, 4, (low && ph) ? 0xF800 : outl);
+  if(low && !ph) return;                                  /* блимання: порожня фаза */
+  int16_t lvl = (int16_t)BAT_N * pct / 100;               /* 0..50 поділок */
+  if(full){ lvl = BAT_N; lc = 0x07E0; }
+  if(lvl < 1) lvl = 1;
+  dsp.fillRect(x + 2, by + 2, lvl, H - 4, lc);
+  if(chg && !full){
+    /*  хвиля: від рівня до кінця, ph — її місце (0..BAT_N-1)  */
+    int16_t wp = lvl + (int16_t)((BAT_N - lvl) * (int)ph / BAT_N);
+    if(wp > lvl) dsp.fillRect(x + 2 + lvl, by + 2, wp - lvl, H - 4, 0x0320);   /* пройдене — тьмяно */
+    if(wp < BAT_N) dsp.fillRect(x + 2 + wp, by + 2, 2, H - 4, 0x07E0);         /* голова хвилі */
+  }
 }
 
 void Display::_lowBat(){
@@ -798,7 +828,7 @@ void Display::_statusBar(){
   bool chg = extras.charging(), low = extras.lowBattery();
   if(_sbSig != 0xFFFFFFFF && now - _sbTick < ((chg || low) ? 100 : 500)) return;
   _sbTick = now;
-  uint8_t ph = chg ? (now / 400) % 5 : (low ? (now / 500) % 2 : 0);
+  uint8_t ph = chg ? (uint8_t)((now / 60) % BAT_N) : (low ? (uint8_t)((now / 500) % 2) : 0);
 
   int rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127;
   uint8_t wl = rssi > -55 ? 4 : rssi > -65 ? 3 : rssi > -75 ? 2 : rssi > -85 ? 1 : 0;
@@ -811,7 +841,7 @@ void Display::_statusBar(){
   if(sl > 255) sl = 255;
   bool rec = recorder.active();
   uint16_t recMin = rec ? (uint16_t)(recorder.seconds() / 60) : 0;
-  if(pct > 20) pct = (pct + 5) / 10 * 10;   /* заповнення міняється кроком 10%, без зайвих перемальовок */
+  pct = (pct + 2) / 4 * 4;                 /* 25 поділок: крок 4% */
   usb = extras.charged();
   uint32_t sig = wl | (bat << 3) | (usb << 4) | (alarm << 5) | ((uint32_t)pct << 6) | ((uint32_t)sl << 13) | ((uint32_t)rec << 21) | ((uint32_t)low << 22) | ((uint32_t)(recMin & 0x1FF) << 23);
   if(sig == _sbSig){
@@ -837,7 +867,7 @@ void Display::_statusBar(){
   /*  батарея  */
   _sbBatX = -1;
   if(bat){
-    x -= 29;
+    x -= BAT_W + 9;
     _sbBatX = x;
     batIcon(x, pct, chg, low, ph, bg, extras.charged());
   }
