@@ -55,7 +55,7 @@ void Player::init() {
   #if I2S_DOUT!=255
     #if !I2S_INTERNAL
       #if I2S_MCLK!=255
-        setPinout(I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_PIN_NO_CHANGE, I2S_MCLK);
+        setPinout(I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_DIN, I2S_MCLK);   /* DIN — мікрофон кодека */
       #else
         setPinout(I2S_BCLK, I2S_LRC, I2S_DOUT);
       #endif

@@ -133,7 +133,7 @@ class Display {
     float _plScrollPos = 0.0f;
     uint8_t _bootStep;
     void _time(bool redraw = false);
-    void _apScreen();
+    void _noNetScreen();          /* мережі немає: одразу список мереж */
     void _swichMode(displayMode_e newmode);
     void _drawPlaylist();
     void _volume();

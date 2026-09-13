@@ -43,6 +43,7 @@ class YoMenu {
     void openWifi(bool lock = true);   /* одразу Wi-Fi; lock — без виходу (точка доступу) */
     void openFav();              /* обране */
     void openHome();             /* кнопка «☰» у шапці плеєра: головне меню */
+    void openPage(int8_t p);     /* службова консоль: будь-яка сторінка */
     void close();
     void render();               /* із задачі дисплея */
     void onRelease(uint16_t x, uint16_t y, uint32_t held = 0);
@@ -54,7 +55,8 @@ class YoMenu {
     /*  Сторінки 5 і 6 — мої доповнення, у Nextion їх немає.  */
     enum page_e { PG_OFF=-1, PG_INFO=0, PG_EQ=1, PG_WIFI=2, PG_TIME=3, PG_SYS=4,
                   PG_SLEEP=5, PG_NIGHT=6, PG_KBD=7, PG_FAV=8, PG_SERM=9, PG_HOME=10, PG_SETUP=11,
-                  PG_DEV=12, PG_DAC=13, PG_DACINFO=14, PG_POWER=15, PG_WSAVED=16, PG_WPICK=17, PG_WCONN=18, PG_N };   /* PG_N — завжди останній: розмір масиву сторінок */
+                  PG_DEV=12, PG_DAC=13, PG_DACINFO=14, PG_POWER=15, PG_WSAVED=16, PG_WPICK=17, PG_WCONN=18,
+                  PG_SND=19, PG_ROOM=20, PG_MIC=21, PG_MGEST=22, PG_MPRES=23, PG_N };   /* PG_N — завжди останній: розмір масиву сторінок */
     static const uint8_t NSIDE = 7;   /* значків у лівій колонці */
 
     int8_t _cur = PG_OFF;
@@ -172,7 +174,6 @@ class YoMenu {
     void _savedWrite();               /* _ssid/_pass → файл, без перезавантаження */
     void _stepper(int16_t x, int16_t y, int16_t w, int16_t h, bool plus);
     UiText    _info[8][2];
-    UiSlider  _eq[4];
     UiText    _wifiS[YOM_SSIDS], _wifiP[YOM_SSIDS];
     UiText    _tmH, _tmM, _tmNow;
     UiCheck   _chkStart, _chkInfo, _chkSrc;
@@ -210,6 +211,39 @@ class YoMenu {
     void _saveWifi();
     void _syncSys();
     void _hit(uint16_t x, uint16_t y);
+
+    /*  ---------- звук і мікрофон (yoDsp, yoMic) ---------- */
+    bool _isSound(int8_t p) const { return p == PG_EQ || p == PG_SND || p == PG_ROOM || p == PG_MIC || p == PG_MGEST || p == PG_MPRES; }
+    volatile uint16_t _sndMask = 0;   /* що перемалювати: біти 0..9 — смуги, 10 — верх, 11 — низ, 12 — рядки жестів */
+    volatile int8_t _eqBand = -1;     /* смуга, яку тягне палець */
+    bool     _eqPend = false;
+    uint32_t _eqApplyT = 0;
+    void _paintSound(int8_t p);
+    void _renderSound();
+    bool _hitSound(uint16_t x, uint16_t y);
+    void _eqTouch(uint16_t y);
+    void _eqApply(bool force);
+    void _drawEqTop();
+    void _drawEqBand(uint8_t b);
+    void _drawEqBottom();
+    UiSeg    _sGuard, _sVb, _sLoud;
+    UiSlider _sBal;
+    void _drawRoom(bool full);
+    uint8_t  _rmShown = 255, _rmProg = 255;
+    char     _rmErr[48] = {0};
+    UiCheck  _mOn, _mPlay;
+    UiSeg    _mGain;
+    uint32_t _micLiveT = 0;
+    void _drawMicLive();
+    UiSeg    _gTab, _gSens;
+    UiCheck  _gOn;
+    uint8_t  _gKind = 0;              /* 0 хлопки, 1 стук */
+    void _drawGestRows();
+    void _syncGest();
+    UiCheck  _pEar, _pWake;
+    UiSeg    _pEarMin, _pOff;
+    void _syncPres();
+    void _buildSound();
 };
 
 extern YoMenu yomenu;

@@ -4,6 +4,7 @@
 #include "time.h"
 #include "config.h"
 #include "display.h"
+#include "../extras/yoMic.h"
 #include "sdmanager.h"
 #include "player.h"
 #include "network.h"
@@ -309,34 +310,15 @@ void Display::_buildPager(){
   for(const auto& p: pages) _pager->addPage(p);
 }
 
-void Display::_apScreen() {
-  if(_boot) _pager->removePage(_boot);
-  #ifndef DSP_LCD
-    _boot = new Page();
-    #if DSP_MODEL!=DSP_NOKIA5110
-      #if DSP_INVERT_TITLE || defined(DSP_OLED)
-      _boot->addWidget(new FillWidget(metaBGConf, config.theme.metafill));
-      #else
-      _boot->addWidget(new FillWidget(metaBGConfInv, config.theme.metafill));
-      #endif
-    #endif
-    ScrollWidget *bootTitle = (ScrollWidget*) &_boot->addWidget(new ScrollWidget("*", apTitleConf, config.theme.meta, config.theme.metabg));
-    bootTitle->setText("ПОТУЖНЕ РАДІО");
-    TextWidget *apname = (TextWidget*) &_boot->addWidget(new TextWidget(apNameConf, 30, false, config.theme.title1, config.theme.background));
-    apname->setText(LANG::apNameTxt);
-    TextWidget *apname2 = (TextWidget*) &_boot->addWidget(new TextWidget(apName2Conf, 30, false, config.theme.clock, config.theme.background));
-    apname2->setText("");
-    TextWidget *appass = (TextWidget*) &_boot->addWidget(new TextWidget(apPassConf, 30, false, config.theme.title1, config.theme.background));
-    appass->setText(LANG::apPassTxt);
-    TextWidget *appass2 = (TextWidget*) &_boot->addWidget(new TextWidget(apPass2Conf, 30, false, config.theme.clock, config.theme.background));
-    appass2->setText("щоб вибрати мережу");
-    ScrollWidget *bootSett = (ScrollWidget*) &_boot->addWidget(new ScrollWidget("*", apSettConf, config.theme.title2, config.theme.background));
-    bootSett->setText("", LANG::apSettFmt);
-    _pager->addPage(_boot);
-    _pager->setPage(_boot);
-  #else
-    dsp.apScreen();
-  #endif
+/*  Мережі немає. Власної точки доступу радіо більше не піднімає, тож і
+    окремого «вікна підключення» з її назвою й паролем не треба: одразу
+    список мереж, у ньому людина й вибирає свою.  */
+void Display::_noNetScreen() {
+  if(_boot){ _pager->removePage(_boot); _boot = nullptr; }
+  dsp.fillScreen(config.theme.background);
+#ifdef USE_YOMENU
+  yomenu.openWifi(true);
+#endif
 }
 
 /*  Дві іконки в правому куті шапки плеєра. У Nextion плейлист відкривався
@@ -856,7 +838,8 @@ void Display::_statusBar(){
   uint16_t recMin = rec ? (uint16_t)(recorder.seconds() / 60) : 0;
   pct = (pct + 2) / 4 * 4;                 /* 25 поділок: крок 4% */
   usb = extras.charged();
-  uint32_t sig = wl | (bat << 3) | (usb << 4) | (alarm << 5) | ((uint32_t)pct << 6) | ((uint32_t)sl << 13) | ((uint32_t)rec << 21) | ((uint32_t)low << 22) | ((uint32_t)(recMin & 0xFF) << 23) | ((uint32_t)chg << 31);
+  bool ear = mic.listening();              /* мікрофон слухає — значок завжди, це приватність */
+  uint32_t sig = wl | (bat << 3) | (usb << 4) | (alarm << 5) | ((uint32_t)pct << 6) | ((uint32_t)sl << 13) | ((uint32_t)rec << 21) | ((uint32_t)low << 22) | ((uint32_t)(recMin & 0x7F) << 23) | ((uint32_t)ear << 30) | ((uint32_t)chg << 31);
   if(sig == _sbSig){
     /*  змінилась лише фаза анімації — перемальовуємо саму батарею  */
     if(bat && (chg || low) && ph != _sbPh && _sbBatX >= 0){ _sbPh = ph; batIcon(_sbBatX, pct, chg, low, ph, config.theme.background); }
@@ -884,6 +867,15 @@ void Display::_statusBar(){
     _sbBatX = x;
     batIcon(x, pct, chg, low, ph, bg, extras.charged());
     if(chg && !extras.charged()){ x -= 11; chargeBolt(x, 0xFFE0, bg); }
+  }
+  /*  мікрофон слухає: капсула на ніжці  */
+  if(ear){
+    x -= 13;
+    dsp.fillRoundRect(x + 2, 209, 5, 9, 2, fg);
+    dsp.drawFastVLine(x, 213, 4, fg); dsp.drawFastVLine(x + 8, 213, 4, fg);
+    dsp.drawFastHLine(x + 1, 218, 7, fg);
+    dsp.drawFastVLine(x + 4, 219, 2, fg);
+    dsp.drawFastHLine(x + 2, 221, 5, fg);
   }
   /*  будильник: дзвіночок  */
   if(alarm){
@@ -1066,7 +1058,7 @@ void Display::_applyDev(){
 }
 
 void Display::forceRedraw(){
-  if (network.status != CONNECTED && network.status != SDREADY){ _apScreen(); return; }
+  if (network.status != CONNECTED && network.status != SDREADY){ _noNetScreen(); return; }
   _applyDev();
   _mode = PLAYER;
   _pager->setPage( pages[PG_PLAYER]);
@@ -1091,10 +1083,7 @@ void Display::_start() {
     nextion.wake();
   #endif
   if (network.status != CONNECTED && network.status != SDREADY) {
-    _apScreen();
-    #ifdef USE_NEXTION
-      nextion.apScreen();
-    #endif
+    _noNetScreen();
     _bootStep = 2;
     return;
   }
@@ -1141,6 +1130,12 @@ void Display::_swichMode(displayMode_e newmode) {
     nextion.putRequest({NEWMODE, newmode});
   #endif
   if (newmode == _mode || (network.status != CONNECTED && network.status != SDREADY)) return;
+  /*  Зв'язок може зникнути ще на заставці завантаження, а віджети плеєра
+      (рядок діалогу, адреса) створюються лише разом із його сторінкою:
+      діалог «немає зв'язку» писав у ще не виділений буфер — і радіо
+      перезавантажувалось по колу. До готового плеєра режими не міняємо —
+      стан мережі наздожене її власний цикл.  */
+  if (_bootStep != 2) return;
   if(_fmOn){
     /*  Годинник спільний із заставкою — розблокувати; покажчику рівня
         повернути звичний розмір. Повернемось на плеєр — _favMain() знову

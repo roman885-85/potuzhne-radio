@@ -19,8 +19,10 @@ bool es8311_begin(uint32_t sample_rate);        /* полная инициали
 bool es8311_set_sample_rate(uint32_t rate);     /* перенастройка делителей      */
 bool es8311_set_volume(uint8_t vol_0_100);      /* громкость ЦАПа, 75 = 0 dB    */
 bool es8311_mute(bool mute);
-bool es8311_suspend();       /* сон перед вимкненням радіо: аналогова частина знеструмлена */
+bool es8311_suspend();
+bool es8311_mic(uint8_t gain_step);      /* вбудований мікрофон: 0..7 = 0..42 дБ */       /* сон перед вимкненням радіо: аналогова частина знеструмлена */
 bool es8311_ready();
+bool es8311_write(uint8_t reg, uint8_t val);   /* службова консоль */
 void es8311_dump();          /* стан кодека для діагностики */
 
 #endif

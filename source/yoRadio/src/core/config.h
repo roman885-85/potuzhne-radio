@@ -86,7 +86,7 @@ struct config_t
   int8_t    tzMin;
   uint16_t  timezoneOffset;
   bool      vumeter;
-  uint8_t   softapdelay;
+  uint8_t   softapdelay;            /* не використовується: точки доступу немає, поле тримає розкладку */
   bool      flipscreen;
   bool      invertdisplay;
   bool      numplaylist;

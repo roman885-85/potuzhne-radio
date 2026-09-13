@@ -206,12 +206,12 @@ void MyNetwork::begin() {
     return;
   }
   if (config.ssidsCount == 0 || DBGAP) {
-    raiseSoftAP();
+    _noNetwork();
     return;
   }
   if(config.getMode()!=PM_SDCARD){
     if(!wifiBegin()){
-      raiseSoftAP();
+      _noNetwork();
       Serial.println("##[BOOT]#\tdone");
       return;
     }
@@ -273,16 +273,12 @@ void MyNetwork::requestTimeSync(bool withTelnetOutput, uint8_t clientId) {
   }
 }
 
-void rebootTime() {
-  ESP.restart();
-}
-
 /*  Власної точки доступу більше немає — на прохання власника. Мережу
     вибирають на самому радіо, в меню, а точка лише заважала: у парі
     «точка + станція» обидві мусять сидіти на одному каналі, і підключення
     до мережі на іншому каналі зривалось навіть із правильним паролем.
     Стан лишається той самий (SOFT_AP = «мережі немає»), його знає решта коду. */
-void MyNetwork::raiseSoftAP() {
+void MyNetwork::_noNetwork() {
   WiFi.setAutoReconnect(false);
   esp_wifi_disconnect();
   WiFi.mode(WIFI_STA);

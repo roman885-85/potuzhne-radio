@@ -1,5 +1,6 @@
 #include "options.h"
 #include "config.h"
+#include "../extras/yoDsp.h"
 #include "../extras/yoVersion.h"
 #include "display.h"
 #include "player.h"
@@ -684,7 +685,7 @@ void Config::setTone(int8_t bass, int8_t middle, int8_t trebble) {
   saveValue(&store.bass, bass, false);
   saveValue(&store.middle, middle, false);
   saveValue(&store.trebble, trebble);
-  player.setTone(store.bass, store.middle, store.trebble);
+  yoDsp.fromTone(store.bass, store.middle, store.trebble);
   netserver.requestOnChange(EQUALIZER, 0);
 }
 
@@ -1134,7 +1135,6 @@ void Config::bootInfo() {
   BOOTLOG("audioinfo:\t%s", store.audioinfo?"true":"false");
   BOOTLOG("smartstart:\t%d", store.smartstart);
   BOOTLOG("vumeter:\t%s", store.vumeter?"true":"false");
-  BOOTLOG("softapdelay:\t%d", store.softapdelay);
   BOOTLOG("flipscreen:\t%s", store.flipscreen?"true":"false");
   BOOTLOG("invertdisplay:\t%s", store.invertdisplay?"true":"false");
   BOOTLOG("showweather:\t%s", store.showweather?"true":"false");

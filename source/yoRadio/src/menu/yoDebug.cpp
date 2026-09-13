@@ -11,6 +11,7 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include "freertos_stats.h"
+#include "esp_heap_caps.h"
 #include <SPIFFS.h>
 #include "../ES8311/yoES8311.h"
 #include "yoMenu.h"
@@ -18,6 +19,8 @@
 #include "../extras/yoExtras.h"
 #include "../extras/yoRecorder.h"
 #include "../extras/yoSermons.h"
+#include "../extras/yoMic.h"
+#include "../extras/yoDsp.h"
 
 extern DspCore dsp;
 
@@ -212,6 +215,7 @@ void yodbgLoop(){
         c.stop();
       }
     }
+    else if(!strncmp(buf,"esw ",4)){ unsigned r=0,v=0; sscanf(buf+4, "%x %x", &r, &v); Serial.printf("ES8311 reg%02X <- %02X: %s\n", r, v, es8311_write((uint8_t)r, (uint8_t)v) ? "OK" : "ПОМИЛКА"); }
     else if(!strcmp(buf,"es")){
       es8311_dump();
       /*  Читаємо не змінюючи режим виводу: перемикання в INPUT знімає
@@ -308,6 +312,104 @@ void yodbgLoop(){
         timekeeper.waitAndDo((uint8_t)(hold > 250 ? 250 : hold), [](){ network.pauseSta(false); });
       }
     }
+    else if(!strcmp(buf,"mic")){
+      Serial.printf("мікрофон: слухає=%d рівень=%d дБ фон=%d дБ голос=%d блоків=%u луна=%d режим=%u кадр=%d віднято=%.1f дБ удар=%.2f слоти L=%d R=%d почуто=%s кімната=+%.1f зв'язок=%.1f\n",
+        mic.listening()?1:0, (int)mic.levelDb(), (int)mic.noiseDb(), mic.speech()?1:0,
+        (unsigned)mic.blocks(), mic.aecActive()?1:0, (unsigned)mic.aecMode(), mic.aecChunk(), mic.echoCut(), mic.onsetVal(),
+        (int)mic.slotDb(0), (int)mic.slotDb(1), YoMic::gestureName(mic.heard()), mic.excessDb(), mic.coupleDb());
+    }
+    else if(!strncmp(buf,"micgain ",8)){
+      extras.s.micGain = (uint8_t)atoi(buf+8); extras.changed(); mic.apply();
+      Serial.printf("підсилення мікрофона: крок %u\n", (unsigned)extras.s.micGain);
+    }
+    else if(!strncmp(buf,"micset ",7)){
+      /*  micset <хлопки 0/1> <стук 0/1> <під час звуку 0/1>  */
+      int c=0,k=0,p=0; sscanf(buf+7, "%d %d %d", &c, &k, &p);
+      extras.s.clapOn = c; extras.s.knockOn = k; extras.s.micPlay = p; extras.changed();
+      Serial.printf("хлопки=%d стук=%d під час звуку=%d\n", c, k, p);
+    }
+    else if(!strncmp(buf,"mictest",7)){
+      /*  mictest [рівень тону, дБ; типово -20] [noamp — підсилювач вимкнений] [quick — 5 частот]  */
+      int lv = buf[7] == ' ' ? atoi(buf+8) : -20;
+      if(!lv) lv = -20;
+      bool amp = !strstr(buf, "noamp");
+      uint32_t mask = strstr(buf, "quick") ? (1UL<<3 | 1UL<<9 | 1UL<<12 | 1UL<<17 | 1UL<<21) : 0;
+      const char* why = mic.sweepStart((int8_t)lv, amp, mask, strstr(buf, " dsp") != nullptr);
+      if(why) Serial.printf("самоперевірка звуку: не почато — %s\n", why);
+      else    Serial.printf("самоперевірка звуку: почато, тон %d дБ, частота тактів %u Гц\n", lv, (unsigned)player.getSampleRate());
+    }
+    else if(!strcmp(buf,"eq")){
+      const ExtStore& e = extras.s;
+      Serial.printf("EQ on=%u preset=%u(%s) loud=%u guard=%u vbass=%u room=%u pre=%.1f us=%.2f limit=%u vol=%u rate=%u\n",
+        e.eqOn, e.eqPreset, YoDsp::PRESET_NAME[e.eqPreset < EQ_PRESETS ? e.eqPreset : 0], e.eqLoud, e.eqGuard, e.vbass, e.eqRoomOn,
+        yoDsp.preampDb(), yoDsp.usPerFrame(), (unsigned)yoDsp.limitHits(), (unsigned)player.getVolume(), (unsigned)player.getSampleRate());
+      for(uint8_t b = 0; b < EQ_BANDS; b++)
+        Serial.printf("EQB %u %d %d %.1f\n", YoDsp::BAND_HZ[b], e.eq[b], e.eqRoom[b], yoDsp.responseDb(YoDsp::BAND_HZ[b]));
+    }
+    else if(!strncmp(buf,"eqp ",4)){ yoDsp.applyPreset((uint8_t)atoi(buf+4)); Serial.printf("пресет %u\n", extras.s.eqPreset); }
+    else if(!strncmp(buf,"eqb ",4)){ int b=0,d=0; sscanf(buf+4, "%d %d", &b, &d); yoDsp.setBand((uint8_t)b, (int8_t)d); Serial.printf("смуга %d = %d\n", b, d); }
+    else if(!strncmp(buf,"eqo ",4)){
+      /*  eqo <еквалайзер 0/1> <тонкомпенсація 0..2> <захист 0..2> <віртуальний бас 0..3> <кімната 0/1>  */
+      int on=1, ld=0, g=1, vb=0, rm=0; sscanf(buf+4, "%d %d %d %d %d", &on, &ld, &g, &vb, &rm);
+      extras.s.eqOn = on; extras.s.eqLoud = ld; extras.s.eqGuard = g; extras.s.vbass = vb; extras.s.eqRoomOn = rm;
+      extras.changed(); yoDsp.changed();
+      Serial.printf("звук: eq=%d тонкомп=%d захист=%d бас=%d кімната=%d\n", on, ld, g, vb, rm);
+    }
+    else if(!strcmp(buf,"dspbench")){
+      if(player.isRunning()) Serial.println("DSPBENCH спершу зупиніть звук");
+      else {
+        float us = yoDsp.bench(44100);
+        Serial.printf("DSPBENCH us=%.3f ланок=%u частка ядра=%.1f%%\n", us, (unsigned)yoDsp.stages(), us * 44100.0f / 1e4f);
+      }
+    }
+    else if(!strcmp(buf,"eqmigrate")){
+      /*  повторити перенесення трьох старих повзунків (після виправлення меж)  */
+      yoDsp.fromTone(config.store.bass, config.store.middle, config.store.trebble);
+      Serial.printf("перенесено: низькі %d середні %d високі %d\n", config.store.bass, config.store.middle, config.store.trebble);
+    }
+    else if(!strcmp(buf,"eqroom")){ char w[48]; bool ok = yoDsp.roomFromSweep(w, sizeof(w)); Serial.printf("кімната: %s %s\n", ok ? "OK" : "ні", w); }
+    else if(!strcmp(buf,"roomtune")){ const char* w = yoDsp.roomTuneStart(); Serial.printf("ROOM %s\n", w ? w : "почато"); }
+    else if(!strcmp(buf,"roomst")){ Serial.printf("ROOM state=%u progress=%u msg=%s\n", yoDsp.roomState(), yoDsp.roomProgress(), yoDsp.roomMsg()); }
+    else if(!strcmp(buf,"eqroomclr")){ yoDsp.roomClear(); Serial.println("кімната: поправку скинуто"); }
+    else if(!strcmp(buf,"eqresp")){
+      /*  розрахункова АЧХ на частотах заміру — для tools/selftest.py  */
+      for(uint8_t i = 0; i < YoMic::SWEEP_N; i++) Serial.printf("RESP %u %.2f\n", (unsigned)YoMic::sweepHz(i), yoDsp.responseDb(YoMic::sweepHz(i)));
+      Serial.println("RESP end");
+    }
+    else if(!strncmp(buf,"aecmode ",8)){ int m=0,l=4; sscanf(buf+8, "%d %d", &m, &l); mic.aecSet((uint8_t)m, (uint8_t)l); Serial.printf("AEC режим %d, фільтр %d\n", m, l); }
+    else if(!strncmp(buf,"micdbg ",7)){ mic._dbg = atoi(buf+7) != 0; Serial.printf("удари: %s\n", mic._dbg ? "друкую" : "мовчу"); }
+    else if(!strncmp(buf,"micsim ",7)){
+      /*  micsim <clap|knock> <скільки> <крок, мс>  */
+      char kind[8] = {0}; int n = 2, gap = 300;
+      sscanf(buf+7, "%7s %d %d", kind, &n, &gap);
+      const char* w = mic.simStart(!strcmp(kind, "knock") ? 1 : 0, (uint8_t)n, (uint16_t)gap);
+      Serial.printf("MICSIM %s\n", w ? w : "почато");
+    }
+    else if(!strcmp(buf,"micstop")){ mic.sweepAbort(); Serial.println("самоперевірка звуку: зупиняю"); }
+    else if(!strcmp(buf,"micres")){
+      /*  Машинний формат — його читає tools/selftest.py:
+          SWEEP state=<0..3> pos=<n> of=<N> rate=<Гц> level=<дБ>
+          SW <Гц> <тон дБ> <фон дБ> <2-га гарм. дБ> <3-тя гарм. дБ>  */
+      Serial.printf("SWEEP state=%u pos=%u of=%u rate=%u level=%d amp=%d dsp=%d\n", (unsigned)mic.sweepState(), (unsigned)mic.sweepPos(),
+        (unsigned)YoMic::SWEEP_N, (unsigned)mic.sweepRate(), (int)mic.sweepLevel(), mic.sweepAmp()?1:0, mic.sweepDsp()?1:0);
+      if(mic.sweepState() >= 2){
+        for(uint8_t i = 0; i < mic.sweepPos() && i < YoMic::SWEEP_N; i++)
+          Serial.printf("SW %u %.1f %.1f %.1f %.1f\n", (unsigned)YoMic::sweepHz(i), mic.sweepDb(i), mic.sweepNoise(i), mic.sweepH2(i), mic.sweepH3(i));
+      }
+      Serial.println("SWEEP end");
+    }
+    else if(!strcmp(buf,"heap")){
+      Serial.printf("HEAP internal=%u blk=%u min=%u psram=%u psblk=%u\n",
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
+        (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+    }
+    else if(!strncmp(buf,"micon ",6)){
+      extras.s.micOn = atoi(buf+6) ? 1 : 0; extras.changed(); mic.apply();
+      Serial.printf("мікрофон %s\n", extras.s.micOn ? "увімкнено" : "вимкнено");
+    }
     else if(!strcmp(buf,"tasks")){
       /*  Хто скільки процесора з'їв: список задач FreeRTOS від самого ядра.  */
       printRunningTasks(Serial);
@@ -364,6 +466,7 @@ void yodbgLoop(){
     else if(!strcmp(buf,"menu"))   yomenu.open();
     else if(!strcmp(buf,"mwifi"))  yomenu.openWifi(false);   /* без замка: це перевірка, а не режим точки доступу */
     else if(!strcmp(buf,"mclose")) yomenu.close();
+    else if(!strncmp(buf,"mpage ",6)) yomenu.openPage((int8_t)atoi(buf+6));
     else if(!strncmp(buf,"tap ",4)){
       /*  Імітація дотику: дозволяє перевірити меню без людини біля екрана. */
       char* sp = strchr(buf+4,' ');

@@ -14,6 +14,8 @@
 #include "core/timekeeper.h"
 #include "extras/yoExtras.h"
 #include "menu/yoMenu.h"
+#include "extras/yoMic.h"
+#include "extras/yoDsp.h"
 #ifdef USE_NEXTION
 #include "displays/nextion.h"
 #endif
@@ -81,6 +83,7 @@ void setup() {
   display.init();
   player.init();
   extras.begin();           /* таймер сну, будильник, ніч, батарея, світлодіод */
+  mic.begin();              /* вбудований мікрофон: задача слухає, лише коли його ввімкнули */
   network.begin();
   if (network.status != CONNECTED && network.status!=SDREADY) {
     netserver.begin();
@@ -159,6 +162,8 @@ void loop() {
   STEP(loopControls());
 #ifdef USE_YOMENU
   STEP(yomenu.wifiTick());        /* пошук мереж — тут, а не в задачі дисплея */
+  STEP(yoDsp.roomTick());         /* налаштування під кімнату: тони, замір, поправка */
+  STEP(mic.loop());               /* мікрофон: дії на хлопки й стук, присутність, сон */
 #endif
   STEP(extras.loop());
   #ifdef NETSERVER_LOOP1

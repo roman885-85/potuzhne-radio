@@ -11,6 +11,8 @@
 #include "../core/netserver.h"
 #include "../core/sdmanager.h"
 #include "yoExtras.h"
+#include "yoDsp.h"
+#include "yoMic.h"
 #include "yoRecorder.h"
 #include "yoSermons.h"
 #include "yoLogos.h"
@@ -46,7 +48,7 @@ struct JOut {
   void arr(const char* key){ k(key); put('['); }
 };
 
-#define ST_CAP   6144
+#define ST_CAP   8192
 #define BIG_CAP  24576
 static char* _stBuf = nullptr;      /* /api/state */
 static char* _bigBuf = nullptr;     /* проповіді, мережі, логотипи */
@@ -146,7 +148,7 @@ static void onState(AsyncWebServerRequest* r){
   o.ks("build", prBuild());
   o.ks("fw", prMarker());
   bool sta = WiFi.status() == WL_CONNECTED;
-  o.ks("ip", sta ? WiFi.localIP().toString().c_str() : WiFi.softAPIP().toString().c_str());
+  o.ks("ip", sta ? WiFi.localIP().toString().c_str() : "");
   o.ks("ssid", sta ? WiFi.SSID().c_str() : "");
   o.kn("rssi", sta ? WiFi.RSSI() : 0);
   o.kn("heap", ESP.getFreeHeap());
@@ -199,7 +201,54 @@ static void onState(AsyncWebServerRequest* r){
   o.kn("logo", logos.version());
   o.kn("web", webStamp());
   o.ks("wfail", extras.wifiFail);
+  /*  звук: еквалайзер і обробка  */
+  o.k("snd"); o.put('{');
+  o.kn("on", s.eqOn); o.kn("preset", s.eqPreset); o.kn("loud", s.eqLoud); o.kn("guard", s.eqGuard);
+  o.kn("vb", s.vbass); o.kn("roomOn", s.eqRoomOn); o.kn("bal", config.store.balance);
+  o.arr("eq");   for(uint8_t i = 0; i < EQ_BANDS; i++){ o.sep(); o.num(s.eq[i]); }     o.put(']');
+  o.arr("room"); for(uint8_t i = 0; i < EQ_BANDS; i++){ o.sep(); o.num(s.eqRoom[i]); } o.put(']');
+  o.kn("pre10", (long long)lroundf(yoDsp.preampDb() * 10));
+  o.kn("us100", (long long)lroundf(yoDsp.usPerFrame() * 100));
+  o.kn("rst", yoDsp.roomState()); o.kn("rpr", yoDsp.roomProgress()); o.ks("rmsg", yoDsp.roomMsg());
+  o.put('}');
+  /*  мікрофон  */
+  o.k("mic"); o.put('{');
+  o.kn("on", s.micOn); o.kn("gain", s.micGain); o.kn("play", s.micPlay); o.kn("run", mic.listening());
+  o.kn("lvl", mic.levelDb()); o.kn("noise", mic.noiseDb()); o.kn("speech", mic.speech()); o.kn("aec", mic.aecActive());
+  o.ks("heard", mic.heard() && millis() - mic.heardMs() < 15000 ? YoMic::gestureName(mic.heard()) : "");
+  o.kn("clapOn", s.clapOn); o.kn("clapSens", s.clapSens);
+  o.kn("clap2", YoMic::actionFor(MG_CLAP2)); o.kn("clap3", YoMic::actionFor(MG_CLAP3));
+  o.kn("knockOn", s.knockOn); o.kn("knockSens", s.knockSens);
+  o.kn("knock2", YoMic::actionFor(MG_KNOCK2)); o.kn("knock3", YoMic::actionFor(MG_KNOCK3));
+  o.kn("ear", s.sleepEar); o.kn("earMin", s.sleepEarMin ? s.sleepEarMin : 10); o.kn("wake", s.presWake); o.kn("off", s.presOff);
+  o.put('}');
   o.ks("msg", _msg);
+  o.put('}');
+  sendJson(r, o.b, o.n);
+}
+
+/*  ---------- /api/eq ----------
+    Розрахункова АЧХ ланцюга на 64 частотах (для графіка на сторінці) і
+    останній замір мікрофоном, якщо був.  */
+static void onEq(AsyncWebServerRequest* r){
+  JOut o(_bigBuf, BIG_CAP);
+  o.put('{');
+  o.arr("resp");
+  for(uint8_t i = 0; i < 64; i++){
+    float f = 20.0f * pow(1000.0f, i / 63.0f);
+    o.sep(); o.put('['); o.num(lroundf(f)); o.put(','); o.num(lroundf(yoDsp.responseDb(f) * 10)); o.put(']');
+  }
+  o.put(']');
+  o.arr("sweep");
+  if(mic.sweepState() == 2){
+    for(uint8_t i = 0; i < YoMic::SWEEP_N; i++){
+      float d = mic.sweepDb(i), nz = mic.sweepNoise(i);
+      if(isnan(d)) continue;
+      o.sep(); o.put('['); o.num(YoMic::sweepHz(i)); o.put(','); o.num(lroundf(d * 10)); o.put(','); o.num(lroundf(nz * 10)); o.put(']');
+    }
+  }
+  o.put(']');
+  o.kn("dsp", mic.sweepDsp());
   o.put('}');
   sendJson(r, o.b, o.n);
 }
@@ -418,6 +467,7 @@ void yoWebApiBegin(AsyncWebServer& s){
   s.on("/api/hello",    HTTP_GET,  onHello);
   s.on("/api/state",    HTTP_GET,  onState);
   s.on("/api/set",      HTTP_ANY,  onSet);
+  s.on("/api/eq",       HTTP_GET,  onEq);
   s.on("/api/sermons",  HTTP_GET,  onSermons);
   s.on("/api/records",  HTTP_GET,  onRecords);
   s.on("/api/rec",      HTTP_GET,  onRecFile);
@@ -461,6 +511,34 @@ static void apply(const WebCmd& c){
     if(s.noSd){ recorder.stop(); if(config.getMode() == PM_SDCARD) config.changeMode(PM_WEB); }
     display.requestRedraw();
   }
+  /*  звук  */
+  else if(!strcmp(k, "eqOn"))       { s.eqOn = clampi(v, 0, 1); yoDsp.changed(); }
+  else if(!strcmp(k, "eqPreset"))   { yoDsp.applyPreset(clampi(v, 0, EQ_PRESETS - 1)); ext = false; }
+  else if(!strcmp(k, "eqBand"))     { int b = atoi(v); const char* c = strchr(v, ':'); if(!c) return; yoDsp.setBand(clampi(v, 0, EQ_BANDS - 1), clampi(c + 1, -12, 12)); (void)b; ext = false; }
+  else if(!strcmp(k, "eqLoud"))     { s.eqLoud = clampi(v, 0, 2); yoDsp.changed(); }
+  else if(!strcmp(k, "eqGuard"))    { s.eqGuard = clampi(v, 0, 2); yoDsp.changed(); }
+  else if(!strcmp(k, "vbass"))      { s.vbass = clampi(v, 0, 3); yoDsp.changed(); }
+  else if(!strcmp(k, "eqRoomOn"))   { s.eqRoomOn = clampi(v, 0, 1); yoDsp.changed(); }
+  else if(!strcmp(k, "roomTune"))   { if(!s.micOn){ s.micOn = 1; mic.apply(); } const char* w = yoDsp.roomTuneStart(); if(w) _msg = w; }
+  else if(!strcmp(k, "roomStop"))   { mic.sweepAbort(); ext = false; }
+  else if(!strcmp(k, "roomClear"))  { yoDsp.roomClear(); ext = false; }
+  else if(!strcmp(k, "bal"))        { config.setBalance(clampi(v, -16, 16)); ext = false; }
+  /*  мікрофон  */
+  else if(!strcmp(k, "micOn"))      { s.micOn = clampi(v, 0, 1); mic.apply(); }
+  else if(!strcmp(k, "micGain"))    { s.micGain = clampi(v, 0, 8); mic.apply(); }
+  else if(!strcmp(k, "micPlay"))    s.micPlay = clampi(v, 0, 1);
+  else if(!strcmp(k, "clapOn"))     { s.clapOn = clampi(v, 0, 1); if(s.clapOn && !s.micOn){ s.micOn = 1; mic.apply(); } }
+  else if(!strcmp(k, "clapSens"))   s.clapSens = clampi(v, 0, 2);
+  else if(!strcmp(k, "clap2"))      s.clap2 = clampi(v, 0, MA_N - 1);
+  else if(!strcmp(k, "clap3"))      s.clap3 = clampi(v, 0, MA_N - 1);
+  else if(!strcmp(k, "knockOn"))    { s.knockOn = clampi(v, 0, 1); if(s.knockOn && !s.micOn){ s.micOn = 1; mic.apply(); } }
+  else if(!strcmp(k, "knockSens"))  s.knockSens = clampi(v, 0, 2);
+  else if(!strcmp(k, "knock2"))     s.knock2 = clampi(v, 0, MA_N - 1);
+  else if(!strcmp(k, "knock3"))     s.knock3 = clampi(v, 0, MA_N - 1);
+  else if(!strcmp(k, "sleepEar"))   { s.sleepEar = clampi(v, 0, 1); if(s.sleepEar && !s.micOn){ s.micOn = 1; mic.apply(); } }
+  else if(!strcmp(k, "sleepEarMin")) s.sleepEarMin = clampi(v, 1, 60);
+  else if(!strcmp(k, "presWake"))   { s.presWake = clampi(v, 0, 1); if(s.presWake && !s.micOn){ s.micOn = 1; mic.apply(); } }
+  else if(!strcmp(k, "presOff"))    { s.presOff = clampi(v, 0, 120); if(s.presOff && !s.micOn){ s.micOn = 1; mic.apply(); } }
   else if(!strcmp(k, "dac")){
     uint8_t d = clampi(v, 0, 3);         /* VS1053 — лише окремою прошивкою */
     if(d != s.dac){ s.dac = d; extras.changed(); extras.applyDac(); }

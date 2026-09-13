@@ -119,9 +119,11 @@ bool es8311_ready() { return _ready; }
 
 /*  Читаємо назад те, що самі записали: якщо кодек живий і налаштований,
     регістри збігатимуться з очікуваними.  */
+bool es8311_write(uint8_t reg, uint8_t val){ return wr(reg, val); }
+
 void es8311_dump(){
   if(!_ready){ Serial.println("ES8311: не ініціалізований"); return; }
-  static const uint8_t regs[] = {0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0D,0x0E,0x12,0x13,0x31,0x32,0xFD};
+  static const uint8_t regs[] = {0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0A,0x0D,0x0E,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1A,0x1B,0x1C,0x31,0x32,0x44,0x45,0xFD};
   Serial.printf("ES8311: частота=%u Гц, гучність ЦАПа=%d\n", _rate, (int)ES8311_VOLUME);
   for(uint8_t i=0;i<sizeof(regs);i++){
     uint8_t v=0;
@@ -190,6 +192,23 @@ void audio_samplerate_changed(uint32_t rate) {
 /*  Той самий порядок, що в es8311_suspend() з ESP-ADF: гучність у нуль,
     АЦП/ЦАП і аналогові джерела знеструмити. Прокидається кодек лише
     повним es8311_begin() — після сну радіо однаково стартує наново.  */
+/*  Вбудований мікрофон: аналоговий вхід, PGA на максимум, цифрове підсилення
+    АЦП кроками по 6 дБ (0..7 = 0..42 дБ), гучність АЦП — як у прикладі
+    виробника (0xC8). Регістри ті самі, що в es8311_microphone_config().  */
+bool es8311_mic(uint8_t gain_step) {
+  if (gain_step > 7) gain_step = 7;
+  bool ok = true;
+  ok &= wr(0x17, 0xC8);                  /* гучність АЦП */
+  ok &= wr(ES8311_SYSTEM_REG14, 0x1A);   /* аналоговий мікрофон, PGA максимум */
+  ok &= wr(0x16, gain_step);             /* підсилення АЦП */
+  /*  Лівий слот АЦП — мікрофон, правий — те, що грає ЦАП, зсередини кодека:
+      опорний сигнал для віднімання луни, вирівняний до відліку. Так робить
+      сам Espressif (esp_codec_dev, es8311.c: «internal reference signal
+      (ADCL + DACR)»).  */
+  ok &= wr(0x44, 0x58);
+  return ok;
+}
+
 bool es8311_suspend() {
   bool ok = true;
   ok &= wr(ES8311_DAC_REG32, 0x00);

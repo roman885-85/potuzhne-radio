@@ -42,6 +42,7 @@
 #define I2S_BCLK          5         // SCLK
 #define I2S_LRC           7         // LRCK / WS
 #define I2S_MCLK          4         // MCLK, обязателен для ES8311
+#define I2S_DIN           6         // кодек -> ESP32 (ASDOUT): вбудований мікрофон
 #define I2S_ES8311        true      // включить драйвер кодека
 #define ES8311_ADDR       0x18      // вывод CE кодека притянут к земле
 #define ES8311_VOLUME     75        // 75 = 0 dB. Выше 75 — цифровое усиление
@@ -87,7 +88,5 @@
 /*  ----------  НАЗВА ПРИСТРОЮ  --------------------------------------------- */
 /*  SSID і mDNS лишаємо латиницею: кирилиця в іменах мереж і hostname
     підтримується не всюди й ламає доступ з частини пристроїв.               */
-#define apSsid            "PotuzhneRadio"
-#define apPassword        "12345987"
 
 #endif

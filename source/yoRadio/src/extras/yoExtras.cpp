@@ -4,6 +4,7 @@
 #include "yoRecorder.h"
 #include "yoSermons.h"
 #include "yoWebApi.h"
+#include "yoDsp.h"
 #include "../core/options.h"
 #include "../core/config.h"
 #include "../core/player.h"
@@ -63,6 +64,27 @@ void YoExtras::_load(){
   if(s.ledMode > LED_MUSIC) s.ledMode = LED_STATUS;
   if(s.batSave > 4) s.batSave = 0;
   if(s.dac > 3) s.dac = 0;
+  /*  Звук: при першому запуску цієї версії — захист динаміка ввімкнено, а
+      три повзунки yoRadio переносяться в десять смуг.  */
+  if(!s.eqInit){
+    s.eqInit = 1; s.eqOn = 1; s.eqGuard = 1; s.eqLoud = 0; s.vbass = 0; s.eqPreset = 0;
+    int8_t b = config.store.bass, m = config.store.middle, t = config.store.trebble;
+    if(b > 6) b = 6;                       /* старі фільтри підіймали не більше ніж на 6 дБ */
+    if(m > 6) m = 6;
+    if(t > 6) t = 6;
+    int tt[10] = { b, b, b, b / 2, 0, m / 3, m * 2 / 3, m + t / 3, t, t };
+    for(uint8_t i = 0; i < 10; i++) s.eq[i] = (int8_t)(tt[i] > 12 ? 12 : tt[i] < -12 ? -12 : tt[i]);
+  }
+  for(uint8_t i = 0; i < 10; i++){
+    if(s.eq[i] > 12) s.eq[i] = 12;
+    if(s.eq[i] < -12) s.eq[i] = -12;
+    if(s.eqRoom[i] > 12 || s.eqRoom[i] < -12) s.eqRoom[i] = 0;
+  }
+  if(s.eqPreset >= 8) s.eqPreset = 0;
+  if(s.eqLoud > 2) s.eqLoud = 0;
+  if(s.eqGuard > 2) s.eqGuard = 1;
+  if(s.vbass > 3) s.vbass = 0;
+  yoDsp.changed();
 
   memset(fav, 0, sizeof(fav));
   if(p.begin("yoext", true)){
@@ -193,7 +215,7 @@ void YoExtras::applyDac(){
   if(s.dac){
     player.setPinout(DAC_BCLK, DAC_LRC, DAC_DOUT, I2S_PIN_NO_CHANGE, I2S_PIN_NO_CHANGE);
   }else{
-    player.setPinout(I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_PIN_NO_CHANGE, I2S_MCLK);
+    player.setPinout(I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_DIN, I2S_MCLK);
     /*  старі виводи зовнішнього ЦАП відв'язуємо, щоб не лишились на шині  */
     gpio_reset_pin((gpio_num_t)DAC_BCLK); gpio_reset_pin((gpio_num_t)DAC_LRC); gpio_reset_pin((gpio_num_t)DAC_DOUT);
   }
@@ -344,6 +366,15 @@ void YoExtras::setSleep(uint16_t minutes){
   if(_sleepEnd == 0 && minutes) _sleepEnd = 1;
 }
 
+/*  У кімнаті тихо (мікрофон) — починаємо затихання зараз, а не наприкінці.  */
+bool YoExtras::sleepSoon(){
+  if(!_sleepEnd) return false;
+  int32_t left = (int32_t)(_sleepEnd - millis());
+  if(left <= (int32_t)SLEEP_FADE_MS) return false;
+  _sleepEnd = millis() + SLEEP_FADE_MS;
+  return true;
+}
+
 void YoExtras::sleepTestSec(uint32_t sec){
   setSleep(1);
   _sleepEnd = millis() + sec * 1000UL;
@@ -466,6 +497,11 @@ void YoExtras::_alarmLoop(uint32_t now){
 uint16_t YoExtras::pwmTarget(){
 #if BRIGHTNESS_PIN!=255
   if(!config.store.dspon || _dark || _blank) return 0;
+#ifdef USE_YOMENU
+  if(_presDark && !yomenu.active()) return 0;        /* мікрофон: у кімнаті давно нікого не чути */
+#else
+  if(_presDark) return 0;
+#endif
   uint16_t day = map(config.store.brightness, 0, 100, 0, 255);
   bool awake = (int32_t)(_wakeUntil - millis()) > 0;
 #ifdef USE_YOMENU
@@ -502,8 +538,9 @@ uint16_t YoExtras::pwmNow(){ uint16_t v = pwmTarget(); pwmSet(v); return v; }
 bool YoExtras::touchWake(){
   /*  Пригашений для економії екран теж спершу лише будимо: людина ще не
       бачить, куди тисне.  */
-  bool wasDark = _dark || _saver || (_pwmCur == 0 && config.store.dspon && !_blank);
+  bool wasDark = _dark || _saver || _presDark || (_pwmCur == 0 && config.store.dspon && !_blank);
   _dark = false;
+  _presDark = false;
   _saver = false;
   _lastTouch = millis();
   _wakeUntil = millis() + WAKE_MS;

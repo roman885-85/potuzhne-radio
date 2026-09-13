@@ -564,12 +564,6 @@ The connection tables are located here https://github.com/e2002/yoradio#connecti
 #ifndef CONNECTION_TIMEOUT_SSL
   #define CONNECTION_TIMEOUT_SSL    5700
 #endif
-#ifndef apSsid
-  #define apSsid      "yoRadioAP"
-#endif
-#ifndef apPassword
-  #define apPassword  "12345987"
-#endif
 #ifndef BUFLEN
   #define BUFLEN                    170
 #endif

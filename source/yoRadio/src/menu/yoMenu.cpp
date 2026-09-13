@@ -17,6 +17,8 @@
 #include "../extras/yoSermons.h"
 #include "../extras/yoRecorder.h"
 #include "../extras/yoLogos.h"
+#include "../extras/yoDsp.h"
+#include "../extras/yoMic.h"
 #include "../displays/fonts/yoUI11.h"
 #include "../displays/fonts/yoUI8.h"
 #include <WiFi.h>
@@ -76,6 +78,25 @@ static const char* TITLES[7] = { "інформація", "еквалайзер",
 #define WS_TOP     44
 #define WS_ROW     32
 #define WS_H       28
+/*  Плитки головного меню й параметрів: 3×3  */
+#define HM_X(i)   (6 + ((i) % 3) * 104)
+#define HM_Y(i)   (33 + ((i) / 3) * 69)
+#define HM_W      100
+#define HM_H      65
+/*  Звук: еквалайзер  */
+#define EQ_TOP_Y   32
+#define EQ_TOP_H   28
+#define EQ_COL0    62        /* верх області смуг */
+#define EQ_VAL_Y   74        /* підпис значення */
+#define EQ_T0      82
+#define EQ_T1      182
+#define EQ_ZERO    132
+#define EQ_FRQ_Y   198
+#define EQ_BTN_Y   206
+#define EQ_BTN_H   30
+#define C_ROOM     0x07FF    /* поправка під кімнату — бірюзова */
+#define C_VOICE    0x07E0
+
 
 static const uint16_t SLEEP_MIN[5] = { 0, 15, 30, 60, 90 };
 static const char* const SLEEP_LBL[5] = { "вимк", "15", "30", "60", "90" };
@@ -103,13 +124,6 @@ void YoMenu::_build(){
     _pg[PG_INFO]->addWidget(&_info[i][1]);
   }
 
-  /*  EQ: чотири повзунки -16..+16, як у Nextion  */
-  static const char* eqLbl[4] = { "баланс", "високі", "середні", "низькі" };
-  for(uint8_t i=0;i<4;i++){
-    _eq[i].init(wc(CX, 44+i*44), &yoUI9, CW, -16, 16, C_TXT, C_BG, C_ACC);
-    _eq[i].setLabel(eqLbl[i]);
-    _pg[PG_EQ]->addWidget(&_eq[i]);
-  }
 
   /*  WI-FI: п'ять слотів SSID / пароль  */
   for(uint8_t i=0;i<YOM_SSIDS;i++){
@@ -187,6 +201,7 @@ void YoMenu::_build(){
   _kbdField.init(wc(8, 32), &yoUI12b, SW-74, 26, C_TXT, C_PANEL);
   _pg[PG_KBD]->addWidget(&_kbdField);
 
+  _buildSound();                     /* звук і мікрофон */
   _built = true;
 }
 
@@ -395,6 +410,8 @@ void YoMenu::_paint(){
     plGenericChrome();
     _smDraw(false);
     _smDirty = false;
+  }else if(_isSound(p)){
+    _paintSound(p);
   }else if(p == PG_FAV){
     _chrome("обране", 1);
     _drawFav();
@@ -452,11 +469,6 @@ void YoMenu::_paint(){
   if(p == PG_INFO){
     { char v[32]; snprintf(v, sizeof(v), "%s, %.10s", prVersion(), prBuild()); _info[0][1].setText(v); }
     _infoLive();
-  }else if(p == PG_EQ){
-    _eq[0].setValue(config.store.balance);
-    _eq[1].setValue(config.store.trebble);
-    _eq[2].setValue(config.store.middle);
-    _eq[3].setValue(config.store.bass);
   }else if(p == PG_TIME){
     snprintf(b, sizeof(b), "%02d", config.store.tzHour); _tmH.setText(b);
     snprintf(b, sizeof(b), "%02d", config.store.tzMin); _tmM.setText(b);
@@ -795,6 +807,9 @@ int8_t YoMenu::_parent(int8_t p) const {
   if(p == PG_DACINFO) return PG_DAC;
   if(p == PG_POWER) return PG_SETUP;
   if(p == PG_WSAVED || p == PG_WPICK || p == PG_WCONN) return PG_WIFI;
+  if(p == PG_SND || p == PG_ROOM) return PG_EQ;
+  if(p == PG_MIC) return PG_SETUP;
+  if(p == PG_MGEST || p == PG_MPRES) return PG_MIC;
   return PG_HOME;
 }
 
@@ -855,44 +870,47 @@ void YoMenu::_smMarquee(){
 /*  ---------- сітка «параметри» ---------- */
 
 void YoMenu::_drawSetup(){
-  static const char* lbl[6] = { "інформація", "Wi-Fi", "час", "система", "розробник", "живлення" };
-  for(uint8_t i=0;i<6;i++){
-    int16_t x = 6 + (i % 3) * 104, y = 33 + (i / 3) * 104, w = 100, h = 100;
-    int16_t cx = x + w / 2, cy = y + 38;
+  /*  Сітка 3×3, як у головному меню: сім розділів.  */
+  static const char* lbl[7] = { "інформація", "Wi-Fi", "час", "система", "мікрофон", "розробник", "живлення" };
+  for(uint8_t i=0;i<7;i++){
+    int16_t x = HM_X(i), y = HM_Y(i), w = HM_W, h = HM_H;
+    int16_t cx = x + w / 2, cy = y + 24;
     dsp.fillRect(x, y, w, h, C_PANEL);
     const uint16_t c = C_ACC;
     switch(i){
-      case 0: dsp.drawCircle(cx, cy, 14, c); dsp.drawCircle(cx, cy, 13, c);
-              dsp.fillRect(cx-2, cy-3, 5, 12, c); dsp.fillRect(cx-2, cy-9, 5, 4, c); break;
-      case 1: for(int r = 6; r <= 18; r += 6) for(int a = -140; a <= -40; a += 3){
+      case 0: dsp.drawCircle(cx, cy, 13, c); dsp.drawCircle(cx, cy, 12, c);
+              dsp.fillRect(cx-2, cy-3, 5, 11, c); dsp.fillRect(cx-2, cy-9, 5, 4, c); break;
+      case 1: for(int r = 5; r <= 17; r += 6) for(int a = -140; a <= -40; a += 3){
                 float rad = a * 3.14159f / 180.0f;
-                dsp.drawPixel(cx + (int)(r * cosf(rad)), cy + 10 + (int)(r * sinf(rad)), c);
-                dsp.drawPixel(cx + (int)((r+1) * cosf(rad)), cy + 10 + (int)((r+1) * sinf(rad)), c); }
-              dsp.fillCircle(cx, cy + 10, 3, c); break;
-      case 2: dsp.drawCircle(cx, cy, 14, c); dsp.drawCircle(cx, cy, 13, c);
-              dsp.fillRect(cx-1, cy-9, 3, 10, c); dsp.fillRect(cx, cy-1, 8, 3, c); break;
-      case 3:
-              /*  система: три повзунки  */
-              for(uint8_t k=0;k<3;k++){ dsp.fillRect(cx-14, cy-9 + k*9, 28, 2, c); dsp.fillRect(cx-8 + k*7, cy-12 + k*9, 5, 8, c); }
+                dsp.drawPixel(cx + (int)(r * cosf(rad)), cy + 9 + (int)(r * sinf(rad)), c);
+                dsp.drawPixel(cx + (int)((r+1) * cosf(rad)), cy + 9 + (int)((r+1) * sinf(rad)), c); }
+              dsp.fillCircle(cx, cy + 9, 3, c); break;
+      case 2: dsp.drawCircle(cx, cy, 13, c); dsp.drawCircle(cx, cy, 12, c);
+              dsp.fillRect(cx-1, cy-8, 3, 9, c); dsp.fillRect(cx, cy-1, 7, 3, c); break;
+      case 3: for(uint8_t k=0;k<3;k++){ dsp.fillRect(cx-14, cy-9 + k*9, 28, 2, c); dsp.fillRect(cx-8 + k*7, cy-12 + k*9, 5, 8, c); }
               break;
-      case 5:
-              /*  живлення: кільце з розривом угорі й риска  */
-              for(int a = -55; a <= 235; a += 2){
-                float rad = (a - 90) * 3.14159f / 180.0f;
-                for(int r = 13; r <= 15; r++) dsp.drawPixel(cx + (int)(r * cosf(rad)), cy + (int)(r * sinf(rad)), c);
+      case 4: /*  мікрофон: капсула, дужка й ніжка  */
+              dsp.fillRoundRect(cx-5, cy-15, 11, 19, 5, c);
+              for(int a = 0; a <= 180; a += 4){
+                float rad = a * 3.14159f / 180.0f;
+                for(int r = 9; r <= 10; r++) dsp.drawPixel(cx + (int)(r * cosf(rad)), cy - 3 + (int)(r * sinf(rad)), c);
               }
-              dsp.fillRect(cx-1, cy-17, 3, 15, c);
+              dsp.fillRect(cx-1, cy+7, 3, 5, c); dsp.fillRect(cx-6, cy+12, 13, 2, c);
               break;
-      default:
-              /*  розробник: «</>»  */
-              dsp.setFont(&yoUI12b); dsp.setTextSize(1); dsp.setTextColor(c);
+      case 6: for(int a = -55; a <= 235; a += 2){
+                float rad = (a - 90) * 3.14159f / 180.0f;
+                for(int r = 12; r <= 14; r++) dsp.drawPixel(cx + (int)(r * cosf(rad)), cy + (int)(r * sinf(rad)), c);
+              }
+              dsp.fillRect(cx-1, cy-16, 3, 14, c);
+              break;
+      default: dsp.setFont(&yoUI12b); dsp.setTextSize(1); dsp.setTextColor(c);
               dsp.setCursor(cx - 16, cy + 6); dsp.print("</>"); dsp.setFont();
               break;
     }
     dsp.setFont(&yoUI8); dsp.setTextSize(1); dsp.setTextColor(C_TXT);
     char t[32]; snprintf(t, sizeof(t), "%s", utf8Rus(lbl[i], false));
     fitText(t, w - 6);
-    dsp.setCursor(x + (w - (int16_t)textW(t)) / 2, y + h - 16); dsp.print(t);
+    dsp.setCursor(x + (w - (int16_t)textW(t)) / 2, y + h - 9); dsp.print(t);
     dsp.setFont();
   }
 }
@@ -1128,10 +1146,6 @@ void YoMenu::_drawDacInfo(){
 
 /*  Дев'ять плиток 3x3: великий жовтий значок і підпис. Тут усе, що раніше
     розсипалось значками по шапці плеєра, плюс входи в налаштування.  */
-#define HM_X(i)   (6 + ((i) % 3) * 104)
-#define HM_Y(i)   (33 + ((i) / 3) * 69)
-#define HM_W      100
-#define HM_H      65
 enum { HM_STATIONS = 0, HM_FAV, HM_SERM, HM_SRC, HM_REC, HM_ALARM, HM_SCREEN, HM_SOUND, HM_SETUP };
 
 void YoMenu::_drawHomeTile(uint8_t i){
@@ -1614,6 +1628,12 @@ void YoMenu::openHome(){
   _show(PG_HOME);
 }
 
+void YoMenu::openPage(int8_t p){
+  if(p < 0 || p >= PG_N) return;
+  if(_cur == PG_OFF){ _build(); _apLock = false; _loadWifi(); _syncSys(); }
+  _show(p);
+}
+
 void YoMenu::openFav(){
   if(_cur != PG_OFF) return;
   _build(); _apLock = false;
@@ -1650,7 +1670,8 @@ void YoMenu::render(){
   /*  Хвилину без дотиків — назад на плеєр, тим самим плавним переходом.
       Клавіатуру й налаштування мережі без неї не чіпаємо: там людина
       може думати над паролем.  */
-  if(!_apLock && _cur != PG_KBD && _cur != PG_WIFI && millis() - _lastAct > 60000UL){ close(); return; }
+  if(!_apLock && _cur != PG_KBD && _cur != PG_WIFI && !(_cur == PG_ROOM && (yoDsp.roomState() == 1 || yoDsp.roomState() == 2))
+     && millis() - _lastAct > 60000UL){ close(); return; }
   /*  Крок анімації смуг — щоразу, коли задача дисплея проходить повз, а не
       раз на секунду разом із оновленням даних.  */
   if(_cur >= 0 && _pg[_cur]) _pg[_cur]->loop();
@@ -1697,6 +1718,7 @@ void YoMenu::render(){
     if(_live){ _live = false; if(recorder.active()) _drawHomeTile(4); }
     return;
   }
+  if(_isSound(_cur)){ _renderSound(); return; }
   if(_isList(_cur)){
     if(_cur == PG_WIFI){
       /*  пошук веде головний цикл; тут лише перемальовуємо, коли є що  */
@@ -1925,6 +1947,8 @@ void YoMenu::onRelease(uint16_t x, uint16_t y, uint32_t held){
   if(_fadeStep >= 0) return;               /* сторінка ще набігає */
   _held = held;
   _lastAct = millis();
+  /*  координати тут — місця натискання, а не відпускання: значення вже взяте з руху  */
+  if(_cur == PG_EQ && _eqBand >= 0){ _eqBand = -1; _eqApply(true); return; }
   if(_isList(_cur)){
     if(_smHold >= 0){                      /* відпустили кнопку списку */
       int8_t b = _smHold; _smHold = -1; _smBtnDraw = 4 + b;   /* 4+ — намалювати відпущеною */
@@ -1948,6 +1972,13 @@ void YoMenu::onRelease(uint16_t x, uint16_t y, uint32_t held){
 
 void YoMenu::onPress(uint16_t x, uint16_t y){
   _lastAct = millis();
+  if(_cur == PG_EQ && _fadeStep < 0 && y >= EQ_COL0 && y < EQ_T1 + 12){
+    int b = ((int)x - CX) * 10 / CW;
+    if(b < 0) b = 0; if(b > 9) b = 9;
+    _eqBand = b;                               /* палець тягне саме цю смугу, хоч би куди зсунувся */
+    _eqTouch(y);
+    return;
+  }
   if(_fadeStep >= 0 || !_isList(_cur)) return;
   if(x >= PL_BTN_X - 7){
     int b = ((int)y - 3) / 58; if(b < 0) b = 0; if(b > 3) b = 3;
@@ -1965,6 +1996,7 @@ void YoMenu::onPress(uint16_t x, uint16_t y){
 
 void YoMenu::onDrag(uint16_t x, uint16_t y){
   (void)x;
+  if(_cur == PG_EQ && _eqBand >= 0){ _eqTouch(y); return; }
   if(!_dActive || !_isList(_cur)) return;
   int16_t dy = (int16_t)y - _dY0;
   if(!_dMoved){
@@ -2118,22 +2150,8 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
     return;
   }
 
+  if(_isSound(_cur) && _hitSound(x, y)) return;
   switch(_cur){
-    case PG_EQ: {
-      /*  Без нижньої межі смуга під шапкою (28..39) потрапляла в перший
-          повзунок, і дотик поруч із заголовком міняв баланс.  */
-      if((int)y < 40) return;
-      uint8_t i = (y - 40)/44;
-      if(i > 3) return;
-      int v = _eq[i].valueAt(x);
-      _eq[i].setValue(v);
-      int8_t b=config.store.bass, m=config.store.middle, t=config.store.trebble;
-      if(i==0) config.setBalance((int8_t)v);
-      if(i==1) config.setTone(b, m, (int8_t)v);
-      if(i==2) config.setTone(b, (int8_t)v, t);
-      if(i==3) config.setTone((int8_t)v, m, t);
-      break;
-    }
     case PG_WCONN: {
       n_Try_e st = network.tryState();
       if(st != TRY_BADPASS && st != TRY_NOTFOUND && st != TRY_FAIL) return;
@@ -2359,8 +2377,8 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
     case PG_SETUP: {
       if(y < HM_Y(0)) return;
       int c = ((int)x - 6) / 104; if(c < 0) c = 0; if(c > 2) c = 2;
-      int r = y < 136 ? 0 : 1;
-      static const int8_t go[6] = { PG_INFO, PG_WIFI, PG_TIME, PG_SYS, PG_DEV, PG_POWER };
+      int r = ((int)y - HM_Y(0)) / 69; if(r > 2) r = 2;
+      static const int8_t go[9] = { PG_INFO, PG_WIFI, PG_TIME, PG_SYS, PG_MIC, PG_DEV, PG_POWER, -1, -1 };
       if(go[r * 3 + c] >= 0) _show(go[r * 3 + c]);
       break;
     }
@@ -2420,6 +2438,468 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
     }
     default: break;
   }
+}
+
+
+/*  =====================================================================
+ *  Звук і мікрофон
+ *
+ *  «звук» — еквалайзер на 10 смуг: пресет ◀ ▶, увімк/вимк, повзунки
+ *  пальцем, внизу — «під кімнату» і «налаштування» (обробка: захист
+ *  динаміка, віртуальний бас, тонкомпенсація, баланс).
+ *  «мікрофон» (у параметрах) — слухати, чутливість, під час звуку, живий
+ *  рівень; далі «хлопки й стук» і «присутність».
+ *  ===================================================================== */
+
+
+static inline int16_t eqColX(uint8_t b){ return CX + (int16_t)(b * CW / 10); }
+static const int16_t EQ_COLW = CW / 10;
+static inline int16_t eqY(float db){
+  if(db > 12) db = 12;
+  if(db < -12) db = -12;
+  return EQ_ZERO - (int16_t)lroundf(db * (EQ_ZERO - EQ_T0) / 12.0f);
+}
+static const char* const EQ_FRQ[10] = { "31", "62", "125", "250", "500", "1к", "2к", "4к", "8к", "16к" };
+
+static void uiText(int16_t x, int16_t y, const char* t, uint16_t c, const GFXfont* f){
+  dsp.setFont(f); dsp.setTextSize(1); dsp.setTextColor(c);
+  char b[72]; snprintf(b, sizeof(b), "%s", utf8Rus(t, false));
+  fitText(b, SW - x - 4);
+  dsp.setCursor(x, y); dsp.print(b);
+  dsp.setFont();
+}
+
+/*  Дрібні підписи (частоти, значення смуг) — вбудованим шрифтом 5×7: у
+    колонку 28 пікселів гладкий шрифт «125» уже не вміщує.  */
+static void uiTiny(int16_t x, int16_t w, int16_t y, const char* t, uint16_t c){
+  dsp.setFont(); dsp.setTextSize(1); dsp.setTextColor(c, C_BG);
+  char b[16]; snprintf(b, sizeof(b), "%s", utf8Rus(t, false));
+  int16_t tw = (int16_t)strlen(b) * 6 - 1;
+  dsp.setCursor(x + (w - tw) / 2, y); dsp.print(b);
+}
+
+static void uiTextC(int16_t x, int16_t w, int16_t y, const char* t, uint16_t c, const GFXfont* f){
+  dsp.setFont(f); dsp.setTextSize(1); dsp.setTextColor(c);
+  char b[72]; snprintf(b, sizeof(b), "%s", utf8Rus(t, false));
+  fitText(b, w - 4);
+  dsp.setCursor(x + (w - (int16_t)textW(b)) / 2, y); dsp.print(b);
+  dsp.setFont();
+}
+
+static void uiBtn(int16_t x, int16_t y, int16_t w, int16_t h, const char* t, bool on, const GFXfont* f){
+  dsp.fillRect(x, y, w, h, on ? C_ACC : C_PANEL);
+  uiTextC(x, w, y + h / 2 + (f == &yoUI8 ? 4 : 5), t, on ? C_BG : C_TXT, f);
+}
+
+static void uiArrow(int16_t x, int16_t y, int16_t w, int16_t h, bool right){
+  dsp.fillRect(x, y, w, h, C_PAN2);
+  int16_t cx = x + w / 2, cy = y + h / 2;
+  if(right) dsp.fillTriangle(cx - 4, cy - 7, cx - 4, cy + 7, cx + 5, cy, C_ACC);
+  else      dsp.fillTriangle(cx + 4, cy - 7, cx + 4, cy + 7, cx - 5, cy, C_ACC);
+}
+
+static const char* const GUARD_LBL[3]  = { "вимк", "м'який", "сильний" };
+static const char* const VB_LBL[4]     = { "вимк", "1", "2", "3" };
+static const char* const LOUD_LBL[3]   = { "вимк", "м'яка", "сильна" };
+static const char* const GAIN_LBL[4]   = { "низька", "середня", "висока", "макс" };
+static const uint8_t     GAIN_VAL[4]   = { 3, 0, 7, 8 };          /* extras.s.micGain: 0 — типове (24 дБ) */
+static const char* const GTAB_LBL[2]   = { "хлопки", "стук" };
+static const char* const SENS_LBL[3]   = { "низька", "середня", "висока" };
+static const char* const EARMIN_LBL[4] = { "5", "10", "15", "30" };
+static const uint8_t     EARMIN_VAL[4] = { 5, 10, 15, 30 };
+static const char* const POFF_LBL[4]   = { "ні", "5", "15", "30" };
+static const uint8_t     POFF_VAL[4]   = { 0, 5, 15, 30 };
+static const uint8_t     ACT_ORDER[8]  = { MA_TOGGLE, MA_NEXT, MA_PREV, MA_VOLUP, MA_VOLDN, MA_SCREEN, MA_FAV1, MA_NONE };
+
+void YoMenu::_buildSound(){
+  /*  обробка  */
+  _sGuard.init(wc(CX, 50),  &yoUI9b, CW, 26, C_TXT, C_BG, C_ACC, C_PAN2); _sGuard.setItems(3, GUARD_LBL);
+  _sVb   .init(wc(CX, 98),  &yoUI9b, CW, 26, C_TXT, C_BG, C_ACC, C_PAN2); _sVb.setItems(4, VB_LBL);
+  _sLoud .init(wc(CX, 146), &yoUI9b, CW, 26, C_TXT, C_BG, C_ACC, C_PAN2); _sLoud.setItems(3, LOUD_LBL);
+  _sBal.init(wc(CX, 186), &yoUI9, CW, -16, 16, C_TXT, C_BG, C_ACC); _sBal.setLabel("баланс");
+  _pg[PG_SND]->addWidget(&_sGuard);
+  _pg[PG_SND]->addWidget(&_sVb);
+  _pg[PG_SND]->addWidget(&_sLoud);
+  _pg[PG_SND]->addWidget(&_sBal);
+  /*  мікрофон  */
+  _mOn.init(wc(CX, 36), &yoUI9, 150, C_TXT, C_BG, C_ACC); _mOn.setLabel("слухати");
+  _mGain.init(wc(CX, 94), &yoUI8, CW, 26, C_TXT, C_BG, C_ACC, C_PAN2); _mGain.setItems(4, GAIN_LBL);
+  _mPlay.init(wc(CX, 128), &yoUI9, CW, C_TXT, C_BG, C_ACC); _mPlay.setLabel("слухати й під час звуку");
+  _pg[PG_MIC]->addWidget(&_mOn);
+  _pg[PG_MIC]->addWidget(&_mGain);
+  _pg[PG_MIC]->addWidget(&_mPlay);
+  /*  хлопки й стук  */
+  _gTab.init(wc(CX, 32), &yoUI9b, CW, 26, C_TXT, C_BG, C_ACC, C_PAN2); _gTab.setItems(2, GTAB_LBL);
+  _gOn.init(wc(CX, 68), &yoUI9, CW, C_TXT, C_BG, C_ACC); _gOn.setLabel("увімкнено");
+  _gSens.init(wc(CX, 116), &yoUI8, CW, 26, C_TXT, C_BG, C_ACC, C_PAN2); _gSens.setItems(3, SENS_LBL);
+  _pg[PG_MGEST]->addWidget(&_gTab);
+  _pg[PG_MGEST]->addWidget(&_gOn);
+  _pg[PG_MGEST]->addWidget(&_gSens);
+  /*  присутність  */
+  _pEar.init(wc(CX, 34), &yoUI9, CW, C_TXT, C_BG, C_ACC); _pEar.setLabel("таймер сну слухає");
+  _pEarMin.init(wc(CX, 100), &yoUI9b, CW, 26, C_TXT, C_BG, C_ACC, C_PAN2); _pEarMin.setItems(4, EARMIN_LBL);
+  _pWake.init(wc(CX, 140), &yoUI9, CW, C_TXT, C_BG, C_ACC); _pWake.setLabel("голос будить екран");
+  _pOff.init(wc(CX, 196), &yoUI9b, CW, 26, C_TXT, C_BG, C_ACC, C_PAN2); _pOff.setItems(4, POFF_LBL);
+  _pg[PG_MPRES]->addWidget(&_pEar);
+  _pg[PG_MPRES]->addWidget(&_pEarMin);
+  _pg[PG_MPRES]->addWidget(&_pWake);
+  _pg[PG_MPRES]->addWidget(&_pOff);
+}
+
+/*  ---------- еквалайзер ---------- */
+
+void YoMenu::_drawEqTop(){
+  const ExtStore& e = extras.s;
+  uiArrow(CX, EQ_TOP_Y, 34, EQ_TOP_H, false);
+  dsp.fillRect(CX + 36, EQ_TOP_Y, 116, EQ_TOP_H, C_PANEL);
+  uiTextC(CX + 36, 116, EQ_TOP_Y + 19, YoDsp::PRESET_NAME[e.eqPreset < EQ_PRESETS ? e.eqPreset : 0], e.eqOn ? C_TXT : C_DIM, &yoUI9b);
+  uiArrow(CX + 154, EQ_TOP_Y, 34, EQ_TOP_H, true);
+  uiBtn(CX + 196, EQ_TOP_Y, CW - 196, EQ_TOP_H, e.eqOn ? "увімкнено" : "вимкнено", e.eqOn, &yoUI8);
+}
+
+void YoMenu::_drawEqBand(uint8_t b){
+  const ExtStore& e = extras.s;
+  int16_t x0 = eqColX(b), cx = x0 + EQ_COLW / 2;
+  bool on = e.eqOn;
+  int v = e.eq[b];
+  dsp.fillRect(x0, EQ_COL0, EQ_COLW, EQ_T1 - EQ_COL0 + 6, C_BG);
+  char t[8];
+  if(v) snprintf(t, sizeof(t), "%+d", v); else snprintf(t, sizeof(t), "0");
+  uiTiny(x0, EQ_COLW, EQ_VAL_Y - 7, t, (on && v) ? C_ACC : C_DIM);
+  dsp.fillRect(cx - 1, EQ_T0, 2, EQ_T1 - EQ_T0, C_PAN2);
+  dsp.fillRect(cx - 7, EQ_ZERO, 14, 1, C_DIM);
+  int16_t yv = eqY(v);
+  if(v) dsp.fillRect(cx - 3, v > 0 ? yv : EQ_ZERO, 6, abs(yv - EQ_ZERO), on ? C_ACC : C_DIM);
+  /*  поправка під кімнату — бірюзовою позначкою там, де смуга звучить разом із нею  */
+  if(e.eqRoomOn && e.eqRoom[b]){
+    int16_t yr = eqY((float)(on ? v : 0) + e.eqRoom[b]);
+    dsp.fillRect(cx + 5, yr - 2, 5, 5, C_ROOM);
+  }
+  dsp.fillRect(cx - 9, yv - 3, 18, 6, on ? C_TXT : C_DIM);
+}
+
+void YoMenu::_drawEqBottom(){
+  const ExtStore& e = extras.s;
+  dsp.fillRect(CX, EQ_BTN_Y, CW, EQ_BTN_H, C_BG);
+  uiBtn(CX, EQ_BTN_Y, 140, EQ_BTN_H, e.eqRoomOn ? "кімната: є" : "під кімнату", false, &yoUI9);
+  uiBtn(CX + 146, EQ_BTN_Y, CW - 146, EQ_BTN_H, "налаштування", false, &yoUI9);
+}
+
+/*  Палець на повзунку: значення міняється одразу на екрані, а ланцюг звуку
+    перераховується не частіше ніж раз на 150 мс (це сотні синусів).  */
+void YoMenu::_eqTouch(uint16_t y){
+  if(_eqBand < 0) return;
+  ExtStore& e = extras.s;
+  int db = (int)lroundf((float)(EQ_ZERO - (int)y) * 12.0f / (EQ_ZERO - EQ_T0));
+  if(db > 12) db = 12;
+  if(db < -12) db = -12;
+  uint8_t b = (uint8_t)_eqBand;
+  if(db == e.eq[b] && e.eqOn && e.eqPreset == 0) return;
+  uint16_t m = 1 << b;
+  if(e.eqPreset){ e.eqPreset = 0; m |= 1 << 10; }
+  if(!e.eqOn){ e.eqOn = 1; m |= 0x3FF | (1 << 10); }
+  e.eq[b] = (int8_t)db;
+  _sndMask |= m;
+  _eqPend = true;
+  _eqApply(false);
+}
+
+void YoMenu::_eqApply(bool force){
+  if(!_eqPend) return;
+  if(!force && millis() - _eqApplyT < 150) return;
+  _eqApplyT = millis();
+  _eqPend = false;
+  extras.changed();
+  yoDsp.changed();
+}
+
+/*  ---------- під кімнату ---------- */
+
+void YoMenu::_drawRoom(bool full){
+  const ExtStore& e = extras.s;
+  if(full){
+    uiText(CX, 46, "радіо грає тони й слухає себе", C_DIM, &yoUI8);
+    uiText(CX, 60, "у кімнаті має бути тихо", C_DIM, &yoUI8);
+    for(uint8_t b = 0; b < 10; b++) uiTiny(eqColX(b), EQ_COLW, 154, EQ_FRQ[b], C_DIM);
+  }
+  bool has = false;
+  for(uint8_t b = 0; b < 10; b++) if(e.eqRoom[b]) has = true;
+  dsp.fillRect(CX, 66, CW, 84, C_BG);
+  dsp.fillRect(CX, 108, CW, 1, C_PAN2);
+  for(uint8_t b = 0; b < 10; b++){
+    int v = e.eqRoom[b];
+    int16_t cx = eqColX(b) + EQ_COLW / 2, yv = 108 - v * 4;
+    if(v) dsp.fillRect(cx - 6, v > 0 ? yv : 108, 12, abs(v * 4), e.eqRoomOn ? C_ROOM : C_DIM);
+  }
+  if(!has) uiTextC(CX, CW, 100, "ще не міряли", C_DIM, &yoUI8);
+  /*  хід і результат  */
+  uint8_t st = yoDsp.roomState(), pr = yoDsp.roomProgress();
+  dsp.fillRect(CX, 168, CW, 28, C_BG);
+  char t[64];
+  if(_rmErr[0])                 snprintf(t, sizeof(t), "%s", _rmErr);
+  else if(st == 1 || st == 2)   snprintf(t, sizeof(t), "%s... %u%%", yoDsp.roomMsg(), (unsigned)pr);
+  else if(st == 3)              snprintf(t, sizeof(t), "%s", yoDsp.roomMsg());
+  else if(st == 4)              snprintf(t, sizeof(t), "не вийшло: %s", yoDsp.roomMsg());
+  else                          snprintf(t, sizeof(t), "%s", has ? "поправку зміряно" : "");
+  uiText(CX, 182, t, st == 4 || _rmErr[0] ? 0xFB00 : C_TXT, &yoUI8);
+  if(st == 1 || st == 2){
+    dsp.fillRect(CX, 188, CW, 4, C_PANEL);
+    dsp.fillRect(CX, 188, (int16_t)(CW * pr / 100), 4, C_ACC);
+  }
+  bool busy = st == 1 || st == 2;
+  uiBtn(CX, 202, 140, 34, busy ? "зупинити" : "зміряти", !busy, &yoUI9b);
+  uiBtn(CX + 146, 202, CW - 146, 34, e.eqRoomOn ? "поправка увімк" : "поправка вимк", e.eqRoomOn && has, &yoUI8);
+}
+
+/*  ---------- мікрофон ---------- */
+
+void YoMenu::_drawMicLive(){
+  const int16_t mx = CX + 160, mw = CW - 160;
+  bool on = mic.listening();
+  if(_cur == PG_MIC) dsp.fillRect(mx, 40, mw, 20, C_PANEL);
+  if(on && _cur == PG_MIC){
+    float lv = mic.levelDb(), nz = mic.noiseDb();
+    int16_t w = (int16_t)((lv + 80.0f) * mw / 60.0f);
+    if(w < 0) w = 0; if(w > mw) w = mw;
+    dsp.fillRect(mx, 40, w, 20, mic.speech() ? C_VOICE : C_ACC);
+    int16_t nx = (int16_t)((nz + 80.0f) * mw / 60.0f);
+    if(nx >= 0 && nx < mw - 1) dsp.fillRect(mx + nx, 38, 2, 24, C_TXT);
+  }
+  char t[64];
+  uint32_t now = millis();
+  if(!extras.s.micOn)                                   snprintf(t, sizeof(t), "мікрофон вимкнено");
+  else if(mic.heard() && now - mic.heardMs() < 8000)    snprintf(t, sizeof(t), "почуто: %s, %s", YoMic::gestureName(mic.heard()), YoMic::actionName(YoMic::actionFor((MicGesture)mic.heard())));
+  else if(mic.speech())                                 snprintf(t, sizeof(t), "чую голос");
+  else if(mic.aecActive())                              snprintf(t, sizeof(t), "віднімаю власний звук");
+  else                                                  snprintf(t, sizeof(t), "слухаю");
+  if(_cur == PG_MIC){
+    dsp.fillRect(CX, 208, CW, 20, C_BG);
+    uiText(CX, 222, t, C_DIM, &yoUI8);
+  }else if(_cur == PG_MGEST){
+    dsp.fillRect(CX, 222, CW, 18, C_BG);
+    if(mic.heard() && now - mic.heardMs() < 8000) uiText(CX, 234, t, C_ACC, &yoUI8);
+    else uiText(CX, 234, extras.s.micOn ? "плесніть чи постукайте двічі" : "мікрофон вимкнено", C_DIM, &yoUI8);
+  }
+}
+
+static uint8_t gestIdx(uint8_t kind){
+  const ExtStore& e = extras.s;
+  uint8_t sens = kind ? e.knockSens : e.clapSens;       /* 0 середня, 1 низька, 2 висока */
+  return sens == 1 ? 0 : sens == 2 ? 2 : 1;
+}
+
+void YoMenu::_syncGest(){
+  const ExtStore& e = extras.s;
+  _gTab.setSel(_gKind);
+  _gOn.setValue(_gKind ? e.knockOn : e.clapOn);
+  _gSens.setSel(gestIdx(_gKind));
+}
+
+void YoMenu::_drawGestRows(){
+  for(uint8_t r = 0; r < 2; r++){
+    int16_t y = 150 + r * 36;
+    MicGesture g = _gKind ? (r ? MG_KNOCK3 : MG_KNOCK2) : (r ? MG_CLAP3 : MG_CLAP2);
+    dsp.fillRect(CX, y, CW, 32, C_BG);
+    uiText(CX, y + 21, r ? "3 рази" : "2 рази", C_TXT, &yoUI9);
+    uiArrow(CX + 70, y, 30, 30, false);
+    dsp.fillRect(CX + 102, y, 154, 30, C_PANEL);
+    uiTextC(CX + 102, 154, y + 20, YoMic::actionName(YoMic::actionFor(g)), C_TXT, &yoUI9);
+    uiArrow(CX + 258, y, 30, 30, true);
+  }
+}
+
+void YoMenu::_syncPres(){
+  const ExtStore& e = extras.s;
+  _pEar.setValue(e.sleepEar);
+  uint8_t em = e.sleepEarMin ? e.sleepEarMin : 10;
+  int8_t ei = 1;
+  for(uint8_t i = 0; i < 4; i++) if(EARMIN_VAL[i] == em) ei = i;
+  _pEarMin.setSel(ei);
+  _pWake.setValue(e.presWake);
+  int8_t pi = 0;
+  for(uint8_t i = 0; i < 4; i++) if(POFF_VAL[i] == e.presOff) pi = i;
+  _pOff.setSel(pi);
+}
+
+/*  ---------- сторінки: малювання й такт ---------- */
+
+void YoMenu::_paintSound(int8_t p){
+  const ExtStore& e = extras.s;
+  _sndMask = 0;
+  if(p == PG_EQ){
+    _chrome("звук", 2);
+    _drawEqTop();
+    for(uint8_t b = 0; b < 10; b++){ _drawEqBand(b); uiTiny(eqColX(b), EQ_COLW, EQ_FRQ_Y - 7, EQ_FRQ[b], C_DIM); }
+    _drawEqBottom();
+  }else if(p == PG_SND){
+    _chrome("обробка", 0);
+    uiText(CX, 46, "захист динаміка", C_DIM, &yoUI9);
+    uiText(CX, 94, "віртуальний бас", C_DIM, &yoUI9);
+    uiText(CX, 142, "тонкомпенсація, коли тихо", C_DIM, &yoUI9);
+    _sGuard.setSel(e.eqGuard);
+    _sVb.setSel(e.vbass);
+    _sLoud.setSel(e.eqLoud);
+    _sBal.setValue(config.store.balance);
+  }else if(p == PG_ROOM){
+    _chrome("кімната", 0);
+    _rmErr[0] = 0;
+    _drawRoom(true);
+    _rmShown = yoDsp.roomState(); _rmProg = yoDsp.roomProgress();
+  }else if(p == PG_MIC){
+    _chrome("мікрофон", 0);
+    uiText(CX, 88, "чутливість", C_DIM, &yoUI9);
+    uiBtn(CX, 164, 130, 34, "хлопки й стук", false, &yoUI8);
+    uiBtn(CX + 136, 164, CW - 136, 34, "сон і присутність", false, &yoUI8);
+    _mOn.setValue(e.micOn);
+    int8_t gi = 1;
+    for(uint8_t i = 0; i < 4; i++) if(GAIN_VAL[i] == e.micGain) gi = i;
+    _mGain.setSel(gi);
+    _mPlay.setValue(e.micPlay);
+    _drawMicLive();
+  }else if(p == PG_MGEST){
+    _chrome("хлопки й стук", 0);
+    uiText(CX, 112, "чутливість", C_DIM, &yoUI9);
+    _syncGest();
+    _drawGestRows();
+    _drawMicLive();
+  }else if(p == PG_MPRES){
+    _chrome("присутність", 0);
+    uiText(CX, 94, "у кімнаті тихо, хв", C_DIM, &yoUI9);
+    uiText(CX, 190, "гасити екран, коли тихо, хв", C_DIM, &yoUI9);
+    _syncPres();
+  }
+}
+
+void YoMenu::_renderSound(){
+  uint16_t m = _sndMask;
+  if(m) _sndMask &= ~m;
+  uint32_t now = millis();
+  if(_cur == PG_EQ){
+    if(m & (1 << 10)) _drawEqTop();
+    for(uint8_t b = 0; b < 10; b++) if(m & (1 << b)) _drawEqBand(b);
+    if(m & (1 << 11)) _drawEqBottom();
+  }else if(_cur == PG_ROOM){
+    uint8_t st = yoDsp.roomState(), pr = yoDsp.roomProgress();
+    if(m || st != _rmShown || pr != _rmProg){ _rmShown = st; _rmProg = pr; _drawRoom(false); }
+  }else if(_cur == PG_MIC || _cur == PG_MGEST){
+    if(m & (1 << 12)) _drawGestRows();
+    if(now - _micLiveT > 150){ _micLiveT = now; _drawMicLive(); }
+  }
+}
+
+/*  ---------- дотики ---------- */
+
+bool YoMenu::_hitSound(uint16_t x, uint16_t y){
+  ExtStore& e = extras.s;
+  switch(_cur){
+    case PG_EQ: {
+      if(y >= EQ_TOP_Y - 2 && y < EQ_TOP_Y + EQ_TOP_H + 4){
+        uint8_t p = e.eqPreset;
+        if((int)x < CX + 40)                            yoDsp.applyPreset(p <= 1 ? EQ_PRESETS - 1 : p - 1);
+        else if((int)x >= CX + 150 && (int)x < CX + 192) yoDsp.applyPreset(p >= EQ_PRESETS - 1 ? 1 : p + 1);
+        else if((int)x >= CX + 196){ e.eqOn = !e.eqOn; extras.changed(); yoDsp.changed(); }
+        else return true;
+        _sndMask |= 0x7FF;
+      }else if(y >= EQ_BTN_Y - 4){
+        _show((int)x < CX + 143 ? PG_ROOM : PG_SND);
+      }
+      return true;
+    }
+    case PG_SND: {
+      int8_t i;
+      if(y >= 46 && y < 80)       { if((i = _sGuard.indexAt(x)) < 0) return true; e.eqGuard = i; _sGuard.setSel(i); }
+      else if(y >= 94 && y < 128) { if((i = _sVb.indexAt(x)) < 0) return true;    e.vbass = i;   _sVb.setSel(i); }
+      else if(y >= 142 && y < 176){ if((i = _sLoud.indexAt(x)) < 0) return true;  e.eqLoud = i;  _sLoud.setSel(i); }
+      else if(y >= 180){
+        int v = _sBal.valueAt(x);
+        _sBal.setValue(v);
+        config.setBalance((int8_t)v);
+        return true;
+      }else return true;
+      extras.changed(); yoDsp.changed();
+      return true;
+    }
+    case PG_ROOM: {
+      if(y < 198) return true;
+      uint8_t st = yoDsp.roomState();
+      _rmErr[0] = 0;
+      if((int)x < CX + 143){
+        if(st == 1 || st == 2) mic.sweepAbort();
+        else {
+          if(!e.micOn){ e.micOn = 1; extras.changed(); mic.apply(); }
+          const char* w = yoDsp.roomTuneStart();
+          if(w) snprintf(_rmErr, sizeof(_rmErr), "%s", w);
+        }
+      }else{
+        bool has = false;
+        for(uint8_t b = 0; b < 10; b++) if(e.eqRoom[b]) has = true;
+        if(!has){ snprintf(_rmErr, sizeof(_rmErr), "спершу зміряйте"); }
+        else { e.eqRoomOn = !e.eqRoomOn; extras.changed(); yoDsp.changed(); }
+      }
+      _sndMask |= 1;
+      return true;
+    }
+    case PG_MIC: {
+      if(y >= 30 && y < 68 && (int)x < CX + 156){
+        e.micOn = !e.micOn; _mOn.setValue(e.micOn); extras.changed(); mic.apply();
+      }else if(y >= 90 && y < 124){
+        int8_t i = _mGain.indexAt(x); if(i < 0) return true;
+        e.micGain = GAIN_VAL[i]; _mGain.setSel(i); extras.changed(); mic.apply();
+      }else if(y >= 124 && y < 160){
+        e.micPlay = !e.micPlay; _mPlay.setValue(e.micPlay); extras.changed();
+      }else if(y >= 160 && y < 204){
+        _show((int)x < CX + 133 ? PG_MGEST : PG_MPRES);
+      }
+      return true;
+    }
+    case PG_MGEST: {
+      if(y >= 28 && y < 62){
+        int8_t i = _gTab.indexAt(x); if(i < 0) return true;
+        _gKind = i; _syncGest(); _sndMask |= 1 << 12;
+      }else if(y >= 62 && y < 100){
+        uint8_t& on = _gKind ? e.knockOn : e.clapOn;
+        on = !on; _gOn.setValue(on);
+        if(on && !e.micOn){ e.micOn = 1; mic.apply(); }
+        extras.changed();
+      }else if(y >= 112 && y < 146){
+        int8_t i = _gSens.indexAt(x); if(i < 0) return true;
+        uint8_t v = i == 0 ? 1 : i == 2 ? 2 : 0;
+        (_gKind ? e.knockSens : e.clapSens) = v;
+        _gSens.setSel(i); extras.changed();
+      }else if(y >= 148 && y < 220){
+        uint8_t r = y < 184 ? 0 : 1;
+        MicGesture g = _gKind ? (r ? MG_KNOCK3 : MG_KNOCK2) : (r ? MG_CLAP3 : MG_CLAP2);
+        uint8_t cur = YoMic::actionFor(g), k = 0;
+        for(uint8_t i = 0; i < 8; i++) if(ACT_ORDER[i] == cur) k = i;
+        k = (int)x < CX + 102 ? (k + 7) % 8 : (k + 1) % 8;
+        uint8_t& slot = _gKind ? (r ? e.knock3 : e.knock2) : (r ? e.clap3 : e.clap2);
+        slot = ACT_ORDER[k];
+        extras.changed();
+        _sndMask |= 1 << 12;
+      }
+      return true;
+    }
+    case PG_MPRES: {
+      if(y >= 30 && y < 68){
+        e.sleepEar = !e.sleepEar;
+        if(e.sleepEar && !e.micOn){ e.micOn = 1; mic.apply(); }
+      }else if(y >= 96 && y < 132){
+        int8_t i = _pEarMin.indexAt(x); if(i < 0) return true;
+        e.sleepEarMin = EARMIN_VAL[i];
+      }else if(y >= 136 && y < 174){
+        e.presWake = !e.presWake;
+        if(e.presWake && !e.micOn){ e.micOn = 1; mic.apply(); }
+      }else if(y >= 192 && y < 228){
+        int8_t i = _pOff.indexAt(x); if(i < 0) return true;
+        e.presOff = POFF_VAL[i];
+        if(e.presOff && !e.micOn){ e.micOn = 1; mic.apply(); }
+      }else return true;
+      extras.changed();
+      _syncPres();
+      return true;
+    }
+  }
+  return false;
 }
 
 #endif

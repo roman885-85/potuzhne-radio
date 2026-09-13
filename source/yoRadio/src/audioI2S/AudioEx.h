@@ -230,6 +230,8 @@ public:
     void setI2SCommFMT_LSB(bool commFMT);
     int getCodec() {return m_codec;}
     const char *getCodecname() {return codecname[m_codec];}
+    /*  частота тактів поза потоком — для самоперевірки звуку, коли плеєр стоїть  */
+    void     forceSampleRate(uint32_t hz) { setSampleRate(hz); }
 private:
 
     #ifndef ESP_ARDUINO_VERSION_VAL
@@ -276,7 +278,6 @@ private:
     bool playChunk();
     bool playSample(int16_t sample[2]) ;
     void playI2Sremains();
-    int32_t Gain(int16_t s[2]);
     bool fill_InputBuf();
     void showstreamtitle(const char* ml);
     bool parseContentType(char* ct);
@@ -286,13 +287,9 @@ private:
     esp_err_t I2Sstart(uint8_t i2s_num);
     esp_err_t I2Sstop(uint8_t i2s_num);
     void urlencode(char* buff, uint16_t buffLen, bool spacesOnly = false);
-    int16_t* IIR_filterChain0(int16_t iir_in[2], bool clear = false);
-    int16_t* IIR_filterChain1(int16_t* iir_in, bool clear = false);
-    int16_t* IIR_filterChain2(int16_t* iir_in, bool clear = false);
     inline void setDatamode(uint8_t dm){m_datamode=dm;}
     inline uint8_t getDatamode(){return m_datamode;}
     inline uint32_t streamavail(){ return _client ? _client->available() : 0;}
-    void IIR_calculateCoefficients(int8_t G1, int8_t G2, int8_t G3);
     bool ts_parsePacket(uint8_t* packet, uint8_t* packetStart, uint8_t* packetLength);
     void _computeVUlevel(int16_t sample[2]);
     static void connectTask(void* pvParams);
@@ -507,7 +504,6 @@ private:
     char            m_lastHost[512];                // Store the last URL to a webstream
     char*           m_playlistBuff = NULL;          // stores playlistdata
     const uint16_t  m_plsBuffEntryLen = 256;        // length of each entry in playlistBuff
-    filter_t        m_filter[3];                    // digital filters
     int             m_LFcount = 0;                  // Detection of end of header
     uint32_t        m_sampleRate=16000;
     uint32_t        m_bitRate=0;                    // current bitrate given fom decoder
@@ -572,13 +568,9 @@ private:
     uint32_t        m_audioDataStart = 0;           // in bytes
     volatile int32_t m_yoM4aSeek = -1;              // запит перемотки M4A, секунда; виконує loop()
     size_t          m_audioDataSize = 0;            //
-    float           m_filterBuff[3][2][2][2];       // IIR filters memory for Audio DSP
     size_t          m_i2s_bytesWritten = 0;         // set in i2s_write() but not used
     size_t          m_file_size = 0;                // size of the file
     uint16_t        m_filterFrequency[2];
-    int8_t          m_gain0 = 0;                    // cut or boost filters (EQ)
-    int8_t          m_gain1 = 0;
-    int8_t          m_gain2 = 0;
 
     pid_array       m_pidsOfPMT;
     int16_t         m_pidOfAAC;

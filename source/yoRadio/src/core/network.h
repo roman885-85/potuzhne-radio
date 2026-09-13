@@ -46,7 +46,7 @@ class MyNetwork {
     uint8_t  _tryAgain = 0;          /* друга спроба: перший відмов буває хибним */
     bool     _evReady = false;       /* події Wi-Fi уже підписані */
     void     _staUp();               /* мережа з'явилась на ходу: підняти служби */
-    void raiseSoftAP();
+    void _noNetwork();               /* мережі немає: чекаємо, доки людина вибере */
     static void WiFiLostConnection(WiFiEvent_t event, WiFiEventInfo_t info);
     static void WiFiReconnected(WiFiEvent_t event, WiFiEventInfo_t info);
 };

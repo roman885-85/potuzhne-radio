@@ -37,6 +37,21 @@ struct ExtStore {
   uint8_t  noBat, noIp, noSd;                    /* сховати батарею / IP / функції картки */
   uint8_t  dac;                                  /* аудіовихід: 0 вбудований ES8311, 1 PCM5102A, 2 UDA1334A, 3 MAX98357A */
   uint8_t  favHide;                              /* 1 — рядок обраного на головному не показувати (0 = показувати) */
+  /*  Мікрофон. Нуль скрізь — вимкнено: слухати радіо починає лише на прохання.  */
+  uint8_t  micOn;                                /* головний вимикач */
+  uint8_t  micGain;                              /* 0 — типове; 1..8 = 0..42 дБ */
+  uint8_t  micPlay;                              /* слухати й під час звуку (віднімаючи власний звук) */
+  uint8_t  clapOn, clapSens, clap2, clap3;       /* хлопки: чутливість 0 середня, 1 низька, 2 висока; дії MicAction */
+  uint8_t  knockOn, knockSens, knock2, knock3;   /* стук по корпусу */
+  uint8_t  sleepEar, sleepEarMin;                /* таймер сну слухає: тиша N хв (0 — 10) */
+  uint8_t  presWake, presOff;                    /* присутність: будити екран; гасити після N хв тиші (0 — ні) */
+  /*  Еквалайзер на 10 смуг, дБ (-12..+12), і те, що довкола нього.  */
+  int8_t   eq[10];
+  uint8_t  eqOn, eqPreset, eqLoud, eqGuard;      /* пресет (0 свій); тонкомпенсація 0/1 м'яка/2 сильна; захист динаміка 0/1 м'який/2 сильний */
+  int8_t   eqRoom[10];                           /* поправка під кімнату з заміру мікрофоном, дБ */
+  uint8_t  eqRoomOn;
+  uint8_t  vbass;                                /* віртуальний бас: 0 вимк, 1..3 сила */
+  uint8_t  eqInit;                               /* 1 — типові значення звуку вже виставлено */
 };
 /*  Зовнішній ЦАП I2S — на вільні виводи роз'єму розширення  */
 #define DAC_BCLK  14
@@ -81,6 +96,11 @@ class YoExtras {
     void     pwmSet(uint16_t v);       /* записати в пін і запам'ятати */
     uint16_t pwmNow();                 /* одразу виставити ціль (без плавності) */
     bool     touchWake();              /* true — дотик лише розбудив екран */
+    bool     screenDim() const { return _dark || _saver || _presDark || _pwmCur == 0; }   /* екран погашено чи пригашено */
+    void     screenOff() { _dark = true; }       /* погасити до дотику (жест мікрофона) */
+    void     setPresenceDark(bool d) { _presDark = d; }   /* мікрофон: у кімнаті давно тихо */
+    uint32_t lastTouchMs() const { return _lastTouch; }
+    bool     sleepSoon();                  /* таймер сну: почати затихання зараз (у кімнаті тихо) */
     void     forceNight(int8_t on) { _forceNight = on; }
     void     setBlank(bool b) { _blank = b; }   /* заставка «порожній екран» yoRadio */
     bool     dark() const { return _dark; }
@@ -138,6 +158,7 @@ class YoExtras {
     uint32_t _wakeUntil = 0;           /* дотик уночі — денна яскравість до */
     uint32_t _lastTouch = 0;           /* останній дотик — для економії батареї */
     bool     _saver = false;
+    volatile bool _presDark = false;
     uint16_t _pwmCur = 0xFFFF;
     uint32_t _pwmTick = 0;
     void     _screenLoop(uint32_t now);

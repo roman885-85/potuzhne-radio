@@ -27,7 +27,6 @@ class Telnet {
     void on_input(const char* str, uint8_t clientId);
   private:
     char cmBuf[220];
-    bool _isIPSet(IPAddress ip);
     void handleSerial();
     void printHeapFragmentationInfo(uint8_t id);
 };

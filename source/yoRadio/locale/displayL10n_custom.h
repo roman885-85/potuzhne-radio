@@ -68,10 +68,7 @@ const char const_DlgNextion[]    PROGMEM = "NEXTION";
 const char const_getWeather[]    PROGMEM = "";
 const char  const_waitForSD[]    PROGMEM = "ІНДЕКС SD";
 
-const char        apNameTxt[]    PROGMEM = "МЕРЕЖІ НЕМАЄ";
-const char        apPassTxt[]    PROGMEM = "ТОРКНІТЬСЯ ЕКРАНА,";
 const char       bootstrFmt[]    PROGMEM = "З'єднуюся з %s";
-const char        apSettFmt[]    PROGMEM = "%s";
 #if EXT_WEATHER
 const char       weatherFmt[]    PROGMEM = "%s, %.1f\011C \007 відчувається: %.1f\011C \007 тиск: %d мм \007 вологість: %d%% \007 вітер: %.1f м/с [%s]";
 #else

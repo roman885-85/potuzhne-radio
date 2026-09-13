@@ -251,11 +251,10 @@ void NetServer::processQueue(){
           return; 
           break;
         }
-      case GETSYSTEM:     sprintf (wsBuf, "{\"sst\":%d,\"aif\":%d,\"vu\":%d,\"softr\":%d,\"vut\":%d,\"mdns\":\"%s\",\"ipaddr\":\"%s\", \"abuff\": %d, \"telnet\": %d, \"watchdog\": %d }", 
+      case GETSYSTEM:     sprintf (wsBuf, "{\"sst\":%d,\"aif\":%d,\"vu\":%d,\"vut\":%d,\"mdns\":\"%s\",\"ipaddr\":\"%s\", \"abuff\": %d, \"telnet\": %d, \"watchdog\": %d }", 
                                   config.store.smartstart != 2, 
                                   config.store.audioinfo, 
                                   config.store.vumeter, 
-                                  config.store.softapdelay,
                                   config.vuThreshold,
                                   config.store.mdnsname,
                                   config.ipToStr(WiFi.localIP()),
@@ -613,7 +612,7 @@ void handleNotFound(AsyncWebServerRequest * request) {
     return;
   }
   if (request->url() == "/variables.js") {
-    sprintf (netserver.nsBuf, "var yoVersion='%s';\nvar prBuild='%s';\nvar formAction='%s';\nvar playMode='%s';\n", prVersion(), prBuild(), (network.status == CONNECTED && !config.emptyFS)?"webboard":"", (network.status == CONNECTED)?"player":"ap");
+    sprintf (netserver.nsBuf, "var yoVersion='%s';\nvar prBuild='%s';\nvar formAction='%s';\nvar playMode='%s';\n", prVersion(), prBuild(), (network.status == CONNECTED && !config.emptyFS)?"webboard":"", "player");
     request->send(200, "text/html", netserver.nsBuf);
     return;
   }

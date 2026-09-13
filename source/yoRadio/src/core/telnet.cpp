@@ -9,9 +9,6 @@
 
 Telnet telnet;
 
-bool Telnet::_isIPSet(IPAddress ip) {
-  return strcmp(config.ipToStr(ip), "0.0.0.0") == 0;
-}
 
 bool Telnet::begin(bool quiet) {
   if(network.status==SDREADY) {
@@ -21,7 +18,7 @@ bool Telnet::begin(bool quiet) {
     return true;
   }
   if(!quiet) Serial.print("##[BOOT]#\ttelnet.begin\t");
-  if (WiFi.status() == WL_CONNECTED || _isIPSet(WiFi.softAPIP())) {
+  if (WiFi.status() == WL_CONNECTED) {
     toggle();
     if(!quiet){
       Serial.println("done");
@@ -470,10 +467,10 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
   }
   if (strcmp(str, "wifi.status") == 0 || strcmp(str, "status") == 0) {
     printf(clientId, "#WIFI.STATUS#\nStatus:\t\t%d\nMode:\t\t%s\nIP:\t\t%s\nMask:\t\t%s\nGateway:\t%s\nRSSI:\t\t%d dBm\n##WIFI.STATUS#\n> ", 
-      WiFi.status(), WiFi.getMode()==WIFI_STA?"WIFI_STA":"WIFI_AP", 
-      WiFi.getMode()==WIFI_STA?config.ipToStr(WiFi.localIP()):config.ipToStr(WiFi.softAPIP()),
-      WiFi.getMode()==WIFI_STA?config.ipToStr(WiFi.subnetMask()):"255.255.255.0",
-      WiFi.getMode()==WIFI_STA?config.ipToStr(WiFi.gatewayIP()):config.ipToStr(WiFi.softAPIP()),
+      WiFi.status(), "WIFI_STA",
+      config.ipToStr(WiFi.localIP()),
+      config.ipToStr(WiFi.subnetMask()),
+      config.ipToStr(WiFi.gatewayIP()),
       WiFi.RSSI()
     );
     return;

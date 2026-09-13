@@ -268,3 +268,24 @@ code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:#1c1c1c;bo
   .hdrs{grid-template-columns:1fr}
   .card{padding:14px}
 }
+
+/* ---------- звук і мікрофон ---------- */
+.eqplot{display:block;width:100%;height:180px;margin:14px 0 6px}
+.geq{display:grid;grid-template-columns:repeat(10,1fr);gap:4px;margin-top:6px}
+.geq .col{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0}
+.geq output{font-size:12px;color:var(--acc);font-variant-numeric:tabular-nums;min-height:15px}
+.geq small{font-size:11px;color:var(--dim)}
+.geq input[type=range]{writing-mode:vertical-lr;direction:rtl;width:28px;height:150px;--p:50%}
+.geq input[type=range]::-webkit-slider-runnable-track{width:6px;height:100%;background:linear-gradient(0deg,#333 0,#333 100%)}
+.geq input[type=range]::-webkit-slider-thumb{margin-top:0;margin-left:-6px;width:18px;height:10px;border-radius:3px}
+.geq input[type=range]::-moz-range-track{width:6px}
+.geq.off{opacity:.45}
+.prog{height:4px;background:#333;border-radius:2px;margin-top:10px;overflow:hidden}
+.prog i{display:block;height:100%;width:0;background:var(--acc);transition:width .4s}
+.rbands{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:8px;font-size:13px;color:var(--dim)}
+.rbands b{color:#00d7d7;font-weight:600}
+.rbands .z b{color:var(--dim)}
+.meter{position:relative;height:14px;background:var(--pan2);border:1px solid var(--line2);border-radius:7px;margin:10px 0 0;overflow:hidden}
+.meter i{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--acc);transition:width .3s}
+.meter i.voice{background:#5ccf6a}
+.meter b{position:absolute;top:0;bottom:0;width:2px;background:#fff;left:0}

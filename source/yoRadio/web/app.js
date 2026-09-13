@@ -7,7 +7,6 @@
  */
 'use strict';
 
-const AP = typeof playMode !== 'undefined' && playMode === 'ap';
 const VER = typeof yoVersion !== 'undefined' ? yoVersion : '';
 const BUILD = typeof prBuild !== 'undefined' ? prBuild : '';
 
@@ -60,6 +59,7 @@ const P = {
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
   alarm: '<circle cx="12" cy="13" r="7.5"/><path d="M12 9v4l2.5 2M4 4.5L6.5 2.5M20 4.5l-2.5-2"/>',
   screen: '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>',
   eq: '<path d="M5 20v-6M5 10V4M12 20v-9M12 7V4M19 20v-4M19 12V4M3 14h4M10 7h4M17 16h4"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M4.2 5.6l2.1 2.1M17.7 16.3l2.1 2.1M2.5 12h3M18.5 12h3M4.2 18.4l2.1-2.1M17.7 7.7l2.1-2.1"/>',
   code: '<path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13.5 4l-3 16"/>',
@@ -401,7 +401,8 @@ const PAGES = [
   { g: 'Налаштування' },
   { id: 'alarm', t: 'Будильник і сон', d: 'розбудити й приспати', i: 'alarm' },
   { id: 'screen', t: 'Екран', d: 'яскравість, ніч, економія, світлодіод', i: 'screen' },
-  { id: 'sound', t: 'Звук', d: 'еквалайзер, баланс, кроки гучності', i: 'eq' },
+  { id: 'sound', t: 'Звук', d: 'еквалайзер на 10 смуг, обробка, під кімнату', i: 'eq' },
+  { id: 'mic', t: 'Мікрофон', d: 'хлопки й стук, таймер сну, присутність', i: 'mic' },
   { id: 'wifi', t: 'Wi-Fi', d: 'мережі, пошук, підключення', i: 'wifi' },
   { id: 'time', t: 'Час і погода', d: 'часовий пояс, сервери, погода', i: 'clock' },
   { id: 'system', t: 'Система', d: 'поведінка радіо, перезавантаження', i: 'gear' },
@@ -409,14 +410,12 @@ const PAGES = [
   { id: 'update', t: 'Оновлення', d: 'прошивка й файли сторінки', i: 'upload' },
   { id: 'about', t: 'Про пристрій', d: 'версія, пам\'ять, мережа, батарея', i: 'info' },
 ];
-const APPAGES = ['wifi', 'update', 'about'];
 let curPage = '', pageLive = null;
 
 function shell() {
   const nav = h('nav', { class: 'nav', 'aria-label': 'Розділи' });
   for (const p of PAGES) {
-    if (p.g) { if (!AP) nav.append(h('div', { class: 'grp' }, p.g)); continue; }
-    if (AP && !APPAGES.includes(p.id)) continue;
+    if (p.g) { nav.append(h('div', { class: 'grp' }, p.g)); continue; }
     nav.append(h('a', { href: '#/' + p.id, 'data-id': p.id }, ic(p.i), h('span', null, p.t), h('small', null, p.d)));
   }
   const logo = h('span', { html: '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#e6d25a" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="11" r="2"/><path d="M8.5 7.5a5 5 0 0 0 0 7M15.5 7.5a5 5 0 0 1 0 7M5.6 4.6a9 9 0 0 0 0 12.8M18.4 4.6a9 9 0 0 1 0 12.8M12 13v8"/></svg>' });
@@ -429,14 +428,13 @@ function shell() {
         h('h1', { id: 'ptitle' }, ''),
         h('div', { class: 'stat', id: 'stat' })),
       h('div', { id: 'page' })),
-    AP ? null : mini());
+    mini());
   $('#app').replaceWith(app);
 }
 
 function route() {
   let id = (location.hash.match(/^#\/(\w+)/) || [])[1];
-  if (!id) id = AP ? 'wifi' : (location.pathname.includes('update') ? 'update' : location.pathname.includes('settings') ? 'wifi' : 'player');
-  if (AP && !APPAGES.includes(id)) id = 'wifi';
+  if (!id) id = location.pathname.includes('update') ? 'update' : location.pathname.includes('settings') ? 'wifi' : 'player';
   const p = PAGES.find(x => x.id === id) || PAGES[0];
   curPage = p.id;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.id === p.id));
@@ -1184,26 +1182,110 @@ VIEWS.screen = page => {
 };
 
 /* ---------------------------------------------------------------- звук */
-VIEWS.sound = page => {
-  const eq = h('div');
-  const bands = [['bass', 'Низькі'], ['middle', 'Середні'], ['trebble', 'Високі'], ['balance', 'Баланс']];
-  const els = {};
-  for (const [k, l] of bands) {
-    const o = h('output');
-    let t = 0;
-    const r = range(-16, 16, W[k], v => { o.textContent = (v > 0 ? '+' : '') + v; clearTimeout(t); t = setTimeout(() => send(`${k}=${v}`), 80); });
-    els[k] = { r, o };
-    eq.append(h('div', { class: 'fld' }, h('span', null, l), h('div', { class: 'rng' }, r, o)));
+const EQ_HZ = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+const EQ_LBL = ['31', '62', '125', '250', '500', '1к', '2к', '4к', '8к', '16к'];
+const EQ_PRESETS = ['свій', 'рівно', 'голос', 'музика', 'бас', 'ніч', 'яскраво', 'тепло'];
+const MIC_ACTS = [[2, 'пауза / грати'], [3, 'наступна станція'], [4, 'попередня станція'], [5, 'гучніше'], [6, 'тихіше'], [7, 'екран: погасити / розбудити'], [8, 'обране 1'], [1, 'нічого']];
+
+/*  Графік АЧХ: сітка ±18 дБ, 20 Гц … 20 кГц у логарифмі, крива — бурштином,
+    замір кімнати — бірюзовими точками.  */
+function eqPlot(cv, resp, sweep, room) {
+  const dpr = window.devicePixelRatio || 1, W0 = cv.clientWidth || 600, H0 = cv.clientHeight || 180;
+  cv.width = W0 * dpr; cv.height = H0 * dpr;
+  const g = cv.getContext('2d'); g.scale(dpr, dpr);
+  const L = 34, R = 8, T = 8, B = 20, w = W0 - L - R, hh = H0 - T - B;
+  const X = f => L + Math.log(f / 20) / Math.log(1000) * w, Y = db => T + (18 - Math.max(-18, Math.min(18, db))) / 36 * hh;
+  g.clearRect(0, 0, W0, H0);
+  g.font = '11px system-ui, sans-serif'; g.fillStyle = '#8c8c8c'; g.strokeStyle = '#262626'; g.lineWidth = 1;
+  for (const db of [-18, -12, -6, 0, 6, 12, 18]) { g.beginPath(); g.moveTo(L, Y(db)); g.lineTo(L + w, Y(db)); g.strokeStyle = db ? '#262626' : '#444'; g.stroke(); g.fillText((db > 0 ? '+' : '') + db, 4, Y(db) + 4); }
+  [[50, '50'], [100, '100'], [200, '200'], [500, '500'], [1000, '1к'], [2000, '2к'], [5000, '5к'], [10000, '10к']].forEach(([f, t]) => { g.beginPath(); g.moveTo(X(f), T); g.lineTo(X(f), T + hh); g.strokeStyle = '#1f1f1f'; g.stroke(); g.fillText(t, X(f) - 8, H0 - 5); });
+  if (sweep && sweep.length) {
+    const mid = sweep.filter(p => p[0] >= 500 && p[0] <= 4000), ref = mid.length ? mid.reduce((a, p) => a + p[1], 0) / mid.length / 10 : 0;
+    g.fillStyle = '#00d7d7';
+    for (const p of sweep) { g.beginPath(); g.arc(X(p[0]), Y(p[1] / 10 - ref), 2.5, 0, 7); g.fill(); }
   }
+  if (resp && resp.length) {
+    g.beginPath(); g.lineWidth = 2.5; g.strokeStyle = '#e6d25a';
+    resp.forEach((p, i) => { const x = X(p[0]), y = Y(p[1] / 10); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.stroke();
+  }
+}
+
+VIEWS.sound = page => {
+  const presets = seg(EQ_PRESETS.slice(1).map((n, i) => [i + 1, n]), -1, v => setx({ eqPreset: v }));
+  const on = sw(true, v => setx({ eqOn: v ? 1 : 0 }));
+  const cv = h('canvas', { class: 'eqplot' });
+  const sl = [], outs = [];
+  const geq = h('div', { class: 'geq' });
+  EQ_HZ.forEach((f, i) => {
+    const o = h('output', null, '0');
+    let t = 0;
+    const r = range(-12, 12, 0, v => { o.textContent = (v > 0 ? '+' : '') + v; clearTimeout(t); t = setTimeout(() => { setx({ eqBand: i + ':' + v }); plotSoon(); }, 150); });
+    r.setAttribute('orient', 'vertical');
+    r.setAttribute('aria-label', EQ_LBL[i] + ' Гц');
+    sl.push(r); outs.push(o);
+    geq.append(h('div', { class: 'col' }, o, r, h('small', null, EQ_LBL[i])));
+  });
+  const preNote = h('p', { class: 'note' });
+  const guard = seg([[0, 'Вимк'], [1, 'М\'який'], [2, 'Сильний']], -1, v => { setx({ eqGuard: v }); plotSoon(); });
+  const vb = seg([[0, 'Вимк'], [1, '1'], [2, '2'], [3, '3']], -1, v => setx({ vbass: v }));
+  const loud = seg([[0, 'Вимк'], [1, 'М\'яка'], [2, 'Сильна']], -1, v => { setx({ eqLoud: v }); plotSoon(); });
+  const balOut = h('output');
+  let balT = 0;
+  const bal = range(-16, 16, 0, v => { balOut.textContent = v ? (v < 0 ? 'ліворуч ' + -v : 'праворуч ' + v) : 'по центру'; clearTimeout(balT); balT = setTimeout(() => setx({ bal: v }), 150); });
+  const roomBtn = btn('Зміряти', 'refresh', () => { if (S && (S.snd.rst === 1 || S.snd.rst === 2)) setx({ roomStop: 1 }); else setx({ roomTune: 1 }); }, 'acc');
+  const roomOn = sw(false, v => { setx({ eqRoomOn: v ? 1 : 0 }); plotSoon(); });
+  const roomClr = btn('Скинути поправку', 'x', () => { setx({ roomClear: 1 }); plotSoon(); }, 'sm ghost');
+  const roomBar = h('div', { class: 'prog' }, h('i'));
+  const roomMsg = h('p', { class: 'note' });
+  const roomBands = h('div', { class: 'rbands' });
   const ctl = h('div');
-  page.append(card('Еквалайзер', eq, h('div', { class: 'bar' }, btn('Скинути', 'refresh', () => { for (const [k] of bands) send(`${k}=0`); }, 'sm'))),
+  page.append(
+    card('Еквалайзер', h('div', { class: 'bar', style: { justifyContent: 'space-between' } }, presets, h('label', { class: 'bar' }, h('span', { class: 'note', style: { margin: 0 } }, 'увімкнено'), on)),
+      cv, geq, preNote),
+    card('Обробка',
+      row('Захист динаміка', 'зрізає низ, якого маленький динамік не відтворює, а лише хрипить', guard),
+      row('Віртуальний бас', 'бас, що зрізано, передається гармоніками — вухо саме «добудовує» низ', vb),
+      row('Тонкомпенсація', 'на тихій гучності трохи підіймає низ і верх, як їх чує вухо', loud),
+      h('div', { class: 'fld', style: { marginTop: '8px' } }, h('span', null, 'Баланс'), h('div', { class: 'rng' }, bal, balOut)),
+      h('p', { class: 'note' }, 'Захист і тонкомпенсація — для вбудованого динаміка; для зовнішнього ЦАП захист вимикається сам.')),
+    card('Під кімнату',
+      h('p', { class: 'note', style: { marginTop: 0 } }, 'Радіо зіграє тони від 63 Гц до 16 кГц і послухає себе своїм мікрофоном. Спершу перевіряє, чи мікрофон і динамік не спотворюють звук (інакше зменшує підсилення чи гучність тонів), тоді ставить поправку й міряє ще раз — уже з нею, доправляючи те, що лишилось. Якщо рівнішим звук не став, поправка не вмикається. Близько хвилини; у кімнаті має бути тихо, грати в цей час нічого не буде.'),
+      h('div', { class: 'bar', style: { marginTop: '10px' } }, roomBtn, roomClr), roomBar, roomMsg, roomBands,
+      row('Застосовувати поправку', 'бірюзові точки на графіку — що почув мікрофон', roomOn)),
     card('Гучність', ctl),
     card('Аудіовихід', h('div', { class: 'bar' }, h('span', { id: 'dacnow', style: { flex: 1 } }), h('a', { class: 'btn sm', href: '#/dev' }, 'Змінити')), h('p', { class: 'note' }, 'Зовнішній ЦАП чи підсилювач під\'єднують у розділі «Розробник» — там і схеми.')));
-  send('getcontrols=1'); send('getsystem=1'); send('getindex=1');
-  let cs = '';
+  send('getcontrols=1'); send('getsystem=1');
+  let plotT = 0, last = null;
+  async function plot() { try { last = await api('/api/eq'); eqPlot(cv, last.resp, last.sweep); } catch (e) {} }
+  function plotSoon() { clearTimeout(plotT); plotT = setTimeout(plot, 500); }
+  window.addEventListener('resize', plotSoon);
+  plot();
+  let cs = '', rst = -1, sig = '';
   live(() => {
-    for (const [k] of bands) { const e = els[k]; if (document.activeElement !== e.r) { e.r.value = W[k]; fillRange(e.r); e.o.textContent = (W[k] > 0 ? '+' : '') + W[k]; } }
-    if (S) $('#dacnow').textContent = 'Зараз: ' + DACS[S.dev.dac].n + ' — ' + DACS[S.dev.dac].k;
+    if (S && S.snd) {
+      const d = S.snd;
+      d.eq.forEach((v, i) => { if (document.activeElement !== sl[i]) { sl[i].value = v; fillRange(sl[i]); outs[i].textContent = (v > 0 ? '+' : '') + v; } });
+      presets.set(d.preset);
+      on.firstChild.checked = !!d.on;
+      geq.classList.toggle('off', !d.on);
+      guard.set(d.guard); vb.set(d.vb); loud.set(d.loud);
+      if (document.activeElement !== bal) { bal.value = d.bal; fillRange(bal); balOut.textContent = d.bal ? (d.bal < 0 ? 'ліворуч ' + -d.bal : 'праворуч ' + d.bal) : 'по центру'; }
+      roomOn.firstChild.checked = !!d.roomOn;
+      const busy = d.rst === 1 || d.rst === 2;
+      roomBtn.lastChild.textContent = busy ? 'Зупинити' : 'Зміряти';
+      roomBar.hidden = !busy; roomBar.firstChild.style.width = d.rpr + '%';
+      roomMsg.textContent = busy ? d.rmsg + '… ' + d.rpr + '%' : d.rst === 3 ? 'Готово — ' + d.rmsg + '.' : d.rst === 4 ? 'Не вийшло: ' + d.rmsg : '';
+      const has = d.room.some(v => v);
+      roomClr.hidden = !has;
+      roomBands.textContent = '';
+      if (has) d.room.forEach((v, i) => roomBands.append(h('span', { class: v ? '' : 'z' }, EQ_LBL[i] + ' ', h('b', null, (v > 0 ? '+' : '') + v))));
+      preNote.textContent = `Попереднє ослаблення ${(-d.pre10 / 10).toFixed(1).replace(".", ",")} дБ — щоб підйоми не перевантажували звук · обробка: ${(d.us100 / 100).toFixed(1).replace(".", ",")} мкс на відлік`;
+      const s2 = d.eq.join() + d.on + d.guard + d.loud + d.roomOn + d.room.join();
+      if (s2 !== sig) { sig = s2; plotSoon(); }
+      if (d.rst !== rst) { if (rst === 2 && d.rst >= 3) plotSoon(); rst = d.rst; }
+      $('#dacnow').textContent = 'Зараз: ' + DACS[S.dev.dac].n + ' — ' + DACS[S.dev.dac].k;
+    }
     const s = [C.vols, C.sst].join('|');
     if ('vols' in C && s !== cs) {
       cs = s; ctl.textContent = '';
@@ -1214,11 +1296,54 @@ VIEWS.sound = page => {
   });
 };
 
+/* ---------------------------------------------------------------- мікрофон */
+VIEWS.mic = page => {
+  const on = sw(false, v => setx({ micOn: v ? 1 : 0 }));
+  const gain = seg([[3, 'Низька'], [0, 'Середня'], [7, 'Висока'], [8, 'Макс']], -1, v => setx({ micGain: v }));
+  const play = sw(false, v => setx({ micPlay: v ? 1 : 0 }));
+  const meter = h('div', { class: 'meter' }, h('i'), h('b'));
+  const heard = h('p', { class: 'note' });
+  const kind = (k, title, sub) => {
+    const o = sw(false, v => setx({ [k + 'On']: v ? 1 : 0 }));
+    const sens = seg([[1, 'Низька'], [0, 'Середня'], [2, 'Висока']], -1, v => setx({ [k + 'Sens']: v }));
+    const a2 = selectEl(MIC_ACTS, 2, v => setx({ [k + '2']: v }));
+    const a3 = selectEl(MIC_ACTS, 3, v => setx({ [k + '3']: v }));
+    const el = card(title, row('Увімкнено', sub, o), row('Чутливість', null, sens),
+      row('Двічі', null, h('div', { style: { width: '220px' } }, a2)), row('Тричі', null, h('div', { style: { width: '220px' } }, a3)));
+    el.upd = m => { o.firstChild.checked = !!m[k + 'On']; sens.set(m[k + 'Sens']); if (document.activeElement !== a2) a2.value = m[k + '2']; if (document.activeElement !== a3) a3.value = m[k + '3']; };
+    return el;
+  };
+  const clap = kind('clap', 'Хлопки', 'хлопніть у долоні двічі чи тричі з рівним кроком');
+  const knock = kind('knock', 'Стук по корпусу', 'постукайте пальцем по радіо');
+  const ear = sw(false, v => setx({ sleepEar: v ? 1 : 0 }));
+  const earMin = seg([[5, '5 хв'], [10, '10 хв'], [15, '15 хв'], [30, '30 хв']], -1, v => setx({ sleepEarMin: v }));
+  const wake = sw(false, v => setx({ presWake: v ? 1 : 0 }));
+  const off = seg([[0, 'Ні'], [5, '5 хв'], [15, '15 хв'], [30, '30 хв']], -1, v => setx({ presOff: v }));
+  page.append(
+    card('Мікрофон', row('Слухати', 'поки слухає, на екрані горить значок; звук нікуди не передається', on), meter, heard,
+      row('Чутливість', null, gain),
+      row('Слухати й під час звуку', 'віднімає власний звук радіо, щоб чути кімнату; бере помітну частку процесора', play)),
+    clap, knock,
+    card('Сон і присутність',
+      row('Таймер сну слухає', 'у кімнаті стільки хвилин тихо — радіо затихає, не чекаючи кінця таймера', ear), row('Тиша', null, earMin),
+      row('Голос будить екран', 'заговорили поруч — екран прокидається', wake),
+      row('Гасити екран, коли тихо', 'нікого не чути й ніхто не торкався стільки хвилин', off)));
+  live(() => {
+    if (!S || !S.mic) return;
+    const m = S.mic;
+    on.firstChild.checked = !!m.on; gain.set(m.gain); play.firstChild.checked = !!m.play;
+    const p = m.run ? Math.max(0, Math.min(100, (m.lvl + 80) / 60 * 100)) : 0, n = Math.max(0, Math.min(100, (m.noise + 80) / 60 * 100));
+    meter.firstChild.style.width = p + '%'; meter.firstChild.classList.toggle('voice', !!m.speech); meter.lastChild.style.left = n + '%';
+    heard.textContent = !m.on ? 'Мікрофон вимкнено.' : m.heard ? 'Почуто: ' + m.heard + '.' : m.speech ? 'Чую голос.' : m.aec ? 'Віднімаю власний звук.' : `Рівень ${m.lvl} дБ, фон ${m.noise} дБ.`;
+    clap.upd(m); knock.upd(m);
+    ear.firstChild.checked = !!m.ear; earMin.set(m.earMin); wake.firstChild.checked = !!m.wake; off.set(m.off);
+  });
+};
+
 /* ---------------------------------------------------------------- Wi-Fi */
 VIEWS.wifi = page => {
   const cur = h('div'), saved = h('div'), scan = h('div');
   page.append(
-    AP ? h('div', { class: 'dirty' }, h('b', null, 'Радіо не підключене до мережі й працює як точка доступу. Виберіть свою мережу Wi-Fi нижче.')) : null,
     card('Зараз', cur),
     card('Збережені мережі', saved, h('p', { class: 'note' }, 'До п\'яти мереж. Після ввімкнення радіо пробує їх по черзі, починаючи з першої.')),
     h('section', { class: 'card' }, h('h2', null, 'Доступні мережі', h('span', { class: 'sp' }), btn('Шукати', 'refresh', doScan, 'sm')), scan,
@@ -1234,7 +1359,7 @@ VIEWS.wifi = page => {
   function draw() {
     if (!data) return;
     cur.textContent = '';
-    cur.append(h('dl', { class: 'kv' }, h('dt', null, 'Мережа'), h('dd', null, data.cur || (AP ? 'точка доступу' : 'не підключено')),
+    cur.append(h('dl', { class: 'kv' }, h('dt', null, 'Мережа'), h('dd', null, data.cur || 'не підключено'),
       S && S.ip ? [h('dt', null, 'Адреса'), h('dd', null, S.ip)] : null, S && S.rssi ? [h('dt', null, 'Сигнал'), h('dd', null, S.rssi + ' дБм')] : null));
     if (data.fail) cur.append(h('p', { class: 'note', style: { color: 'var(--warn)' } }, `Минулого разу не вдалося підключитися до «${data.fail}».`));
     saved.textContent = '';
@@ -1271,8 +1396,8 @@ VIEWS.wifi = page => {
         try { await api('/api/wifi/join', { method: 'POST', body: b }); } catch (e) { err.textContent = e.message; return; }
         d.close();
         page.textContent = '';
-        page.append(card('Підключаюся', h('p', null, `Радіо перезавантажується й підключається до «${s}».`), h('p', { class: 'note' }, AP ? 'Під\'єднайте цей комп\'ютер чи телефон до тієї самої мережі й відкрийте адресу, яку радіо покаже на екрані.' : 'Якщо адреса не зміниться, сторінка оновиться сама за хвилину.')));
-        if (!AP) setTimeout(() => location.reload(), 45000);
+        page.append(card('Підключаюся', h('p', null, `Радіо перезавантажується й підключається до «${s}».`), h('p', { class: 'note' }, 'Якщо адреса не зміниться, сторінка оновиться сама за хвилину.')));
+        setTimeout(() => location.reload(), 45000);
       }, 'acc')]);
   }
   load();
@@ -1555,11 +1680,11 @@ function start() {
   shell();
   window.addEventListener('hashchange', route);
   route();
-  if (!AP) { wsConnect(); loadPlayList(); loadLogos(); }
+  wsConnect(); loadPlayList(); loadLogos();
   pollState();
   /*  гучність із клавіатури: стрілки вгору/вниз, пробіл — пауза  */
   document.addEventListener('keydown', e => {
-    if (AP || e.target.closest('input,select,textarea,.dlg') || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.target.closest('input,select,textarea,.dlg') || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === ' ') { e.preventDefault(); send('toggle=1'); }
   });
 }
