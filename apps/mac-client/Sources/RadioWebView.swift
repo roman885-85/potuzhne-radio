@@ -16,7 +16,10 @@ struct RadioWebView: NSViewRepresentable {
         cfg.websiteDataStore = .default()                 // localStorage сторінки — між запусками
         cfg.mediaTypesRequiringUserActionForPlayback = []
         cfg.preferences.isElementFullscreenEnabled = true
+        let voice = VoiceBridge()                         // голосові команди: сторінка кличе messageHandlers.voice
+        cfg.userContentController.add(voice, name: "voice")
         let wv = WKWebView(frame: .zero, configuration: cfg)
+        voice.web = wv
         wv.navigationDelegate = context.coordinator
         wv.uiDelegate = context.coordinator
         wv.allowsBackForwardNavigationGestures = false

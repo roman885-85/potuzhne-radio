@@ -426,6 +426,7 @@ function shell() {
       h('header', { class: 'top' },
         h('button', { class: 'burger', type: 'button', 'aria-label': 'Розділи', onclick: () => $('#shell').classList.toggle('open') }, ic('menu')),
         h('h1', { id: 'ptitle' }, ''),
+        h('button', { class: 'voicebtn', id: 'voicebtn', type: 'button', hidden: true, title: 'Голосова команда', 'aria-label': 'Голосова команда', onclick: () => voiceStart() }, ic('mic')),
         h('div', { class: 'stat', id: 'stat' })),
       h('div', { id: 'page' })),
     mini());
@@ -1710,6 +1711,276 @@ VIEWS.about = page => {
   });
 };
 
+/* ---------------------------------------------------------------- голос
+   Мову розпізнає застосунок (Android — Google, Mac — Apple): сторінка по
+   http до мікрофона доступу не має. Застосунок віддає сюди варіанти
+   фрази, а тут вони стають командами радіо — однаково для всіх програм.  */
+const VOICE = { busy: false, ov: null, sermons: null };
+
+function voiceBridge() {
+  if (window.PotuzhneApp && typeof window.PotuzhneApp.listen === 'function') return 'android';
+  if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.voice) return 'mac';
+  return '';
+}
+
+function voiceSetup() {
+  const b = $('#voicebtn');
+  if (b) b.hidden = !voiceBridge();
+}
+
+const VOICE_HINT = 'наприклад: «наступна», «пауза», «гучність 30», «грай Хіт FM», «таймер сну 30 хвилин», «будильник на 7», «остання проповідь»';
+
+function voiceOverlay(text, sub) {
+  if (!VOICE.ov) {
+    VOICE.ov = h('div', { class: 'voice-ov', role: 'status' }, h('i', { class: 'voice-dot' }), h('div', null, h('b'), h('small')));
+    VOICE.ov.addEventListener('click', () => { VOICE.ov.hidden = true; });
+    document.body.append(VOICE.ov);
+  }
+  VOICE.ov.querySelector('b').textContent = text;
+  VOICE.ov.querySelector('small').textContent = sub || '';
+  VOICE.ov.hidden = false;
+}
+
+function voiceStart() {
+  const br = voiceBridge();
+  if (!br || VOICE.busy) return;
+  VOICE.busy = true;
+  $('#voicebtn') && $('#voicebtn').classList.add('on');
+  voiceOverlay('Слухаю…', VOICE_HINT);
+  try {
+    if (br === 'android') window.PotuzhneApp.listen();
+    else window.webkit.messageHandlers.voice.postMessage('listen');
+  } catch (e) { window.potuzhneVoiceError('Застосунок не зміг почати слухати'); }
+}
+
+function voiceDone() {
+  VOICE.busy = false;
+  $('#voicebtn') && $('#voicebtn').classList.remove('on');
+}
+
+window.potuzhneVoicePartial = t => { if (VOICE.busy) voiceOverlay('«' + t + '»', 'слухаю…'); };
+window.potuzhneVoiceError = msg => { voiceDone(); if (VOICE.ov) VOICE.ov.hidden = true; toast(msg, true); };
+window.potuzhneVoiceResult = list => {
+  voiceDone();
+  const alts = (Array.isArray(list) ? list : [list]).map(x => String(x || '').trim()).filter(Boolean);
+  if (!alts.length) { if (VOICE.ov) VOICE.ov.hidden = true; toast('Нічого не почуто', true); return; }
+  voiceRun(alts).then(r => {
+    if (VOICE.ov) VOICE.ov.hidden = true;
+    if (r) toast(`«${r.said}» → ${r.done}`);
+    else toast(`Не зрозумів «${alts[0]}». Скажіть, ${VOICE_HINT}`, true);
+  });
+};
+
+/* ---------- розбір ---------- */
+
+const vnorm = s => String(s).toLowerCase().replace(/ё/g, 'е').replace(/[’ʼ`´]/g, "'").replace(/[^\p{L}\p{N}' :]+/gu, ' ').replace(/\s+/g, ' ').trim();
+
+const VNUM = {
+  'нуль': 0, 'один': 1, 'одна': 1, 'одну': 1, 'одне': 1, 'перша': 1, 'перше': 1, 'першу': 1, 'первая': 1, 'первую': 1,
+  'два': 2, 'дві': 2, 'две': 2, 'друга': 2, 'друге': 2, 'другу': 2, 'вторая': 2, 'вторую': 2,
+  'три': 3, 'третя': 3, 'третє': 3, 'третю': 3, 'третья': 3, 'третью': 3,
+  'чотири': 4, 'четыре': 4, 'четверта': 4, 'четверте': 4, 'четвертая': 4,
+  "п'ять": 5, 'пять': 5, "п'ята": 5, 'пятая': 5, 'шість': 6, 'шесть': 6, 'шоста': 6, 'шестая': 6,
+  'сім': 7, 'семь': 7, 'сьома': 7, 'сьому': 7, 'седьмая': 7, 'вісім': 8, 'восемь': 8, 'восьма': 8, 'восьму': 8,
+  "дев'ять": 9, 'девять': 9, "дев'яту": 9, "дев'ята": 9, 'десять': 10, 'десяту': 10, 'десята': 10, "одинадцять": 11, 'одиннадцать': 11,
+  'шосту': 6, "п'яту": 5, 'четверту': 4, 'четвертую': 4, 'сьомої': 7, 'одинадцяту': 11, 'дванадцяту': 12, 'шестую': 6, 'пятую': 5, 'седьмую': 7, 'восьмую': 8,
+  'дванадцять': 12, 'двенадцать': 12, 'тринадцять': 13, 'тринадцать': 13, 'чотирнадцять': 14, 'четырнадцать': 14,
+  "п'ятнадцять": 15, 'пятнадцать': 15, 'шістнадцять': 16, 'шестнадцать': 16, 'сімнадцять': 17, 'семнадцать': 17,
+  'вісімнадцять': 18, 'восемнадцать': 18, "дев'ятнадцять": 19, 'девятнадцать': 19,
+  'двадцять': 20, 'двадцать': 20, 'тридцять': 30, 'тридцать': 30, 'сорок': 40, "п'ятдесят": 50, 'пятьдесят': 50,
+  'шістдесят': 60, 'шестьдесят': 60, 'сімдесят': 70, 'семьдесят': 70, 'вісімдесят': 80, 'восемьдесят': 80,
+  "дев'яносто": 90, 'девяносто': 90, 'сто': 100,
+};
+
+/*  перше число у фразі: цифрами або словами («двадцять п'ять»)  */
+function vnum(s) {
+  const m = s.match(/\d+/);
+  if (m) return +m[0];
+  let total = null;
+  for (const w of s.split(' ')) {
+    if (w in VNUM) { total = (total || 0) + VNUM[w]; }
+    else if (total !== null) break;
+  }
+  return total;
+}
+
+/*  латиниця для порівняння назв: «хіт фм» і «Hit FM» мають зустрітись  */
+const VTR = { 'а': 'a', 'б': 'b', 'в': 'v', 'г': 'h', 'ґ': 'g', 'д': 'd', 'е': 'e', 'є': 'ie', 'ж': 'zh', 'з': 'z', 'и': 'y', 'і': 'i', 'ї': 'i', 'й': 'i',
+  'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch',
+  'ш': 'sh', 'щ': 'sch', 'ь': '', 'ю': 'iu', 'я': 'ia', 'ы': 'y', 'э': 'e', 'ъ': '', "'": '' };
+const vlat = s => vnorm(s).split('').map(c => VTR[c] !== undefined ? VTR[c] : c).join('')
+  .replace(/ph/g, 'f').replace(/w/g, 'v').replace(/c(?=[eiy])/g, 's').replace(/c/g, 'k').replace(/q/g, 'k').replace(/x/g, 'ks').replace(/g/g, 'h')
+  .replace(/dzh|dj/g, 'j').replace(/([a-z])\1+/g, '$1');
+
+function vlev(a, b) {
+  if (a === b) return 0;
+  const m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
+}
+const vsim = (a, b) => 1 - vlev(a, b) / Math.max(a.length, b.length, 1);
+
+/*  наскільки фраза схожа на назву: кожне слово фрази шукаємо серед слів назви  */
+/*  слова, що є в половині назв, — не ознака саме цієї станції  */
+const VGENERIC = new Set(['radio', 'radiio', 'radyo', 'fm', 'am', 'hd', 'stantsiia', 'stantsia', 'stantsyia', 'kanal', 'online', 'the']);
+function vscore(query, name) {
+  const cut = w => w.filter(x => !VGENERIC.has(x));
+  let q = vlat(query).split(' ').filter(w => w.length > 1), nm = vlat(name).split(' ').filter(Boolean);
+  if (cut(q).length) q = cut(q);
+  if (cut(nm).length) nm = cut(nm);
+  if (!q.length || !nm.length) return 0;
+  const joined = nm.join(''), qj = q.join('');
+  if (joined.includes(qj) && qj.length >= 3) return 0.95;
+  let sum = 0;
+  for (const w of q) sum += Math.max(...nm.map(x => vsim(w, x)), vsim(w, joined));
+  return Math.max(sum / q.length, vsim(qj, joined));
+}
+
+function vbest(query, items, key) {
+  let best = null, bs = 0;
+  items.forEach((it, i) => {
+    const s = vscore(query, key(it));
+    if (s > bs + 0.001 || (Math.abs(s - bs) <= 0.001 && best !== null && key(it).length < key(items[best]).length)) { bs = s; best = i; }
+  });
+  return bs >= 0.62 ? { i: best, score: bs } : null;
+}
+
+async function vsermons() {
+  if (VOICE.sermons && VOICE.sermons.length) return VOICE.sermons;
+  try {
+    const d = await api('/api/sermons');
+    if (d.items && d.items.length) { VOICE.sermons = d.items; return d.items; }
+    if (!d.load) setx({ sermLoad: 1 });
+  } catch (e) {}
+  return null;
+}
+
+const V_PRESETS = [['рівно', 1], ['ровно', 1], ['голос', 2], ['музика', 3], ['музыка', 3], ['бас', 4], ['ніч', 5], ['ночь', 5], ['нічний', 5], ['яскраво', 6], ['ярко', 6], ['тепло', 7]];
+
+/*  Одна фраза → дія. null — не зрозуміло.  */
+async function voiceParse(raw) {
+  const s = vnorm(raw);
+  if (!s) return null;
+  const has = re => re.test(s);
+  const playing = !!W.playing;
+  const serm = isSerm();
+
+  /*  таймер сну  */
+  if (has(/таймер|засн|сон через|сна через|вимкн\S* через|выключ\S* через/)) {
+    if (has(/скасу|вимкни таймер|прибери|отмен|выключи таймер|без таймера/)) { setx({ sleep: 0 }); return 'таймер сну вимкнено'; }
+    let min = vnum(s);
+    if (has(/півтор|полтор/)) min = 90;
+    else if (has(/пів ?годин|полчаса/)) min = 30;
+    else if (has(/годин|час/) && min !== null) min *= 60;
+    else if (has(/годин|час/)) min = 60;
+    if (!min) return null;
+    min = Math.max(1, Math.min(600, min));
+    setx({ sleep: min });
+    return `таймер сну на ${min} хв`;
+  }
+  /*  будильник  */
+  if (has(/будильник|разбуди|розбуди/)) {
+    if (has(/вимкн|скасу|выключ|отмен|не треба/)) { setx({ alarmOn: 0 }); return 'будильник вимкнено'; }
+    const t = s.match(/(\d{1,2})(?:[: ](\d{2}))?/);
+    let hh = t ? +t[1] : vnum(s), mm = t && t[2] ? +t[2] : 0;
+    if (hh === null || hh > 23) return null;
+    if (has(/пів ?на|половин/) && !t) { hh = Math.max(0, hh - 1); mm = 30; }
+    if (has(/вечора|вечера/) && hh < 12) hh += 12;
+    setx({ alarmH: hh, alarmM: mm, alarmOn: 1 });
+    return `будильник на ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  }
+  /*  гучність  */
+  if (has(/гучніш|голосніш|громче|погромче|сильніше/)) { const v = Math.min(254, (W.vol | 0) + 25); send('volume=' + v); return `гучність ${Math.round(v / 2.54)}%`; }
+  if (has(/тихіш|тише|потише|слабше/)) { const v = Math.max(0, (W.vol | 0) - 25); send('volume=' + v); return `гучність ${Math.round(v / 2.54)}%`; }
+  if (has(/гучність|громкость|звук на/)) {
+    const n = vnum(s);
+    if (n === null) return null;
+    const v = Math.round(Math.max(0, Math.min(100, n)) * 2.54);
+    send('volume=' + v);
+    return `гучність ${Math.min(100, n)}%`;
+  }
+  if (has(/^(без звуку|вимкни звук|выключи звук|тиша)$/)) { send('volume=0'); return 'без звуку'; }
+  /*  еквалайзер  */
+  if (has(/пресет|еквалайзер|эквалайзер|режим звуку|звук /)) {
+    const p = V_PRESETS.find(([w]) => s.includes(w));
+    if (p) { setx({ eqPreset: p[1] }); return `звук: ${p[0]}`; }
+  }
+  /*  що грає  */
+  if (has(/що (зараз )?грає|що це|что (сейчас )?играет|что это/)) {
+    return serm && S.serm.t ? `проповідь «${S.serm.t}»` : `${W.name || 'нічого не грає'}${W.title ? ' — ' + W.title : ''}`;
+  }
+  /*  наступна / попередня проповідь — навіть якщо зараз грає радіо  */
+  if (has(/проповід|проповед/) && has(/наступн|следующ|далі|дальше/)) { setx({ sermRel: 1 }); return 'наступна проповідь'; }
+  if (has(/проповід|проповед/) && has(/попередн|предыдущ|назад/)) { setx({ sermRel: -1 }); return 'попередня проповідь'; }
+  /*  наступна / попередня  */
+  if (has(/^(наступн|далі|дальше|следующ|вперед|next)/) || has(/^(перемкни|переключи)/)) {
+    serm ? setx({ sermRel: 1 }) : send('next=1');
+    return serm ? 'наступна проповідь' : 'наступна станція';
+  }
+  if (has(/^(попередн|назад|предыдущ|previous)/)) {
+    serm ? setx({ sermRel: -1 }) : send('prev=1');
+    return serm ? 'попередня проповідь' : 'попередня станція';
+  }
+  /*  пауза / грати  */
+  if (has(/^(пауза|стоп|зупини\S*|вимкни|вимкни радіо|останови\S*|стой|выключи|выключи радио|тихо)$/)) {
+    if (playing) send('toggle=1');
+    return 'пауза';
+  }
+  if (has(/^(грай|грати|увімкни|увімкни радіо|включи|включи радио|продовж\S*|продолж\S*|играй|пуск|старт|play)$/)) {
+    if (!playing) send('toggle=1');
+    return 'грає';
+  }
+  /*  обране  */
+  if (has(/обран|избран|кнопк/)) {
+    const n = vnum(s);
+    if (n && n >= 1 && n <= 6) {
+      if (S && S.fav && S.fav[n - 1] && S.fav[n - 1].n) { setx({ favPlay: n - 1 }); return `обране ${n}: ${S.fav[n - 1].n}`; }
+      return `у кнопці обраного ${n} нічого немає`;
+    }
+  }
+  /*  проповідь  */
+  if (has(/проповід|проповед/)) {
+    const items = await vsermons();
+    if (!items) return 'архів проповідей ще вантажиться — скажіть за хвилину';
+    const rest = s.replace(/.*?(проповід\S*|проповед\S*)\s*/, '').replace(/^(про|на тему|тему|від|пастора|брата)\s+/, '').trim();
+    if (!rest || has(/остан|свіж|нов|последн/)) { setx({ serm: 0 }); return `проповідь «${items[0].t}»`; }
+    const b = vbest(rest, items, it => `${it.t} ${it.p || ''}`);
+    if (!b) return `проповіді «${rest}» не знайшов`;
+    setx({ serm: b.i });
+    return `проповідь «${items[b.i].t}»`;
+  }
+  /*  станція за номером або назвою  */
+  const m = s.match(/^(?:грай|грати|увімкни|включи|постав\S*|станці\S*|радіо|радио|играй|хочу|давай)\s+(.+)$/);
+  const q = m ? m[1] : s;
+  const num = q.match(/^(?:номер\s+)?(\d+)$/) || (m && /^номер/.test(q) && vnum(q) ? [0, vnum(q)] : null);
+  if (num && PL.length && +num[1] >= 1 && +num[1] <= PL.length) { send('play=' + num[1]); return `станція ${num[1]}: ${PL[num[1] - 1].name}`; }
+  if (PL.length) {
+    const b = vbest(q, PL, x => x.name);
+    if (b && (m || b.score >= 0.8)) { send('play=' + (b.i + 1)); return `грає «${PL[b.i].name}»`; }
+  }
+  return null;
+}
+
+async function voiceRun(alts) {
+  for (const a of alts) {
+    const done = await voiceParse(a);
+    if (done) { setTimeout(pollState, 700); return { said: a, done }; }
+  }
+  return null;
+}
+/*  перевірка з консолі: dry — лише показати, що зробилося б, нічого не надсилаючи  */
+window.potuzhneVoiceTest = async (text, dry = true) => {
+  const acts = [], s0 = send, x0 = setx;
+  if (dry) { send = c => { acts.push(c); }; setx = o => { acts.push(JSON.stringify(o)); return Promise.resolve(); }; }
+  try { return { done: await voiceParse(text), acts }; } finally { if (dry) { send = s0; setx = x0; } }
+};
+
 /* ---------------------------------------------------------------- старт */
 function start() {
   shell();
@@ -1717,6 +1988,8 @@ function start() {
   route();
   wsConnect(); loadPlayList(); loadLogos();
   pollState();
+  voiceSetup();
+  setTimeout(voiceSetup, 1500);                 /* міст застосунку може з'явитись трохи пізніше */
   /*  гучність із клавіатури: стрілки вгору/вниз, пробіл — пауза  */
   document.addEventListener('keydown', e => {
     if (e.target.closest('input,select,textarea,.dlg') || e.metaKey || e.ctrlKey || e.altKey) return;

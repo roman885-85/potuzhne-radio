@@ -289,3 +289,13 @@ code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:#1c1c1c;bo
 .meter i{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--acc);transition:width .3s}
 .meter i.voice{background:#5ccf6a}
 .meter b{position:absolute;top:0;bottom:0;width:2px;background:#fff;left:0}
+
+/* ---------- голос ---------- */
+.voicebtn{flex:none;width:40px;height:40px;border:1px solid var(--line2);border-radius:50%;background:var(--pan2);color:var(--acc);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;-webkit-tap-highlight-color:transparent}
+.voicebtn svg{width:20px;height:20px}
+.voicebtn.on{background:var(--acc);color:var(--acc-ink);animation:vpulse 1s ease-in-out infinite}
+@keyframes vpulse{50%{box-shadow:0 0 0 8px var(--acc-soft)}}
+.voice-ov{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:61;display:flex;gap:12px;align-items:center;background:#1b1b1b;border:1px solid var(--acc);border-radius:14px;padding:12px 16px;max-width:calc(100vw - 30px);box-shadow:0 8px 30px rgba(0,0,0,.6)}
+.voice-ov b{display:block;font-size:16px}
+.voice-ov small{display:block;color:var(--dim);font-size:12px;margin-top:3px}
+.voice-dot{flex:none;width:12px;height:12px;border-radius:50%;background:var(--acc);animation:vpulse 1s ease-in-out infinite}

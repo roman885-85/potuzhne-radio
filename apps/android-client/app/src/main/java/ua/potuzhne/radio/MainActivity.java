@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.speech.RecognizerIntent;
 import android.text.InputType;
 import android.util.Base64;
 import android.util.Log;
@@ -69,6 +70,7 @@ public class MainActivity extends Activity {
 
     private static final String TAG = Net.TAG;
     private static final int REQUEST_FILE = 11;
+    private static final int REQUEST_VOICE = 12;
     private static final long CHECK_EVERY_MS = 10_000;
     private static final int CHECK_FAILS = 3;
     private static final long PAGE_TIMEOUT_MS = 25_000;
@@ -1104,6 +1106,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == REQUEST_VOICE) { voiceAnswer(result, data); return; }
         if (request != REQUEST_FILE) return;
         Uri[] picked = null;
         if (result == RESULT_OK && data != null) {
@@ -1253,6 +1256,12 @@ public class MainActivity extends Activity {
 
         private boolean mine() { return gen == openGen && current != null; }
 
+        /** Голосова команда: сторінка просить послухати. */
+        @JavascriptInterface
+        public void listen() {
+            main.post(() -> { if (mine()) startVoice(); });
+        }
+
         @JavascriptInterface
         public void menu() {
             main.post(() -> { if (mine()) showMenu(); });
@@ -1289,6 +1298,44 @@ public class MainActivity extends Activity {
         public void failed(String name) {
             main.post(() -> toast("Не вдалося зберегти «" + name + "»"));
         }
+    }
+
+    // ---- голос ----------------------------------------------------------------------
+
+    /**
+     * Розпізнавання мови — системним вікном Google українською. Текст (до п'яти
+     * варіантів) іде в сторінку радіо, а що з ним робити, вирішує вона сама —
+     * однаково для телефона, Mac і браузера.
+     */
+    private void startVoice() {
+        Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "uk-UA");
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "uk-UA");
+        i.putExtra(RecognizerIntent.EXTRA_PROMPT, "Скажіть команду радіо");
+        i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5);
+        if (getPackageManager().queryIntentActivities(i, 0).isEmpty()) {
+            voiceJs("potuzhneVoiceError", "На телефоні немає розпізнавання мови. Поставте або ввімкніть застосунок «Google».");
+            return;
+        }
+        try {
+            startActivityForResult(i, REQUEST_VOICE);
+        } catch (ActivityNotFoundException e) {
+            voiceJs("potuzhneVoiceError", "Розпізнавання мови не відкрилось.");
+        }
+    }
+
+    private void voiceAnswer(int result, Intent data) {
+        java.util.ArrayList<String> said = (result == RESULT_OK && data != null)
+                ? data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS) : null;
+        org.json.JSONArray arr = new org.json.JSONArray();
+        if (said != null) for (String t : said) arr.put(t);
+        if (web != null) web.evaluateJavascript("window.potuzhneVoiceResult && potuzhneVoiceResult(" + arr + ")", null);
+    }
+
+    private void voiceJs(String fn, String msg) {
+        if (web == null) return;
+        web.evaluateJavascript("window." + fn + " && " + fn + "(" + org.json.JSONObject.quote(msg) + ")", null);
     }
 
     /**

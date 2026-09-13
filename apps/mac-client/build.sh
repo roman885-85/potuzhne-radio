@@ -48,6 +48,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSLocalNetworkUsageDescription</key><string>Щоб знайти ПОТУЖНЕ РАДІО у вашій мережі Wi-Fi і підключитися до нього.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Щоб слухати голосові команди для радіо: «наступна», «гучність 30», «грай Хіт FM».</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Щоб перетворити голосову команду на текст і передати її радіо.</string>
   <key>NSBonjourServices</key><array><string>_potuzhne._tcp</string><string>_http._tcp</string></array>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict></plist>
