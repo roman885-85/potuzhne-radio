@@ -1,4 +1,4 @@
-const uint8_t DS_DIGI42pt7bBitmaps[] PROGMEM = {
+inline const uint8_t DS_DIGI42pt7bBitmaps[] PROGMEM = {
   0x04, 0x31, 0xCF, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
   0xFF, 0xFF, 0xFF, 0xFF, 0xF7, 0xCE, 0x10, 0x00, 0x04, 0x39, 0xFF, 0xFF,
   0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF7, 0xCF,
@@ -162,7 +162,7 @@ const uint8_t DS_DIGI42pt7bBitmaps[] PROGMEM = {
   0x00
 };
 
-const GFXglyph DS_DIGI42pt7bGlyphs[] PROGMEM = {
+inline const GFXglyph DS_DIGI42pt7bGlyphs[] PROGMEM = {
   {     0,   0,   0,  15,    0,    1 },   // 0x20 ' '
   {     0,   0,   0,   0,    0,    0 },   // 0x21 '!'
   {     0,   0,   0,   0,    0,    0 },   // 0x22 '"'
@@ -192,7 +192,7 @@ const GFXglyph DS_DIGI42pt7bGlyphs[] PROGMEM = {
   {  1888,   6,  43,  15,    4,  -42 }    // 0x3A ':'
 };
 
-const GFXfont DS_DIGI42pt7b PROGMEM = {
+inline const GFXfont DS_DIGI42pt7b PROGMEM = {
   (uint8_t  *)DS_DIGI42pt7bBitmaps,
   (GFXglyph *)DS_DIGI42pt7bGlyphs, 0x20, 0x3A,  82 };
 

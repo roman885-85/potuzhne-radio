@@ -9,7 +9,6 @@
 #include "telnet.h"
 #include "display.h"
 #include "network.h"
-#include "mqtt.h"
 #include "controls.h"
 #include "commandhandler.h"
 #include "timekeeper.h"

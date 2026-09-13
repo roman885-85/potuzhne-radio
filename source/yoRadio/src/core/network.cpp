@@ -10,7 +10,6 @@
 #include "netserver.h"
 #include "player.h"
 #include "../extras/yoVersion.h"
-#include "mqtt.h"
 #include "timekeeper.h"
 #include "../pluginsManager/pluginsManager.h"
 

@@ -414,6 +414,16 @@ The connection tables are located here https://github.com/e2002/yoradio#connecti
 #endif
 
 /*        IR                      */
+/*  ПОТУЖНЕ РАДІО: бібліотеки ІЧ-пульта (IRremoteESP8266) і MQTT прибрано —
+    ні приймача, ні брокера в радіо немає, а бібліотека ІЧ сама важила 28 КБ
+    прошивки й 2,7 МБ вихідного коду. Код під ними лишився, але вмикати їх
+    нема чим.  */
+#if defined(IR_PIN) && IR_PIN!=255
+  #error "ІЧ-пульт прибрано з ПОТУЖНОГО РАДІО (src/IRremoteESP8266)"
+#endif
+#ifdef MQTT_ROOT_TOPIC
+  #error "MQTT прибрано з ПОТУЖНОГО РАДІО (src/async-mqtt-client)"
+#endif
 #ifndef IR_PIN
   #define IR_PIN                255
 #endif

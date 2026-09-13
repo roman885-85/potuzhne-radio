@@ -169,7 +169,7 @@ Android — Android SDK, без Gradle).
 | `build/sketchbook/libraries/` | бібліотеки, з якими збирається прошивка |
 | `firmware/` | скрипти збирання й прошивки, опис плати й розділів |
 | `apps/` | програми: `mac-client`, `mac-builder`, `windows-client`, `windows-builder`, `android-client`, спільний код `shared` |
-| `tools/` | службові скрипти для перевірок через USB: `selftest.py` (пам'ять, цикл, мережа, кодек, мікрофон, АЧХ тракту, перевірка еквалайзера на слух), `gesturetest.py` (хлопки й стук, що радіо грає само, і музика без хибних команд), `roomrun.py`, `roomcheck.py`, `aectest.py`, `cmd.py`, `screenshot.py` |
+| `tools/` | службові скрипти для перевірок через USB: `selftest.py` (пам'ять, цикл, мережа, кодек, мікрофон, АЧХ тракту, перевірка еквалайзера на слух), `gesturetest.py` (хлопки й стук, що радіо грає само, і музика без хибних команд), `listtest.py` (дотики й прокрутка списку станцій), `roomrun.py`, `roomcheck.py`, `aectest.py`, `cmd.py`, `screenshot.py` |
 | `media/` | знімки екрана для цього опису |
 
 Про плату, розводку виводів і розділи пам'яті — у [firmware/README.md](firmware/README.md).
