@@ -82,6 +82,7 @@ void setup() {
   display.init();
   player.init();
   extras.begin();           /* таймер сну, будильник, ніч, батарея, світлодіод */
+  Serial.printf("##[BOOT]#\tостаннє перезавантаження: %s\n", YoExtras::resetReason());
   mic.begin();              /* вбудований мікрофон: задача слухає, лише коли його ввімкнули */
   network.begin();
   if (network.status != CONNECTED && network.status!=SDREADY) {

@@ -155,6 +155,7 @@ static void onState(AsyncWebServerRequest* r){
   o.kn("heapBlk", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));   /* найбільший шматок — від нього залежить TLS */
   o.kn("psram", ESP.getFreePsram());
   o.kn("up", millis() / 1000);
+  o.ks("rst", YoExtras::resetReason());
   {
     char t[24];
     if(network.timeinfo.tm_year > 100){ strftime(t, sizeof(t), "%H:%M", &network.timeinfo); o.ks("time", t);

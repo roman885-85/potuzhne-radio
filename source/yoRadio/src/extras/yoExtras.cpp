@@ -366,6 +366,26 @@ void YoExtras::setSleep(uint16_t minutes){
   if(_sleepEnd == 0 && minutes) _sleepEnd = 1;
 }
 
+/*  Чому радіо перезавантажилось востаннє — щоб «зависло й перезавантажилось»
+    мало ім'я: сторожовий таймер, падіння програми чи просідання живлення.  */
+const char* YoExtras::resetReason(){
+  switch(esp_reset_reason()){
+    case ESP_RST_POWERON:   return "увімкнення живлення";
+    case ESP_RST_EXT:       return "зовнішній скид";
+    case ESP_RST_SW:        return "перезавантаження програмою";
+    case ESP_RST_PANIC:     return "ПАДІННЯ ПРОГРАМИ (panic)";
+    case ESP_RST_INT_WDT:   return "СТОРОЖ ПЕРЕРИВАНЬ (зависання)";
+    case ESP_RST_TASK_WDT:  return "СТОРОЖ ЗАДАЧ (зависання)";
+    case ESP_RST_WDT:       return "СТОРОЖОВИЙ ТАЙМЕР";
+    case ESP_RST_DEEPSLEEP: return "вихід із глибокого сну";
+    case ESP_RST_BROWNOUT:  return "ПРОСІДАННЯ ЖИВЛЕННЯ (brownout)";
+    case ESP_RST_SDIO:      return "SDIO";
+    case ESP_RST_USB:       return "USB";
+    case ESP_RST_JTAG:      return "JTAG";
+    default:                return "невідомо";
+  }
+}
+
 /*  У кімнаті тихо (мікрофон) — починаємо затихання зараз, а не наприкінці.  */
 bool YoExtras::sleepSoon(){
   if(!_sleepEnd) return false;

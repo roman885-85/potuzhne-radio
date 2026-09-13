@@ -44,6 +44,7 @@ class YoMic {
     static const char* actionName(uint8_t a);
     static const char* gestureName(uint8_t g);
     static uint8_t actionFor(MicGesture g);
+    void     injectGesture(uint8_t g);           /* перевірка: наче почули жест (1..4) */
     bool     listening() const;                    /* мікрофон зараз слухає — для значка */
 
     /*  для відладки  */

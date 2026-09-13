@@ -91,7 +91,12 @@ void YoMic::_run(){
     if(!listening()){ vTaskDelay(pdMS_TO_TICKS(200)); n = 0; continue; }
     if(_tsKind) _simChunk(raw);                               /* перевірка: хлопки чи стук через свій динамік */
     size_t got = 0;
-    if(i2s_read(I2S_NUM_0, raw, RAW, &got, pdMS_TO_TICKS(100)) != ESP_OK || got < 4) continue;
+    if(i2s_read(I2S_NUM_0, raw, RAW, &got, pdMS_TO_TICKS(100)) != ESP_OK || got < 4){
+      /*  драйвер саме перенастроюють (зміна частоти, зупинка) — не крутимось
+          упусту: ядро 0 без простою будить сторожовий таймер  */
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
     uint32_t rate = player.getSampleRate();
     if(rate < 8000) rate = 44100;
     if(rate != firRate){ _firDesign(rate); firRate = rate; ph = 0; }
@@ -557,6 +562,8 @@ uint8_t YoMic::actionFor(MicGesture g){
   if(a == MA_DEFAULT || a >= MA_N) a = (g == MG_CLAP2 || g == MG_KNOCK2) ? MA_TOGGLE : MA_NEXT;
   return a;
 }
+
+void YoMic::injectGesture(uint8_t g){ if(g >= MG_CLAP2 && g <= MG_KNOCK3){ _gesture = g; _heard = g; _heardMs = millis(); } }
 
 const char* YoMic::gestureName(uint8_t g){
   switch(g){

@@ -102,6 +102,7 @@ class YoExtras {
     bool     presenceDark() const { return _presDark; }
     uint32_t lastTouchMs() const { return _lastTouch; }
     bool     sleepSoon();                  /* таймер сну: почати затихання зараз (у кімнаті тихо) */
+    static const char* resetReason();     /* чому радіо перезавантажилось востаннє */
     void     forceNight(int8_t on) { _forceNight = on; }
     void     setBlank(bool b) { _blank = b; }   /* заставка «порожній екран» yoRadio */
     bool     dark() const { return _dark; }

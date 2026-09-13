@@ -170,7 +170,9 @@ void yodbgLoop(){
       if(sdman.ready) Serial.printf("тип=%d розмір=%lluМБ", (int)sdman.cardType(), sdman.cardSize()/(1024ULL*1024ULL));
       Serial.println();
     }
+    else if(!strncmp(buf,"micgest ",8)){ mic.injectGesture((uint8_t)atoi(buf+8)); Serial.printf("MICGEST %d\n", atoi(buf+8)); }
     else if(!strcmp(buf,"info")){
+      Serial.printf("остання перезавантаження: %s\n", YoExtras::resetReason());
       Serial.printf("режим=%s станція=%d гучність=%d грає=%d\n",
         config.getMode()==PM_SDCARD?"SD":"WEB", config.lastStation(),
         config.store.volume, player.isRunning()?1:0);
