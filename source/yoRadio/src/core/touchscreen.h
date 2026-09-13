@@ -31,6 +31,14 @@ class TouchScreen {
     uint32_t _plDrawMs = 0;
     bool     _plActive = false;
     float    _plPos = 1.0f;
+    float    _plTarget = 1.0f;          /* куди тягне палець; _plPos іде за ним згладжено */
+    float    _plTapPos = 1.0f;          /* де був список (на екрані) у мить дотику */
+    bool     _plTapFling = false;       /* дотик зупинив швидкий накат */
+    int16_t  _plHistY[8] = {0};         /* останні положення пальця — для швидкості кидка */
+    uint32_t _plHistT[8] = {0};
+    uint8_t  _plHistN = 0;
+    void     _plHist(int16_t y, uint32_t t);
+    float    _plFlingVel();
     /*  Сторінка плейлиста як у Nextion: кнопки праворуч, дотик по рядку.  */
     int8_t   _plBtn = -1;               /* натиснута кнопка, -1 — жодна */
     bool     _plTap = false, _plCaught = false, _plRepeated = false;

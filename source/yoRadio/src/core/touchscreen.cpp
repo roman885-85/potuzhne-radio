@@ -227,7 +227,9 @@ void TouchScreen::loop(){
   /*  Накат після відриву пальця і завершення жесту. Малює задача дисплея,
       сюди лише рахуємо положення. Швидкість гасне приблизно вдвічі за
       чверть секунди, потім список дотягується до найближчого рядка.  */
-  if(_plActive && !istouched){
+  /*  лише з наступного такту після відпускання: спершу відпускання рахує
+      швидкість кидка, інакше накат бачив нуль і одразу дотягував пружиною  */
+  if(_plActive && !istouched && !wastouched){
     uint32_t now = millis();
     float dt = (now - _plLastMs) / 1000.0f;
     if(dt <= 0.0f) dt = 0.001f;
@@ -236,7 +238,7 @@ void TouchScreen::loop(){
       _plActive = false; _plVel = 0.0f; _plCarry = 0.0f;
     }else{
       _plPos = _plClamp(_plPos - _plVel * dt);
-      _plVel *= powf(0.06f, dt);
+      _plVel *= powf(0.12f, dt);                  /* м'якше: удвічі за третину секунди */
       /*  накат уперся в край списку — зупиняємось, а не «б'ємося» об нього  */
       if(_plPos <= 1.0f || _plPos >= (float)config.playlistLength()) _plVel = 0.0f;
       if(fabsf(_plVel) < 0.6f || dt > 1.0f){
@@ -344,9 +346,16 @@ void TouchScreen::loop(){
         }else{                                    /* сам список */
           _plTap = true; _plTapX = touchX; _plTapY = touchY; _plTapMs = millis();
           _plCaught = _plActive || _plAnim;       /* палець зупинив рух, що ще тривав */
+          /*  Швидкий накат дотик лише зупиняє; пружину, що дотягує рядок, —
+              ні: там список майже стоїть, і дотик має вибирати.  */
+          _plTapFling = _plActive && fabsf(_plVel) > 3.0f;
           _plAnim = false;                        /* _plPos уже там, де зупинилось */
           _plPrevY = touchY;                      /* рахуємо зсув від пальця, без стрибка */
           if(!_plActive){ _plActive = true; if(!_plCaught) _plPos = display.currentPlItem; }
+          _plVel = 0.0f;
+          _plTapPos = _plPos;                     /* саме так список зараз намальовано */
+          _plTarget = _plPos;
+          _plHistN = 0; _plHist(touchY, millis());
         }
       }
     }
@@ -369,27 +378,33 @@ void TouchScreen::loop(){
       /*  Поки палець не відійшов далі кількох пікселів, це дотик, а не
           прокрутка: список стоїть на місці. Раніше будь-яке тремтіння пальця
           вже рахувалось рухом, і дотик по станції майже ніколи її не вмикав.  */
-      if(_plTap && abs((int)touchY - _plTapY) <= 8 && abs((int)touchX - _plTapX) <= 12){
+      /*  Поки палець не відійшов на 14 пікселів, це дотик, а не прокрутка:
+          FT6336 на відриві пальця часто «стрибає» на кілька пікселів, і з
+          порогом 8 дотик по станції перетворювався на крихітну прокрутку.  */
+      if(_plTap && abs((int)touchY - _plTapY) <= 14 && abs((int)touchX - _plTapX) <= 16){
         /* ще дотик */
       }else{
       if(_plTap){                               /* перший рух після дотику */
         _plTap = false;
         _plPrevY = touchY;                      /* без ривка на весь поріг */
+        _plTarget = _plPos;
       }
-      if(!_plActive){ _plActive = true; _plPos = display.currentPlItem; _plVel = 0.0f; _plPrevY = touchY; }
+      if(!_plActive){ _plActive = true; _plPos = display.currentPlItem; _plTarget = _plPos; _plVel = 0.0f; _plPrevY = touchY; }
+      uint32_t now = millis();
       int16_t dy = (int16_t)touchY - _plPrevY;
       if(dy != 0){
-        uint32_t now = millis();
-        float dt = (now - _plLastMs) / 1000.0f;
-        if(dt > 0.0005f){
-          float v = (dy / (float)TS_PL_ITEM_H) / dt;
-          _plVel = _plVel * 0.65f + v * 0.35f;    /* згладжуємо ривки пальця */
-          _plLastMs = now;
-        }
         _plPrevY = touchY;
-        _plPos = _plClamp(_plPos - dy / (float)TS_PL_ITEM_H);
+        _plTarget = _plClamp(_plTarget - dy / (float)TS_PL_ITEM_H);
+        _plHist(touchY, now);
+      }
+      /*  Список іде за пальцем згладжено (половина відстані за такт у 10 мс):
+          нерівні кроки сенсора не смикають рядки, а відставання непомітне.  */
+      float d = _plTarget - _plPos;
+      if(fabsf(d) > 0.002f){
+        _plPos += d * 0.5f;
         display.plScrollTo(_plPos);               /* малює задача дисплея */
       }
+      _plLastMs = now;
       }
       direct = TSD_STAY;                          /* свайп тут не потрібен */
     }
@@ -464,16 +479,32 @@ void TouchScreen::loop(){
           if(!_plRepeated) _plAction(_plBtn);
           _plBtn = -1;
         }else if(_plTap && millis() - _plTapMs < 600){
-          _plTap = false; _plActive = false; _plVel = 0.0f;
-          if(_plCaught){                          /* дотик лише зупинив рух */
+          _plTap = false; _plVel = 0.0f;
+          if(_plTapFling){                        /* дотик лише зупинив швидкий накат */
             _plSnap();
           }else{
-            int row = ((int)_plTapY - TS_PL_TOP) / TS_PL_ITEM_H;
-            if(row < 0) row = 0; if(row > TS_PL_ROWS - 1) row = TS_PL_ROWS - 1;
-            if(row == TS_PL_CUR) _plAction(PLB_PLAY_T);   /* по вибраній — грати */
-            else _plAnimateTo(_plClamp((float)display.currentPlItem + (row - TS_PL_CUR)));
+            /*  Станція під пальцем — за тим, як список був намальований у мить
+                дотику (він міг ще на частку рядка доїжджати пружиною), а не за
+                номером у смузі: інакше біля межі рядків вибиралась сусідня.  */
+            float centre = TS_PL_TOP + TS_PL_CUR * TS_PL_ITEM_H + TS_PL_ITEM_H / 2.0f;
+            float item = roundf(_plTapPos + ((float)_plTapY - centre) / TS_PL_ITEM_H);
+            item = _plClamp(item);
+            bool band = fabsf((float)_plTapY - centre) < TS_PL_ITEM_H / 2.0f + 2.0f;
+#ifdef YO_DEBUG
+            Serial.printf("##PL#\tдотик: список=%.2f палець=%d станція=%.0f смуга=%d\n", _plTapPos, (int)_plTapY, item, band?1:0);
+#endif
+            _plActive = false;
+            if(band && fabsf(item - _plTapPos) < 0.5f){
+              display.plScrollStop(item);         /* рівно на ній — і грати */
+              _plAction(PLB_PLAY_T);
+            }else _plAnimateTo(item);
           }
         }else if(_plActive){
+          _plPos = _plTarget;
+          _plVel = _plFlingVel();
+#ifdef YO_DEBUG
+          Serial.printf("##PL#\tвідпустили: позиція=%.2f кидок=%.2f рядків/с точок=%u\n", _plPos, _plVel, (unsigned)_plHistN);
+#endif
           if(fabsf(_plVel) < TS_PL_FLING_MIN){    /* повільно вели — дотягуємо пружиною */
             _plSnap();
           }else _plLastMs = millis();             /* пускаємо накат */
@@ -503,6 +534,8 @@ void TouchScreen::loop(){
         return;
       }
       if(display.mode()==STATIONS && _plActive){
+        _plPos = _plTarget;
+        _plVel = _plFlingVel();
         if(fabsf(_plVel) < TS_PL_FLING_MIN){      /* повільно вели — дотягуємо пружиною */
           _plSnap();
         }else _plLastMs = millis();               /* пускаємо накат */
@@ -593,6 +626,27 @@ void TouchScreen::_plAction(int8_t b){
     case PLB_BACK_T: display.putRequest(NEWMODE, PLAYER); break;
     default: break;
   }
+}
+
+/*  Швидкість кидка — за останні ~80 мс руху пальця, від найстаршої точки
+    в цьому вікні до найновішої: один нерівний крок сенсора її вже не
+    перекручує, як було з ковзним середнім.  */
+void TouchScreen::_plHist(int16_t y, uint32_t t){
+  if(_plHistN == 8){ for(uint8_t i = 0; i < 7; i++){ _plHistY[i] = _plHistY[i+1]; _plHistT[i] = _plHistT[i+1]; } _plHistN = 7; }
+  _plHistY[_plHistN] = y; _plHistT[_plHistN] = t; _plHistN++;
+}
+
+float TouchScreen::_plFlingVel(){
+  if(_plHistN < 2) return 0.0f;
+  uint32_t now = millis();
+  uint8_t last = _plHistN - 1;
+  if(now - _plHistT[last] > 60) return 0.0f;         /* палець уже стояв — кидка нема */
+  int8_t first = last;
+  while(first > 0 && _plHistT[last] - _plHistT[first - 1] <= 80) first--;
+  if(first == last) first = last - 1;
+  float dt = (_plHistT[last] - _plHistT[first]) / 1000.0f;
+  if(dt < 0.008f) return 0.0f;
+  return ((_plHistY[last] - _plHistY[first]) / (float)TS_PL_ITEM_H) / dt;
 }
 
 bool TouchScreen::_checklpdelay(int m, uint32_t &tstamp) {
