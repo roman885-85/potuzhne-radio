@@ -368,23 +368,23 @@ uint16_t FLACGetOutputSamps(){
 }
 //----------------------------------------------------------------------------------------------------------------------
 uint64_t FLACGetTotoalSamplesInStream(){
-    return FLACMetadataBlock->totalSamples;
+    return FLACMetadataBlock ? FLACMetadataBlock->totalSamples : 0;   /* декодер уже звільнено — екран питав тривалість і падав */
 }
 //----------------------------------------------------------------------------------------------------------------------
 uint8_t FLACGetBitsPerSample(){
-    return FLACMetadataBlock->bitsPerSample;
+    return FLACMetadataBlock ? FLACMetadataBlock->bitsPerSample : 0;
 }
 //----------------------------------------------------------------------------------------------------------------------
 uint8_t FLACGetChannels(){
-    return FLACMetadataBlock->numChannels;
+    return FLACMetadataBlock ? FLACMetadataBlock->numChannels : 0;
 }
 //----------------------------------------------------------------------------------------------------------------------
 uint32_t FLACGetSampRate(){
-    return FLACMetadataBlock->sampleRate;
+    return FLACMetadataBlock ? FLACMetadataBlock->sampleRate : 0;
 }
 //----------------------------------------------------------------------------------------------------------------------
 uint32_t FLACGetBitRate(){
-    if(FLACMetadataBlock->totalSamples){
+    if(FLACMetadataBlock && FLACMetadataBlock->totalSamples){
         float BitsPerSamp = (float)FLACMetadataBlock->audioDataLength / (float)FLACMetadataBlock->totalSamples * 8;
         return ((uint32_t)BitsPerSamp * FLACMetadataBlock->sampleRate);
     }

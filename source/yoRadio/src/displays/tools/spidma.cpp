@@ -5,12 +5,14 @@
 #include "hal/dma_types.h"
 #include "soc/gdma_channel.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 
 static gdma_channel_handle_t s_chan = nullptr;
 static dma_descriptor_t*     s_desc = nullptr;
 static const int   SPIDMA_DESC  = 9;          /* 9 x 4092 = 36 КБ за один захід */
 static const size_t SPIDMA_CHUNK = 4092;
 static const size_t SPIDMA_MAX   = 32768;     /* межа довжини передачі в регістрі SPI */
+static bool s_broken = false;                /* передача раз не завершилась — далі без DMA */
 
 bool spidmaBegin(){
   if(s_chan) return true;
@@ -31,7 +33,7 @@ bool spidmaBegin(){
   return true;
 }
 
-static void spidmaOnce(const uint8_t* p, size_t len){
+static bool spidmaOnce(const uint8_t* p, size_t len){
   spi_dev_t* hw = &GPSPI2;
   int n = 0; size_t left = len;
   while(left && n < SPIDMA_DESC){
@@ -62,22 +64,45 @@ static void spidmaOnce(const uint8_t* p, size_t len){
   hw->dma_int_clr.trans_done = 1;
   spi_ll_apply_config(hw);
   spi_ll_user_start(hw);
-  while(!hw->dma_int_raw.trans_done) { }
+  /*  Чекаємо кінця передачі, але не вічно. Раніше тут був порожній цикл без
+      межі: при швидкій прокрутці довгого списку «кінець» одного разу не
+      прийшов, задача екрана стала, і сторож задач перезавантажував радіо.
+      Кадр на 36 КБ при 40 МГц — 7 мс; 300 мс — уже точно збій.  */
+  int64_t t0 = esp_timer_get_time();
+  /*  Поки кадр іде шиною (40 МГц: 36 КБ — 7 мс), не крутимось упусту, а спимо:
+      на тому ж ядрі мікрофон і Wi-Fi, і порожнє очікування забирало в них час.  */
+  uint32_t ms = (uint32_t)(len * 8 / 40000);
+  if(ms >= 3) vTaskDelay(pdMS_TO_TICKS(ms - 1));
+  bool done = true;
+  while(!hw->dma_int_raw.trans_done){
+    if(esp_timer_get_time() - t0 > 300000){ done = false; break; }
+  }
+  if(!done){
+    Serial.printf("##DSP#\tDMA: передача %u байт не завершилась (usr=%u raw=0x%08x) — далі без DMA\n",
+                  (unsigned)len, (unsigned)hw->cmd.usr, (unsigned)hw->dma_int_raw.val);
+    gdma_stop(s_chan);
+    gdma_reset(s_chan);
+  }
   hw->dma_int_clr.trans_done = 1;
   spi_ll_dma_tx_enable(hw, false);
   hw->user.val = userSave;
+  return done;
 }
 
-void spidmaWrite(const void* buf, size_t len){
-  if(!s_chan || !buf || !len) return;
+bool spidmaOk(){ return s_chan && !s_broken; }
+
+bool spidmaWrite(const void* buf, size_t len){
+  if(!s_chan || s_broken || !buf || !len) return false;
   const uint8_t* p = (const uint8_t*)buf;
   while(len){                                    /* довше за межу — кількома заходами */
     size_t c = len > SPIDMA_MAX ? SPIDMA_MAX : len;
-    spidmaOnce(p, c);
+    if(!spidmaOnce(p, c)){ s_broken = true; return false; }
     p += c; len -= c;
   }
+  return true;
 }
 #else
 bool spidmaBegin(){ return false; }
-void spidmaWrite(const void* buf, size_t len){ (void)buf; (void)len; }
+bool spidmaOk(){ return false; }
+bool spidmaWrite(const void* buf, size_t len){ (void)buf; (void)len; return false; }
 #endif

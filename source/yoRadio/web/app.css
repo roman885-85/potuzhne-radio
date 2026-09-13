@@ -299,3 +299,22 @@ code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:#1c1c1c;bo
 .voice-ov b{display:block;font-size:16px}
 .voice-ov small{display:block;color:var(--dim);font-size:12px;margin-top:3px}
 .voice-dot{flex:none;width:12px;height:12px;border-radius:50%;background:var(--acc);animation:vpulse 1s ease-in-out infinite}
+.voice-ov a.voice-all{display:inline-block;margin-top:5px;font-size:12px;color:var(--acc)}
+/* ---------- голосові команди: інструкція ---------- */
+.vh-lead{margin:0 0 10px;font-size:15px;line-height:1.5}
+.vh-mic{display:inline-flex;vertical-align:middle;width:26px;height:26px;border:1px solid var(--line2);border-radius:50%;align-items:center;justify-content:center;color:var(--acc);background:var(--pan2)}
+.vh-mic svg{width:15px;height:15px}
+.vh-list{margin:0;padding-left:18px;color:var(--dim);font-size:13px;line-height:1.55}
+.vh-list li+li{margin-top:6px}
+.vh-grp{padding:12px 0;border-top:1px solid var(--line)}
+.card>h2+.vh-grp{border-top:0;padding-top:0}
+.vh-grp h3{margin:0 0 8px;font-size:15px;font-weight:650}
+.vh-item{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:4px 16px;align-items:baseline;padding:5px 0}
+.vh-say{display:flex;flex-wrap:wrap;gap:6px}
+.vh-chip{border:1px solid var(--line2);background:var(--pan2);color:var(--txt);border-radius:999px;padding:4px 11px;font-size:13px;cursor:pointer;text-align:left}
+.vh-chip:hover{border-color:var(--acc);color:var(--acc)}
+.vh-what{color:var(--dim);font-size:13px}
+.vh-try{display:flex;gap:8px;align-items:center}
+.vh-try input{flex:1;min-width:0}
+.vh-out.bad{color:var(--bad)}
+@media (max-width:560px){.vh-item{grid-template-columns:1fr}.vh-try{flex-wrap:wrap}.vh-try input{flex-basis:100%}}

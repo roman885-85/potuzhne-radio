@@ -10,6 +10,9 @@
 #include <Arduino.h>
 
 bool spidmaBegin();                               /* один раз; false — DMA недоступний */
-void spidmaWrite(const void* buf, size_t len);    /* буфер у внутрішній пам'яті, байти вже в порядку дисплея */
+/*  Буфер у внутрішній пам'яті, байти вже в порядку дисплея. false — не вийшло
+    (DMA зламався чи вимкнений): тоді ці ж пікселі треба вивести звичайним шляхом.  */
+bool spidmaWrite(const void* buf, size_t len);
+bool spidmaOk();                                  /* DMA досі працює */
 
 #endif

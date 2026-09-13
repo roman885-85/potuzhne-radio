@@ -28,8 +28,14 @@ struct PotuzhneRadioApp: App {
                 Button("Знайти інше радіо") { model.search() }.keyboardShortcut("k")
                 Button("Оновити сторінку") { model.reload() }.keyboardShortcut("r")
                     .disabled(model.current == nil)
+                Button("Голосові команди") { model.showVoiceHelp() }
+                    .disabled(model.current == nil)
                 Divider()
                 Button("Відкрити в браузері") { model.openInBrowser() }
+                    .disabled(model.current == nil)
+            }
+            CommandGroup(replacing: .help) {
+                Button("Голосові команди") { model.showVoiceHelp() }
                     .disabled(model.current == nil)
             }
         }
@@ -120,6 +126,8 @@ final class AppModel: ObservableObject {
     }
 
     func reload() { web?.reload() }
+    /// Інструкція з голосових команд — розділ самої сторінки радіо.
+    func showVoiceHelp() { web?.evaluateJavaScript("location.hash = '#/voice'", completionHandler: nil) }
     func openInBrowser() { if let r = current, let u = URL(string: "http://\(r.ip)/") { NSWorkspace.shared.open(u) } }
 
     func show(notice text: String) {

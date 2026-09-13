@@ -850,17 +850,28 @@ public class MainActivity extends Activity {
         Radio r = current;
         new AlertDialog.Builder(this)
                 .setTitle(r.subtitle())
-                .setItems(new String[]{"Знайти інше радіо", "Оновити", "Відкрити в браузері"}, (d, which) -> {
+                .setItems(new String[]{"Голосові команди", "Знайти інше радіо", "Оновити", "Відкрити в браузері"}, (d, which) -> {
                     if (current != r) return;
                     if (which == 0) {
-                        startSearch(false, null);
+                        showVoiceHelp();
                     } else if (which == 1) {
+                        startSearch(false, null);
+                    } else if (which == 2) {
                         reload();
                     } else {
                         openInBrowser(r);
                     }
                 })
                 .show();
+    }
+
+    /**
+     * Інструкція з голосових команд — розділ самої сторінки радіо: там і
+     * приклади, і перевірка фрази, однакові для всіх програм.
+     */
+    private void showVoiceHelp() {
+        if (web == null || current == null) return;
+        web.evaluateJavascript("location.hash = '#/voice'", null);
     }
 
     /**

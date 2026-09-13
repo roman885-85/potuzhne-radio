@@ -1460,8 +1460,8 @@ void PlayListWidget::drawSmooth(float pos){
     const uint16_t* src = _row + (size_t)(y0 - y) * PL_LIST_W;
     size_t n = (size_t)(y1 - y0) * PL_LIST_W;
     dsp.setAddrWindow(PL_X0, y0, PL_LIST_W, y1 - y0);
-    if(dmaOk) spidmaWrite(src, n * 2);
-    else      dsp.writePixels((uint16_t*)src, n, true, true);   /* запасний шлях: байти вже переставлені */
+    if(!(dmaOk && spidmaWrite(src, n * 2)))
+      dsp.writePixels((uint16_t*)src, n, true, true);   /* запасний шлях: байти вже переставлені */
     tB += micros() - tb;
   }
   dsp.endWrite();
@@ -1587,8 +1587,8 @@ void plGenericDraw(float pos, int count, const char* (*nameAt)(int), int16_t shi
     const uint16_t* src = row + (size_t)(y0 - y) * PL_LIST_W;
     size_t n = (size_t)(y1 - y0) * PL_LIST_W;
     dsp.setAddrWindow(PL_X0, y0, PL_LIST_W, y1 - y0);
-    if(dmaOk) spidmaWrite(src, n * 2);
-    else      dsp.writePixels((uint16_t*)src, n, true, true);
+    if(!(dmaOk && spidmaWrite(src, n * 2)))
+      dsp.writePixels((uint16_t*)src, n, true, true);
   }
   dsp.endWrite();
   _rowCanvas.setSwap(false);
