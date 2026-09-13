@@ -108,7 +108,14 @@ class YoMic {
     volatile uint8_t _heard = MG_NONE;
     volatile uint32_t _heardMs = 0, _lastRoom = 0;
     float    _refDb = -90, _excess = 0, _couple = 0, _bgDb = -80;
-    uint32_t _foreignMs = 0, _foreignCand = 0;
+    /*  Сторонні гучні удари поруч із серією — з рівнем: тихе відлуння й клацання
+        підсилювача після хлопків не мають гасити жест, а барабани й склади
+        такої ж гучності — мають.  */
+    struct Foreign { uint32_t t; int8_t lvl; };
+    Foreign  _fg[8] = {};
+    uint8_t  _fgPos = 0;
+    uint32_t _fgCandT = 0;
+    int8_t   _fgCandLvl = -127;
     struct HitBlk { uint32_t t; float val, thr, lo, hi, centre, en, exLo, exHi, excess; int8_t lvl; bool loud, ref; float frac; };
     HitBlk   _hp[3] = {};                         /* удар, що чекає ще двох блоків */
     uint8_t  _hpN = 0, _hpPre = 0, _hpVad = 0;    /* скільки зібрано; що звучало перед ним */

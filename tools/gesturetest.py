@@ -76,6 +76,9 @@ def api(path):
             time.sleep(1.0)
 before = api("/api/state")                      # що було до перевірки — поверну наприкінці
 p.ask("micon 1", wait=0.5)
+# Імітація йде через ЦАП радіо, а його гучність — гучність власника: на 14 з 254
+# хлопок із динаміка тихіший за відлуння, і перевірка міряла б не те.
+p.ask("vol 150", wait=0.5)
 p.ask("micset 1 1 0", wait=0.5)
 p.ask("micdbg 1", wait=0.5)
 drain(4.0)                                      # мікрофон прогрівся: фон і поріг устоялись
@@ -90,6 +93,7 @@ res.append(music(int(os.environ.get("MUSIC", "60"))))
 stop_player()
 p.ask("micdbg 0", wait=0.5)
 if before:
+    p.ask(f"vol {before['vol']}", wait=0.5)
     m = before["mic"]
     p.ask(f"micset {m['clapOn']} {m['knockOn']} {m['play']}", wait=0.5)
     if not m["on"]: p.ask("micon 0", wait=0.5)
