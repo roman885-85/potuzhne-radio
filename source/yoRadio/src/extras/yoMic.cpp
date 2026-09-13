@@ -11,6 +11,9 @@
 #include "../ES8311/yoES8311.h"
 #include "yoExtras.h"
 #include "yoDsp.h"
+#include "../core/network.h"
+#include "../core/config.h"
+#include "../menu/yoMenu.h"          /* він і вмикає USE_YOMENU */
 
 YoMic mic;
 
@@ -49,6 +52,13 @@ static float*   fftRef = nullptr;      /* те саме для опорного 
 static float*   win = nullptr;
 static float*   mag1 = nullptr, *ph1 = nullptr, *ph2 = nullptr;   /* у PSRAM */
 static float    onMu = 0, onDev = 0;
+static int8_t onLvl[4] = {0};         /* рівні цих ударів — для журналу */
+/*  Що було перед ударом: мова (по кадру WebRTC VAD на 30 мс, 1 — мова) і
+    гучність блоків (≈ 0,5 с) разом із фоном того часу.  */
+static uint32_t vadRing = 0;
+static int8_t   lvlRing[16] = {0}, nzRing[16] = {0};
+static uint32_t btRing[16] = {0};
+static uint8_t  lvlPos = 0;
 static uint32_t onT[4] = {0};          /* часи останніх ударів одного виду */
 static uint8_t  onKind[4] = {0};       /* 1 хлопок, 2 стук */
 static uint8_t  onN = 0;
@@ -182,6 +192,7 @@ int16_t YoMic::_fir(uint8_t ch, int16_t x){
 /*  Блок від мікрофона: якщо грає звук і треба чути кімнату — віднімаємо луну
     власного динаміка (esp_aec за опорним сигналом із кодека).  */
 void YoMic::_feed(int16_t* x, int16_t* ref){
+  if(_exKind) _extMix(x);
   bool playing = player.isRunning();
   bool want = extras.s.micPlay;
   _aecOn = playing && want;
@@ -222,8 +233,11 @@ void YoMic::_block(int16_t* x, int16_t* ref, bool playing){
   _blocks++;
   float mdb = blockDb(x);
   int db = (int)lroundf(mdb);
+  _prevLvl = _lvl;
   _lvl = (int8_t)db;
-  if(_dbg && _tsKind) Serial.printf("##LVL#\t%u %d поз=%u\n", (unsigned)now, db, (unsigned)_tsPos);
+  lvlRing[lvlPos] = (int8_t)db; nzRing[lvlPos] = _noise;
+  btRing[lvlPos] = (uint32_t)((uint64_t)_blocks * BLK * 1000 / MIC_FS); lvlPos = (lvlPos + 1) & 15;
+  if(_dbg && (_tsKind || _exKind)) Serial.printf("##LVL#\t%u %d поз=%u\n", (unsigned)now, db, (unsigned)_tsPos);
   /*  фон: униз одразу, вгору ледь-ледь — кроки й голос його не піднімають  */
   if(db < _noise) _noise = (int8_t)db;
   else if((_blocks & 15) == 0 && _noise < -20) _noise++;
@@ -233,9 +247,13 @@ void YoMic::_block(int16_t* x, int16_t* ref, bool playing){
         і музика, що завжди гучніша, його так і не зрушувала (-68 дБ при
         музиці на -28). Тепер тло йде й за стійкою гучністю, а короткий удар
         може підняти його не більше ніж на 10 дБ за блок.  */
+    /*  А ще раніше (музика) — піднімалось від самих хлопків: два-три хлопки —
+        і тло +10 дБ, наступні вже «тихо». Тепер два темпи: близьке до тла
+        (±6 дБ) — звичайно, гучніше — ледь-ледь: музика, що звучить секундами,
+        тло доганяє, а хлопок за 30 мс його майже не рухає.  */
     float pw = pow(10.0f, mdb / 10.0f), bg = pow(10.0f, _bgDb / 10.0f);
-    if(pw > bg * 10.0f) pw = bg * 10.0f;
-    bg += (pw - bg) * 0.03f;
+    if(mdb <= _bgDb + 6.0f) bg += (pw - bg) * 0.03f;
+    else { if(pw > bg * 10.0f) pw = bg * 10.0f; bg += (pw - bg) * 0.004f; }
     _bgDb = bg > 1e-10f ? 10.0f * log10(bg) : -100.0f;
   }
 
@@ -245,6 +263,7 @@ void YoMic::_block(int16_t* x, int16_t* ref, bool playing){
       звук кімнати: голос, кроки, хлопок. Так уміє будь-який детектор
       «двобічної розмови» в гучному зв'язку.  */
   float rdb = playing ? blockDb(ref) : -90.0f;
+  if(!playing){ _cNLo = 0; _cNHi = 0; }                 /* звук зупинили — наступного разу вчимось наново */
   _refDb = rdb;
   if(rdb > -60.0f){
     float r = mdb - rdb;
@@ -273,6 +292,7 @@ void YoMic::_block(int16_t* x, int16_t* ref, bool playing){
     if(vadFill == VADN){
       vadFill = 0;
       bool sp = vad && vad_process(vad, vadBuf, MIC_FS, 30) == VAD_SPEECH && db > _noise + 6 && (!own || _excess > 6.0f);
+      vadRing = (vadRing << 1) | (sp ? 1U : 0U);
       vadRun = sp ? (vadRun < 255 ? vadRun + 1 : 255) : 0;
       _speech = vadRun >= 4;                       /* ~120 мс поспіль — не клацання, а голос */
       if(_speech){
@@ -281,8 +301,19 @@ void YoMic::_block(int16_t* x, int16_t* ref, bool playing){
       }
     }
   }
-  _onset(x, own ? ref : nullptr, now);
-  _pattern(now);
+  /*  Час ударів — за номером блоку, тобто за моментом запису звуку, а не
+      обробки: задача мікрофона ділить ядро з Wi-Fi, і millis() між блоками
+      гуляє на ±30 мс, а відлуння (190 мс) від межі «зарано» (220 мс)
+      відділяють лічені десятки.  */
+  uint32_t bt = (uint32_t)((uint64_t)_blocks * BLK * 1000 / MIC_FS);
+  /*  Звук щойно ввімкнули чи вимкнули — підсилювач прокидається (~0,4 с) чи
+      клацає, а співвідношення «динамік — мікрофон» ще не те: удари цих
+      миттєвостей не рахуємо. Інакше хлопки, що ввімкнули радіо, ловили
+      його ж перший такт як новий удар.  */
+  if(playing != _wasPlaying){ _wasPlaying = playing; _edgeBt = bt + (playing ? 1200 : 400); }
+  _quietEdge = bt < _edgeBt;
+  _onset(x, own ? ref : nullptr, bt);
+  _pattern(bt);
 }
 
 /*  Удари: «complex domain» — наскільки спектр цього блоку не схожий на
@@ -295,7 +326,7 @@ void YoMic::_onset(int16_t* x, int16_t* ref, uint32_t now){
   dsps_fft2r_fc32(fftBuf, BLK);
   dsps_bit_rev_fc32(fftBuf, BLK);
   float val = 0, lo = 0, hi = 0;
-  double cenN = 0, cenD = 0;
+  double cenN = 0, cenD = 0, tot = 0;
   for(int b = 1; b < BLK/2; b++){
     float re = fftBuf[2*b], im = fftBuf[2*b+1];
     float m = sqrt(re*re + im*im);
@@ -308,9 +339,16 @@ void YoMic::_onset(int16_t* x, int16_t* ref, uint32_t now){
     if(b >= 2 && b <= 48)   lo += m * m;         /* ~60..1500 Гц: стук по корпусу */
     if(b >= 64 && b <= 224) hi += m * m;         /* ~2..7 кГц: хлопок */
     if(b >= 2 && b <= 224){ cenN += (double)b * m * m; cenD += (double)m * m; }
+    tot += (double)m * m;                        /* весь спектр від 31 Гц — щоб бачити гул нижче смуги удару */
     mag1[b] = m; ph2[b] = ph1[b]; ph1[b] = p;
   }
   _onLast = val;
+  /*  Гучний неприйнятий удар стає «чужим поруч» лише за блок: хлопок, що
+      почався в самому кінці блоку, у спектрі цього блоку ще не видно
+      (вікно Ганна його гасить), а гучність уже підскочила — і перша
+      половина власного хлопка відкидала всю серію. Удар прийняли в межах
+      130 мс — це той самий удар.  */
+  if(_foreignCand && now - _foreignCand > 130){ _foreignMs = _foreignCand; _foreignCand = 0; }
   /*  Свій звук — по смугах. Радіо знає, що грає (правий слот — вихід ЦАП):
       той самий спектр рахуємо й для нього, а співвідношення «динамік →
       мікрофон» вчимо окремо для низу й верху. Удар мусить вибиватися над
@@ -326,19 +364,26 @@ void YoMic::_onset(int16_t* x, int16_t* ref, uint32_t now){
       if(b <= 48) rlo += e2;
       if(b >= 64) rhi += e2;
     }
+    /*  Кожна смуга вчиться окремо й лише там, де свій звук справді є (у
+        станції без верхів верх так і не вивчиться — і не треба: удару там
+        немає з чим плутатись). Раніше вчились лише обидві разом, а на
+        кожному тихому місці пісні навчання скидалось — і поки воно
+        тривало, відкидалось усе: хлопки під музику не проходили зовсім.  */
+    const float E_MIN = 1e-9f;
     float dLo = 10.0f * log10f((lo + 1e-12f) / (rlo + 1e-12f));
     float dHi = 10.0f * log10f((hi + 1e-12f) / (rhi + 1e-12f));
-    if(rlo > 1e-9f) exLo = dLo - _cLo;
-    if(rhi > 1e-9f) exHi = dHi - _cHi;
-    bool quietRoom = !(onN && now - onT[onN-1] < 300) && exLo < 6 && exHi < 6;
-    if(_cN < 40){
-      if(rlo > 1e-9f && rhi > 1e-9f){ _cLo += (dLo - _cLo) / (_cN + 1); _cHi += (dHi - _cHi) / (_cN + 1); _cN++; }
-      exLo = exHi = -99;                                     /* ще не вивчили — нічого не приймаємо */
-    }else if(quietRoom){
-      if(rlo > 1e-9f) _cLo += (dLo - _cLo) * 0.03f;
-      if(rhi > 1e-9f) _cHi += (dHi - _cHi) * 0.03f;
+    bool calm = !(onN && now - onT[onN-1] < 300);
+    if(rlo > E_MIN){
+      if(_cNLo < 20){ _cLo += (dLo - _cLo) / (_cNLo + 1); _cNLo++; }
+      else if(calm && dLo - _cLo < 6) _cLo += (dLo - _cLo) * 0.03f;
+      exLo = _cNLo >= 20 ? dLo - _cLo : -99;
     }
-  }else _cN = 0;
+    if(rhi > E_MIN){
+      if(_cNHi < 20){ _cHi += (dHi - _cHi) / (_cNHi + 1); _cNHi++; }
+      else if(calm && dHi - _cHi < 6) _cHi += (dHi - _cHi) * 0.03f;
+      exHi = _cNHi >= 20 ? dHi - _cHi : -99;
+    }
+  }
   /*  Поріг підлаштовується під кімнату: середнє й розкид звичайного фону.
       Удар займає два-три блоки (32 мс кожен) — у статистику фону не йде
       ні сам удар, ні 150 мс після нього: інакше хвіст першого хлопка
@@ -348,39 +393,133 @@ void YoMic::_onset(int16_t* x, int16_t* ref, uint32_t now){
   float k = sens == 1 ? 7.0f : sens == 2 ? 3.0f : 4.5f;   /* низька / висока / середня */
   float thr = onMu + k * onDev;
   bool outlier = onDev > 0 && val > thr;
-  bool recent = onN && now - onT[onN-1] < 150;
-  if(!outlier && !recent){
-    float r = val < onMu ? 0.12f : 0.03f;
-    onMu  += (val - onMu) * r;
-    onDev += (fabs(val - onMu) - onDev) * 0.03f;
+  bool recent = onN && now - onT[onN-1] < 250;
+  /*  Статистика фону вчиться завжди: звичайне — звично, «викид» — повільно
+      й обрізаним. Раніше викиди не вчились зовсім, і поріг, вивчений у тиші
+      (0,11), так і лишався, коли фон став більшим (2,5–3,5): кожен блок був
+      «викидом», і поріг більше не рухався.  */
+  if(!recent){
+    float vc = outlier ? thr : val;
+    float r = !outlier ? (val < onMu ? 0.12f : 0.03f) : 0.01f;
+    onMu  += (vc - onMu) * r;
+    onDev += (fabs(vc - onMu) - onDev) * (outlier ? 0.01f : 0.03f);
   }
-  if(!outlier) return;
-  /*  Удар — лише справжній: на 15 дБ гучніший за фон кімнати, на 10 дБ — за
-      середній рівень останніх двох секунд (поверх музыки з чужих колонок
-      плескати треба помітно гучніше за неї) і не тихіший за −62 дБ.  */
-  bool loud = _lvl > _noise + 15 && _lvl > _bgDb + 10.0f && _lvl > -62 && val > 2.0f;
-  bool apart = onN == 0 || now - onT[onN-1] > 100;          /* не частіше ніж раз на 100 мс */
-  /*  Вид — за «центром ваги» спектра удару: хлопок у долоні зосереджений
-      вище ~1 кГц, стук по корпусу — нижче. Співвідношення двох смуг
-      залежало від того, як стоїть динамік і що він пропускає.  */
+  /*  Удар — або різка зміна спектра, або стрибок гучності на 10 дБ за 32 мс
+      (хлопок здалеку в залі дає малу зміну спектра, але чіткий стрибок).  */
+  bool jump = (int)_lvl - (int)_prevLvl >= (sens == 1 ? 14 : sens == 2 ? 7 : 10);
+  /*  Досить гучний: на 12 дБ над фоном кімнати і на 8 дБ над тлом останніх
+      секунд, не тихіший за −62 дБ. Виміряно на хлопках у залі: −34…−51 дБ
+      при фоні −56…−63.  */
+  bool loud = _lvl > _noise + (sens == 1 ? 16 : sens == 2 ? 9 : 12) && _lvl > _bgDb + 8.0f && _lvl > -62;
+  /*  Вид — за «центром ваги» спектра удару: хлопок у долоні — близько
+      1–2,5 кГц, стук по корпусу чи столу — сотні герц.  */
   float centre = cenD > 0 ? (float)(cenN / cenD) * MIC_FS / BLK : 0;
-  uint8_t kind = centre > 1100.0f ? 1 : 2;
+  HitBlk cur = { now, val, thr, lo, hi, centre, (float)cenD, exLo, exHi, _excess, _lvl, loud, ref != nullptr,
+                 tot > 0 ? (float)(cenD / tot) : 0 };
+  /*  Удар оцінюємо за трьома блоками поспіль. Почався в самому кінці блоку —
+      гучність уже стрибнула, а спектр іще порожній (вікно Ганна гасить
+      краї): вид визначався за тишею. Живий хлопок власника розтягнувся на три
+      блоки, і тіло удару в третьому вже було «зарано». Тепер перший блок
+      чекає двох наступних, а вид і «своє» беремо з того, де енергії удару
+      найбільше.  */
+  if(_hpN && now - _hp[0].t > 130) _hpN = 0;
+  if(!_hpN){
+    if(!outlier && !jump) return;
+    _hp[0] = cur; _hpN = 1;
+    /*  Що звучало перед ним: гучні блоки за ≈290 мс (9 блоків до цього) і
+        кадри мови за ≈480 мс (16 кадрів, без останнього — там сам удар).  */
+    /*  Хвіст і відлуння попереднього прийнятого удару (260 мс) — не «кімната
+        звучала»: інакше другий хлопок серії відкидався б через перший.  */
+    uint32_t last = onN ? onT[onN-1] : 0;
+    auto afterHit = [&](uint32_t bt){ return onN && bt >= last && bt - last < 260; };
+    uint8_t pre = 0;
+    for(uint8_t i = 2; i <= 10; i++){
+      uint8_t k = (lvlPos + 16 - i) & 15;
+      if(lvlRing[k] > nzRing[k] + 10 && !afterHit(btRing[k])) pre++;
+    }
+    _hpPre = pre;
+    uint8_t v = 0;
+    for(uint8_t j = 1; j <= 16; j++){
+      uint32_t age = j * 30;
+      if(((vadRing >> j) & 1U) && !(now >= age && afterHit(now - age))) v++;
+    }
+    _hpVad = v;
+    return;
+  }
+  _hp[_hpN++] = cur;
+  if(_hpN < 3) return;
+  _hpN = 0;
+  /*  Наступний блок беремо, лише коли удар справді там (утричі більше енергії):
+      інакше — перший. У стуку з маленького динаміка другий блок повний
+      призвуків, і за ним стук «ставав» хлопком.  */
+  uint8_t bi = 0;
+  for(uint8_t i = 1; i < 3; i++) if(_hp[i].en > _hp[bi].en) bi = i;
+  if(bi && _hp[bi].en <= _hp[0].en * 3.0f) bi = 0;
+  const HitBlk& b = _hp[bi];
+  uint32_t t = _hp[0].t;
+  loud = _hp[0].loud || _hp[1].loud || _hp[2].loud;
+  int8_t lvl = _hp[0].lvl;
+  for(uint8_t i = 1; i < 3; i++) if(_hp[i].lvl > lvl) lvl = _hp[i].lvl;
+  /*  Мова — не хлопок. Склади розмови дають такі самі стрибки гучності, і
+      розмова в кімнаті вмикала зупинене радіо («2 хлопки», «2 стуки»). Але
+      в складі майже немає верхів: 2–7 кГц до низу 0,003–0,04, а в живому
+      хлопку власника — від 0,077 (у записах 0,18–3,4). Стук по корпусу може
+      бути й без верхів, тоді він мусить бути різким: сила зміни спектра хоч
+      удвічі над порогом (у складах — 0,6–1,5 порога).  */
+  /*  Верхи й різкість — за всіма трьома блоками удару разом: у стуку клацання
+      часто в одному блоці, а низьке тіло в іншому, і за одним блоком стук
+      виглядав як склад без верхів.  */
+  float sLo = 0, sHi = 0, vMax = 0;
+  for(uint8_t i = 0; i < 3; i++){ sLo += _hp[i].lo; sHi += _hp[i].hi; if(_hp[i].val > vMax) vMax = _hp[i].val; }
+  float hl = sLo > 1e-6f ? sHi / sLo : 99.0f;
+  float vRel = _hp[0].thr > 1e-6f ? vMax / _hp[0].thr : 99.0f;
+  bool sharp = vRel >= 2.0f;
+  /*  Стук без помітних верхів пропускаємо лише різкий (2,5 порога) і з
+      клацанням (верхи хоч 0,03 низу): склади, що проходили як «стук», мали
+      0,002–0,025 і 2–3 порога — два такі за 288 мс ледь не стали жестом.  */
+  bool crisp = hl >= 0.08f || (b.centre <= 650.0f && ((hl >= 0.03f && vRel >= 2.5f) || vRel >= 6.0f));
+  /*  У тиші (радіо мовчить) удар ще й мусить бути різким: вибухові приголосні
+      («п», «т», «к») мають верхи, але зміна спектра в них слабка — 1,0–2,9
+      порога проти десятків у хлопку. Під музикою різкість не питаємо: там
+      хлопок ловить стрибок гучності, а мову відсікає «своє».  */
+  if(!b.ref && !sharp) crisp = false;
+  bool speech = !crisp;
+  /*  не частіше ніж раз на 220 мс: у залі за хлопком ідуть відлуння через
+      150–200 мс, а хлопати швидше за ~4 рази на секунду людина не встигає  */
+  bool apart = onN == 0 || t - onT[onN-1] > 220;
+  uint8_t kind = b.centre > 650.0f ? 1 : 2;
+  /*  Гул — не стук. Кроки, посунутий стіл, поштовх корпусу дають глухий удар
+      з центром спектра 70–150 Гц: гучність стрибає, а в смузі удару енергії
+      майже нема. Саме такі два «стуки» вмикали зупинене радіо. Справжній стук
+      по столу чи корпусу — 250–600 Гц, хлопок — вище 650 Гц.  */
+  /*  Друга ознака гулу — енергія лежить нижче смуги удару: у стуку й хлопку в
+      смузі 60 Гц–7 кГц більша частина спектра (виміряно 0,47–1,0), у гулі
+      кімнати 0,13–0,15, навіть коли центр спектра вище 180 Гц.  */
+  bool rumble = b.centre < 180.0f || b.frac < 0.35f;
   /*  удар у пісні радіо — не команда. У низу поріг вищий: на великій гучності
       маленький динамік спотворює бас, і цих спотворень в опорному сигналі немає  */
-  bool notOwn = !ref || (kind == 1 ? exHi > 10.0f : exLo > 12.0f);
-  if(kind == 1 && !clapOn) kind = 0;
-  if(kind == 2 && !knockOn) kind = 0;
-  bool accept = loud && notOwn && apart && kind;
-  if(_dbg) Serial.printf("##ONSET#\t%u центр=%.0fГц val=%.2f поріг=%.2f низ=%.2f верх=%.2f рівень=%d фон=%d тло=%.0f понад=%.0f/%.0f вид=%u %s%s%s%s\n",
-                         (unsigned)now, centre, val, thr, lo, hi, (int)_lvl, (int)_noise, _bgDb, exLo, exHi, kind,
-                         loud ? "" : "тихо ", notOwn ? "" : "своє ", apart ? "" : "зарано ", accept ? "УДАР" : "");
+  float exBand = kind == 1 ? b.exHi : b.exLo;      /* 99 — свого звуку в цій смузі немає */
+  float excess = _hp[0].excess;
+  for(uint8_t i = 1; i < 3; i++) if(_hp[i].excess > excess) excess = _hp[i].excess;
+  bool notOwn = !b.ref || exBand >= 99.0f
+             || (exBand > -99.0f ? exBand > (kind == 1 ? 10.0f : 12.0f)
+                                 : excess > 10.0f);       /* смуга ще не вивчена — за загальним рівнем */
+  /*  увімкнено лише одне — удар іншого виду теж рахуємо: центр спектра
+      у залі гуляє, а людина знає, що плескає  */
+  if(kind == 1 && !clapOn) kind = knockOn ? 2 : 0;
+  if(kind == 2 && !knockOn) kind = clapOn ? 1 : 0;
+  bool accept = loud && notOwn && apart && kind && !_quietEdge && !rumble && !speech;
+  if(_dbg) Serial.printf("##ONSET#\t%u центр=%.0fГц val=%.2f поріг=%.2f низ=%.2f верх=%.2f доля=%.2f в/н=%.3f перед=%u рівень=%d фон=%d тло=%.0f понад=%.0f/%.0f вид=%u блок=%u %s%s%s%s%s%s\n",
+                         (unsigned)t, b.centre, b.val, b.thr, b.lo, b.hi, b.frac, hl, (unsigned)_hpPre, (int)lvl, (int)_noise, _bgDb, b.exLo, b.exHi, kind, (unsigned)(bi + 1),
+                         loud ? "" : "тихо ", notOwn ? "" : "своє ", apart ? "" : "зарано ", rumble ? "гул " : "", speech ? "мова " : "", _quietEdge ? "звук вмикається " : accept ? "УДАР" : "");
   if(accept){
-    if(onN == 4){ for(int i = 0; i < 3; i++){ onT[i] = onT[i+1]; onKind[i] = onKind[i+1]; } onN = 3; }
-    onT[onN] = now; onKind[onN] = kind; onN++;
-  }else if(loud && !(onN && now - onT[onN-1] < 150)){
+    if(onN == 4){ for(int i = 0; i < 3; i++){ onT[i] = onT[i+1]; onKind[i] = onKind[i+1]; onLvl[i] = onLvl[i+1]; } onN = 3; }
+    onT[onN] = t; onKind[onN] = kind; onLvl[onN] = lvl; onN++;
+    if(_foreignCand && t - _foreignCand < 130) _foreignCand = 0;
+  }else if(loud && !_quietEdge && !(onN && t - onT[onN-1] < 250)){
     /*  гучний удар, що не пішов у жест (чужий, свій чи іншого виду), — жест
         навколо нього вже не жест: так ударні в музиці не стають командами  */
-    _foreignMs = now;
+    if(!_foreignCand) _foreignCand = t;
   }
 }
 
@@ -388,7 +527,7 @@ void YoMic::_onset(int16_t* x, int16_t* ref, uint32_t now){
     рівний крок (розбіжність до 0,1 с). Рішення — через 0,5 с тиші після
     останнього удару, щоб дві й три не плутались.  */
 void YoMic::_pattern(uint32_t now){
-  if(!onN || now - onT[onN-1] < 500) return;
+  if(!onN || now - onT[onN-1] < 850) return;          /* рішення — коли 0,85 с нових ударів нема */
   /*  Жест — окрема серія: за 0,8 с до першого удару й аж до рішення жодного
       стороннього гучного удару. Ритм барабанів цього не витримує.  */
   uint32_t first = onT[0];
@@ -397,21 +536,37 @@ void YoMic::_pattern(uint32_t now){
     onN = 0;
     return;
   }
-  uint8_t kind = onKind[onN-1];
-  uint8_t cnt = 1;
+  /*  Серія — удари з проміжками до 0,8 с (виміряно: люди плескають із
+      кроком 0,3–0,8 с). Вид серії — за більшістю ударів: у залі центр
+      спектра хлопка гуляє, і «хлопок, стук» не має рвати жест.  */
+  uint8_t cnt = 1, claps = onKind[onN-1] == 1, knocks = onKind[onN-1] == 2;
   for(int i = onN - 1; i > 0; i--){
-    if(onKind[i-1] != kind || onT[i] - onT[i-1] > 450) break;
+    if(onT[i] - onT[i-1] > 780) break;                 /* час — у блоках по 32 мс: 768 ще серія, 800 — ні */
     cnt++;
+    if(onKind[i-1] == 1) claps++; else knocks++;
   }
+  uint8_t kind = claps >= knocks ? 1 : 2;
+  if(kind == 1 && !extras.s.clapOn) kind = 2;
+  if(kind == 2 && !extras.s.knockOn) kind = 1;
   if(cnt >= 3){
+    /*  трійка — з рівним кроком: розбіжність до 40 % кроку  */
     uint32_t d1 = onT[onN-1] - onT[onN-2], d2 = onT[onN-2] - onT[onN-3];
-    if((d1 > d2 ? d1 - d2 : d2 - d1) > 100) cnt = 2;
+    uint32_t dm = d1 > d2 ? d1 : d2;
+    if((d1 > d2 ? d1 - d2 : d2 - d1) * 10 > dm * 4) cnt = 2;
   }
   uint8_t g = MG_NONE;
   if(cnt == 2) g = kind == 1 ? MG_CLAP2 : MG_KNOCK2;
   else if(cnt >= 3) g = kind == 1 ? MG_CLAP3 : MG_KNOCK3;
   if(_dbg) Serial.printf("##ONSET#\tрішення: %u удари виду %u -> жест %u\n", (unsigned)cnt, (unsigned)kind, (unsigned)g);
-  if(g){ _gesture = g; _heard = g; _heardMs = now; }
+  /*  Чим була серія — завжди, не лише з відладкою: інакше «само ввімкнулось»
+      нема з чого розбирати (хлопок це був чи стук дверей).  */
+  if(g){
+    int w = 0;
+    for(int i = onN - cnt; i < onN && w < (int)sizeof(_lastSeries) - 24; i++)
+      w += snprintf(_lastSeries + w, sizeof(_lastSeries) - w, "%s%s %d дБ %u мс", i > onN - cnt ? ", " : "",
+                    onKind[i] == 1 ? "хлоп" : "стук", (int)onLvl[i], (unsigned)(i > onN - cnt ? onT[i] - onT[i-1] : 0));
+  }
+  if(g){ _gesture = g; _heard = g; _heardMs = millis(); }
   onN = 0;
 }
 
@@ -578,9 +733,30 @@ const char* YoMic::gestureName(uint8_t g){
 void YoMic::loop(){
   uint32_t now = millis();
   MicGesture g = takeGesture();
+  /*  Дотик до екрана — теж стук по корпусу, і мікрофон його чує. Набір
+      пароля ставав «двома стуками»: радіо вмикало станцію, без мережі
+      шість секунд чекало з'єднання, і весь цей час екран не відповідав —
+      літери й OK губились. Тож поки відкрите меню й кілька секунд після
+      дотику жести не рахуються.  */
+  if(g != MG_NONE){
+    bool menu = false;
+  #ifdef USE_YOMENU
+    menu = yomenu.active();
+  #endif
+    if(menu || now - extras.lastTouchMs() < 3500){
+      Serial.printf("##MIC#\t%s — не рахую: %s\n", gestureName(g), menu ? "відкрите меню" : "торкались екрана");
+      g = MG_NONE;
+    }
+  }
   if(g != MG_NONE){
     uint8_t a = actionFor(g);
-    Serial.printf("##MIC#\t%s → %s\n", gestureName(g), actionName(a));
+    /*  Без мережі станцію не ввімкнеш — а спроба на секунди займає радіо.  */
+    bool needNet = a == MA_TOGGLE || a == MA_NEXT || a == MA_PREV || a == MA_FAV1;
+    if(needNet && config.getMode() == PM_WEB && network.status != CONNECTED && !player.isRunning()){
+      Serial.printf("##MIC#\t%s → %s — немає мережі, не вмикаю\n", gestureName(g), actionName(a));
+      a = MA_NONE;
+    }
+    Serial.printf("##MIC#\t%s → %s  (удари: %s)\n", gestureName(g), actionName(a), _lastSeries);
     switch(a){
       case MA_TOGGLE: player.toggle(); break;
       case MA_NEXT:   player.next(); break;
@@ -638,6 +814,50 @@ const char* YoMic::simStart(uint8_t kind, uint8_t count, uint16_t gapMs){
   return nullptr;
 }
 
+const char* YoMic::extStart(uint8_t kind, uint8_t count, uint16_t gapMs, int8_t peakDb){
+  if(!listening()) return "мікрофон не слухає";
+  if(_exKind)      return "уже зайнятий";
+  _exCount = count < 1 ? 1 : count > 6 ? 6 : count;
+  _exGap = gapMs < 60 ? 60 : gapMs;
+  _exAmp = pow(10.0f, (peakDb > 0 ? 0 : peakDb) / 20.0f);
+  _exPos = 0;
+  _exKind = kind ? 2 : 1;
+  return nullptr;
+}
+
+/*  Той самий хлопок чи стук, що й у micsim, але одразу в блок мікрофона
+    (16 кГц) — з відлунням кімнати через 170 мс на 12 дБ тихіше.  */
+void YoMic::_extMix(int16_t* x){
+  const uint32_t fs = MIC_FS;
+  uint32_t burst = fs * 40 / 1000, period = fs * _exGap / 1000, echo = fs * 170 / 1000;
+  uint32_t total = period * (_exCount - 1) + burst + echo + fs;
+  static uint32_t rnd = 777;
+  static float prev = 0;
+  for(int i = 0; i < BLK; i++){
+    uint32_t t = _exPos + i;
+    float v = 0;
+    for(int e = 0; e < 2; e++){
+      uint32_t d = e ? echo : 0;
+      if(t < d) continue;
+      uint32_t n = (t - d) / period, k = (t - d) % period;
+      if(n >= _exCount || k >= burst) continue;
+      float tt = (float)k / fs, g = e ? 0.25f : 1.0f;
+      if(_exKind == 1){
+        rnd = rnd * 1664525UL + 1013904223UL;
+        v += g * ((int32_t)(rnd >> 16) - 32768) / 32768.0f * exp(-tt / 0.008f);
+      }else{
+        v += g * sin(2.0f * M_PI * 400.0f * tt) * exp(-tt / 0.015f);
+      }
+    }
+    float y = _exKind == 1 ? (v - prev) * 0.5f : v;              /* хлопок — без низу */
+    prev = v;
+    int32_t o = x[i] + (int32_t)(y * _exAmp * 32767.0f);
+    x[i] = (int16_t)(o > 32767 ? 32767 : o < -32768 ? -32768 : o);
+  }
+  _exPos += BLK;
+  if(_exPos >= total) _exKind = 0;
+}
+
 void YoMic::_simChunk(int16_t* buf){
   const uint32_t FR = 256;
   uint32_t fs = player.getSampleRate(); if(fs < 8000) fs = 44100;
@@ -679,6 +899,8 @@ void YoMic::_simChunk(int16_t* buf){
         v = w * exp(-tt / 0.008f) * 0.9f;
       }else{
         v = sin(2.0f * M_PI * 400.0f * tt) * exp(-tt / 0.015f) * 0.9f;
+        /*  справжній стук кісточкою починається клацанням — 3 мс шуму  */
+        if(tt < 0.003f){ rnd = rnd * 1664525UL + 1013904223UL; v += ((int32_t)(rnd >> 16) - 32768) / 32768.0f * 0.9f * (1.0f - tt / 0.003f); }
       }
     }
     int16_t x = (int16_t)(v * 32767.0f);

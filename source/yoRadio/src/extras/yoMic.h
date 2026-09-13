@@ -73,6 +73,10 @@ class YoMic {
     const char* simStart(uint8_t kind, uint8_t count, uint16_t gapMs);   /* перевірка: 0 хлопки, 1 стук, 2 голос — через свій динамік */
     volatile uint32_t minMs = 60000;              /* «хвилина» таймера сну й присутності (перевірка: 1000) */
     bool     simBusy() const { return _tsKind != 0; }
+    /*  перевірка: удар «із кімнати» — домішується цифрово до сигналу мікрофона
+        (не через динамік), тож власний звук радіо, що грає, лишається справжнім  */
+    const char* extStart(uint8_t kind, uint8_t count, uint16_t gapMs, int8_t peakDb);
+    bool     extBusy() const { return _exKind != 0; }
     volatile bool _dbg = false;                    /* друкувати кожен удар і рішення */
     uint8_t  sweepPos() const { return _swPos; }
     float    sweepDb(uint8_t i) const { return _swDb[i]; }      /* тон у мікрофоні, дБ повної шкали */
@@ -93,19 +97,26 @@ class YoMic {
     void     _pattern(uint32_t now);
     void     _sweep(int16_t* raw);
     void     _simChunk(int16_t* buf);
+    void     _extMix(int16_t* x);
     void     _firDesign(uint32_t rate);
     int16_t  _fir(uint8_t ch, int16_t x);
     TaskHandle_t _task = nullptr;
-    volatile int8_t  _lvl = -90, _noise = -60;
+    volatile int8_t  _lvl = -90, _noise = -60, _prevLvl = -90;
     volatile bool    _speech = false;
     volatile uint32_t _lastVoice = 0, _lastSound = 0;
     volatile uint8_t _gesture = MG_NONE;
     volatile uint8_t _heard = MG_NONE;
     volatile uint32_t _heardMs = 0, _lastRoom = 0;
     float    _refDb = -90, _excess = 0, _couple = 0, _bgDb = -80;
-    uint32_t _foreignMs = 0;
+    uint32_t _foreignMs = 0, _foreignCand = 0;
+    struct HitBlk { uint32_t t; float val, thr, lo, hi, centre, en, exLo, exHi, excess; int8_t lvl; bool loud, ref; float frac; };
+    HitBlk   _hp[3] = {};                         /* удар, що чекає ще двох блоків */
+    uint8_t  _hpN = 0, _hpPre = 0, _hpVad = 0;    /* скільки зібрано; що звучало перед ним */
+    char     _lastSeries[96] = {0};       /* остання серія ударів — для журналу */
+    bool     _wasPlaying = false, _quietEdge = false;
+    uint32_t _edgeBt = 0;
     float    _cLo = 0, _cHi = 0;                /* «динамік → мікрофон» по смугах, дБ */
-    uint16_t _cN = 0;
+    uint16_t _cNLo = 0, _cNHi = 0;
     uint8_t  _roomRun = 0;
     uint16_t _coupleN = 0;
     uint32_t _earFrom = 0, _presFrom = 0, _wokeFor = 0;
@@ -120,6 +131,7 @@ class YoMic {
     volatile int8_t _slotL = -90, _slotR = -90;
     volatile bool    _swReq = false, _swStop = false;
     volatile uint8_t _tsKind = 0, _tsCount = 0;
+    volatile uint8_t _exKind = 0; uint8_t _exCount = 0; uint16_t _exGap = 300; float _exAmp = 0; uint32_t _exPos = 0;
     uint16_t _tsGap = 300;
     uint32_t _tsPos = 0;
     volatile uint8_t _swState = 0, _swPos = 0;

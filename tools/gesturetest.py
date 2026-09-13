@@ -66,6 +66,15 @@ def music(sec):
     return 0 if got else 1
 
 VERB = "-v" in sys.argv
+import json, urllib.request
+IP = os.environ.get("IP", "192.168.1.87")
+def api(path):
+    for i in range(6):
+        try: return json.load(urllib.request.urlopen(f"http://{IP}{path}", timeout=5))
+        except (OSError, ValueError):
+            if i == 5: return None
+            time.sleep(1.0)
+before = api("/api/state")                      # що було до перевірки — поверну наприкінці
 p.ask("micon 1", wait=0.5)
 p.ask("micset 1 1 0", wait=0.5)
 p.ask("micdbg 1", wait=0.5)
@@ -80,6 +89,13 @@ res.append(run("knock", 3, 280, "3 стуки"))
 res.append(music(int(os.environ.get("MUSIC", "60"))))
 stop_player()
 p.ask("micdbg 0", wait=0.5)
-p.ask("micset 0 0 0", wait=0.5)
+if before:
+    m = before["mic"]
+    p.ask(f"micset {m['clapOn']} {m['knockOn']} {m['play']}", wait=0.5)
+    if not m["on"]: p.ask("micon 0", wait=0.5)
+    if before.get("play"): p.ask(f"play {before['idx']}", wait=1.0)
+    print(f"повернуто: хлопки={m['clapOn']} стук={m['knockOn']} під час звуку={m['play']}" + (f", грає станція {before['idx']}" if before.get("play") else ""))
+else:
+    p.ask("micset 0 0 0", wait=0.5)
 print(f"\nпідсумок: {sum(res)} з {len(res)}")
 p.close()

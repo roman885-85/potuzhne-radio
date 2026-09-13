@@ -1059,6 +1059,7 @@ void Display::_applyDev(){
 
 void Display::forceRedraw(){
   if (network.status != CONNECTED && network.status != SDREADY){ _noNetScreen(); return; }
+  if (!_ensurePlayer()) return;
   _applyDev();
   _mode = PLAYER;
   _pager->setPage( pages[PG_PLAYER]);
@@ -1091,25 +1092,49 @@ void Display::_start() {
     //nextion.putcmd("page player");
     nextion.start();
   #endif
+  _finishStart(true);
+}
+
+/*  Стартували без мережі — тоді замість плеєра лише список мереж, а сторінки й
+    віджети плеєра не створювались зовсім. Мережа з'явилась (вибрали в меню чи
+    радіо саме повернулось у збережену) — і перша ж перемальовка плеєра писала
+    в невиділений буфер назви станції: радіо падало одразу після підключення.
+    Тепер плеєр добудовується тут, у задачі екрана, перед будь-яким малюванням.  */
+bool Display::_ensurePlayer(){
+  if(_playerBuilt) return true;
+  if(_bootStep != 2 || (network.status != CONNECTED && network.status != SDREADY)) return false;
+  bool menu = false;
+#ifdef USE_YOMENU
+  menu = yomenu.active();
+#endif
+  Serial.println("##DSP#\tмережа з'явилась після старту без неї — добудовую плеєр");
+  _finishStart(!menu);                 /* меню відкрите — намалюється, коли воно закриється */
+  return true;
+}
+
+void Display::_finishStart(bool draw){
   _buildPager();
+  _playerBuilt = true;
   _mode = PLAYER;
   config.setTitle(LANG::const_PlReady);
   
   if(_heapbar)  _heapbar->lock(!config.store.audioinfo);
   
-  _applySdLayout();
+  if(draw) _applySdLayout();
   if(_weather && config.store.showweather)  _weather->setText(LANG::const_getWeather);
 
   if(_vuwidget) _vuwidget->lock();
-  if(_rssi)     _setRSSI(WiFi.RSSI());
+  if(_rssi && draw) _setRSSI(WiFi.RSSI());
   #ifndef HIDE_IP
     if(_volip) _volip->setText(config.ipToStr(WiFi.localIP()), iptxtFmt);
   #endif
-  _pager->setPage( pages[PG_PLAYER]);
-  _volume();
-  _station();
-  _time(false);
-  drawHeaderIcons();      /* при завантаженні сторінка ставиться тут, а не через _swichMode */
+  if(draw){
+    _pager->setPage( pages[PG_PLAYER]);
+    _volume();
+    _station();
+    _time(false);
+    drawHeaderIcons();      /* при завантаженні сторінка ставиться тут, а не через _swichMode */
+  }
   _bootStep = 2;
   if(_lostPending){ _lostPending = false; if(network.linkLost && WiFi.status() != WL_CONNECTED) putRequest(NEWMODE, LOST); }
   pm.on_display_player();
@@ -1131,6 +1156,7 @@ void Display::_swichMode(displayMode_e newmode) {
     nextion.putRequest({NEWMODE, newmode});
   #endif
   if (newmode == _mode || (network.status != CONNECTED && network.status != SDREADY)) return;
+  if (!_ensurePlayer()) return;
   /*  Зв'язок може зникнути ще на заставці завантаження, а віджети плеєра
       (рядок діалогу, адреса) створюються лише разом із його сторінкою:
       діалог «немає зв'язку» писав у ще не виділений буфер — і радіо
@@ -1273,6 +1299,7 @@ void Display::loop() {
     return;
   }
   if(displayQueue==NULL || _locked) return;
+  if(!_playerBuilt) _ensurePlayer();
   /*  Такт плавної зміни — до всіх дострокових виходів: якщо піти раніше,
       зміна застрягне на погашеній підсвітці.  */
 #ifdef YO_DEBUG
@@ -1351,6 +1378,9 @@ void Display::loop() {
 #endif
   requestParams_t request;
   if(xQueueReceive(displayQueue, &request, DSP_QUEUE_TICKS)){
+    /*  Плеєра ще немає (старт без мережі) — малювати його частини нічим:
+        лише старт і годинник для меню, решту відкидаємо.  */
+    if(!_ensurePlayer() && request.type != DSP_START && request.type != CLOCK && request.type != BOOTSTRING && request.type != WAITFORSD) return;
     /*  Рядки назви пісні навіть сховані чистять свою рамку, коли приходить
         нова назва, — і зачіпали верх блоку проповіді. Після таких подій
         блок просто малюємо заново.  */

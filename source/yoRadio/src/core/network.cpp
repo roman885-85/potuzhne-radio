@@ -22,7 +22,14 @@
 #endif
 MyNetwork network;
 
+/*  Відладка «наче мережі немає»: переживає програмне перезавантаження.  */
+static RTC_NOINIT_ATTR uint32_t _noNetBoot;
+static const uint32_t NONET_MAGIC = 0x4E4F4E54;
+void MyNetwork::skipBootWifi(){ _noNetBoot = NONET_MAGIC; }
+
 void MyNetwork::WiFiReconnected(WiFiEvent_t event, WiFiEventInfo_t info){
+  Serial.printf("##WIFI#\tадреса %s%s\n", WiFi.localIP().toString().c_str(),
+                network.lostPlaying ? " — до обриву грало, вмикаю знову" : "");
   if(network._try == TRY_RUN) network._try = TRY_OK;
   network.beginReconnect = false;
   network.linkLost = false;
@@ -37,13 +44,18 @@ void MyNetwork::WiFiReconnected(WiFiEvent_t event, WiFiEventInfo_t info){
   player.lockOutput = false;
   delay(100);
   display.putRequest(NEWMODE, PLAYER);
+  /*  «Грало до обриву» — одноразове: раніше прапорець так і лишався, і
+      кожна наступна подія «адресу отримано» (роутер оновлює її сам, через
+      години) знову вмикала станцію, хоч її давно зупинили.  */
+  bool resume = network.lostPlaying;
+  network.lostPlaying = false;
   if(config.getMode()==PM_SDCARD) {
     network.status=CONNECTED;
     display.putRequest(NEWIP, 0);
   }else{
     display.putRequest(NEWMODE, PLAYER);
     display.putRequest(NEWIP, 0);        /* повертаємо адресу замість підказки */
-    if (network.lostPlaying) player.sendCommand({PR_PLAY, config.lastStation()});
+    if (resume) player.sendCommand({PR_PLAY, config.lastStation()});
   }
   #ifdef MQTT_ROOT_TOPIC
     connectToMqtt();
@@ -54,11 +66,12 @@ void MyNetwork::WiFiLostConnection(WiFiEvent_t event, WiFiEventInfo_t info){
   /*  Спроба, яку замовила людина: одразу кажемо, чому не вийшло.  */
   if(network._try == TRY_RUN){
     uint8_t r = info.wifi_sta_disconnected.reason;
+    network._tryEv = true;
     Serial.printf("##WIFI#\t%s: відмова %u (%s)\n", network._tryS, (unsigned)r,
                   WiFi.disconnectReasonName((wifi_err_reason_t)r));
     /*  Перша відмова часто хибна: маршрутизатор буває зайнятий, а драйвер
         одразу каже «не той пароль». Одну спробу робимо мовчки ще раз.  */
-    if(network._tryAgain < 1 && r != WIFI_REASON_NO_AP_FOUND){
+    if(network._tryAgain < 1){                  /* і «не видно» теж: після паузи пошуку модуль буває ще не на тому каналі */
       network._tryAgain++;
       network._tryAt = millis();
       WiFi.begin(network._tryS, network._tryP);
@@ -71,8 +84,15 @@ void MyNetwork::WiFiLostConnection(WiFiEvent_t event, WiFiEventInfo_t info){
     else                                         network._try = TRY_FAIL;
     return;                      /* нічого не зупиняємо: ми ще не були в мережі */
   }
-  if(!network.beginReconnect){
-    Serial.printf("Lost connection, reconnecting to %s...\n", config.ssids[config.store.lastSSID-1].ssid);
+  /*  Спроба повернутись у збережену мережу не вдалась — пишемо чому: без
+      цього «не підключається» нема з чого розбирати.  */
+  if(network._reCur >= 0 && network._reCur < config.ssidsCount){
+    uint8_t r = info.wifi_sta_disconnected.reason;
+    Serial.printf("##WIFI#\t%s: не вдалось повернутись, відмова %u (%s)\n", config.ssids[network._reCur].ssid, (unsigned)r,
+                  WiFi.disconnectReasonName((wifi_err_reason_t)r));
+  }
+  if(!network.beginReconnect && network.status != SOFT_AP){
+    Serial.printf("Lost connection, reconnecting to %s...\n", config.store.lastSSID ? config.ssids[config.store.lastSSID-1].ssid : "?");
     if(config.getMode()==PM_SDCARD) {
       network.status=SDREADY;
       display.putRequest(NEWIP, 0);
@@ -194,6 +214,12 @@ void MyNetwork::begin() {
   WiFi.onEvent(WiFiLostConnection, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   _evReady = true;
   config.initNetwork();
+  if(_noNetBoot == NONET_MAGIC){
+    _noNetBoot = 0;
+    BOOTLOG("перевірка: стартую, наче жодної знайомої мережі поруч немає");
+    _noNetwork();
+    return;
+  }
   if (config.ssidsCount == 0 && !DBGAP && wifiRemembered()) {
     /*  Список пропав, але драйвер Wi-Fi пам'ятає останню мережу сам —
         радіо лишається в мережі, а список ми тут-таки відновлюємо.  */
@@ -282,6 +308,7 @@ void MyNetwork::_noNetwork() {
   esp_wifi_disconnect();
   WiFi.mode(WIFI_STA);
   status = SOFT_AP;
+  _bootNoNet = true;
   Serial.println("##[BOOT]#");
   BOOTLOG("************************************************");
   BOOTLOG("Мережі немає. Торкніться екрана радіо й виберіть її зі списку.");
@@ -296,8 +323,11 @@ void MyNetwork::loop(){
   if(_try == TRY_RUN){
     wl_status_t st = WiFi.status();
     if(st == WL_CONNECTED)            _try = TRY_OK;
-    else if(st == WL_NO_SSID_AVAIL && millis() - _tryAt > 4000)  _try = TRY_NOTFOUND;
-    else if(st == WL_CONNECT_FAILED && millis() - _tryAt > 4000) _try = TRY_BADPASS;
+    /*  Стан станції після попередніх спроб (інших мереж) ще «мережі не видно» —
+        віримо йому лише після відповіді саме на цю спробу або коли вона
+        мовчить уже 10 с.  */
+    else if(st == WL_NO_SSID_AVAIL && millis() - _tryAt > (_tryEv ? 4000UL : 10000UL))  _try = TRY_NOTFOUND;
+    else if(st == WL_CONNECT_FAILED && millis() - _tryAt > (_tryEv ? 4000UL : 10000UL)) _try = TRY_BADPASS;
     else if(st == WL_DISCONNECTED && _tryAgain < 2 && millis() - _tryAt > 2500){
       /*  Модуль навіть не взявся за справу — просимо ще раз.  */
       _tryAgain++; _tryAt = millis();
@@ -309,12 +339,35 @@ void MyNetwork::loop(){
   if(_try == TRY_OK && status != CONNECTED) _staUp();
   /*  Не вийшло — точку доступу повертаємо, щоб радіо не лишилось без нічого.  */
   if(_try == TRY_OK) _apWas = false;
+  /*  Спроба скінчилась, а закрити її нікому: з екрана результату вийшли не
+      кнопкою (назад, за часом) чи сторінка, що її почала, закрилась. Раніше
+      така спроба лишалась назавжди — і радіо більше не поверталось ні в
+      одну збережену мережу, аж до перезавантаження.  */
+  if(_try >= TRY_OK){
+    if(!_tryEndAt) _tryEndAt = millis() | 1;
+    if(!tryHeld && millis() - _tryEndAt > 20000UL){
+      Serial.printf("##WIFI#\tспробу «%s» ніхто не закрив — повертаюсь до збережених мереж\n", _tryS);
+      tryClear();
+    }
+  }else _tryEndAt = 0;
   if(_try != TRY_NONE) return;               /* поки триває спроба людини — не заважаємо */
-  if(status == SOFT_AP || !linkLost) return;
-  if(WiFi.status() == WL_CONNECTED) return;            /* подія про адресу ось-ось прийде */
+  if(status == SOFT_AP){
+    /*  Стартували без мережі (роутер ще вантажився, радіо ввімкнули деінде) —
+        раніше після цього радіо не пробувало жодної збереженої мережі, доки
+        його не перезавантажать. Тепер пробує, як і після втрати зв'язку.  */
+    if(config.ssidsCount == 0 || config.getMode() == PM_SDCARD) return;
+    if(WiFi.status() == WL_CONNECTED){ _staUp(); return; }
+  }else{
+    if(!linkLost) return;
+    if(WiFi.status() == WL_CONNECTED) return;          /* подія про адресу ось-ось прийде */
+  }
   if(staPaused){
     /*  пауза на час пошуку мереж не може тривати вічно  */
-    if(millis() - _pauseAt > 180000UL) pauseSta(false);
+    /*  Без мережі з самого старту список мереж відкритий сам, і людини біля
+        радіо може не бути (роутер після вимкнення світла вантажиться довше
+        за радіо) — тоді збережені пробуємо вже за 25 с, а не за три хвилини.  */
+    uint32_t lim = (status == SOFT_AP && config.ssidsCount) ? 25000UL : 180000UL;
+    if(millis() - _pauseAt > lim) pauseSta(false);
     return;
   }
   if((int32_t)(millis() - _reAt) < 0) return;
@@ -341,7 +394,10 @@ void MyNetwork::pauseSta(bool on){
     /*  Обірвати треба саме незавершену спробу: доки вона триває, пошук мереж
         не запускається. WiFi.disconnect() тут не годиться — поки з'єднання ще
         не встановлене, він мовчки не робить нічого.  */
-    if(WiFi.status() != WL_CONNECTED) esp_wifi_disconnect();
+    /*  Але не спробу людини: екран «підключаюсь…» теж ставить паузу, і вона
+        обривала щойно почате підключення — радіо писало «мережі не видно»
+        навіть поруч із роутером.  */
+    if(_try != TRY_RUN && WiFi.status() != WL_CONNECTED) esp_wifi_disconnect();
   }else{
     _reTry = 0;
     _reAt = millis() + 800;
@@ -375,6 +431,7 @@ void MyNetwork::connectTo(const char* ssid, const char* pass){
       обидві мусять сидіти на одному каналі, і підключення до мережі на
       іншому каналі зривається. Не вийде — повернемо її назад.  */
   _tryAgain = 0;
+  _tryEv = false;
   if(WiFi.getMode() != WIFI_STA){ WiFi.mode(WIFI_STA); delay(60); }
   /*  Поки триває пошук мереж, підключення просто не починається: радіомодуль
       зайнятий перебором каналів, і команду мовчки відкидають. Спершу пошук
@@ -391,11 +448,24 @@ void MyNetwork::connectTo(const char* ssid, const char* pass){
     це робить пошук мережі при старті.  */
 void MyNetwork::_staUp(){
   status = CONNECTED;
+  linkLost = false; beginReconnect = false; _reTry = 0;
+  if(_reCur >= 0){ if(config.store.lastSSID != _reCur + 1) config.setLastSSID(_reCur + 1); _reCur = -1; }
+  Serial.printf("##WIFI#\tу мережі %s, адреса %s\n", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
   if(!_staReady){
     _staReady = true;
     netserver.begin(true);
     telnet.begin(true);
     setWifiParams();
+  }
+  /*  Стартували без мережі — тоді setup() не дійшов ні до списку станцій, ні
+      до «грати після ввімкнення». Доробляємо це тут, один раз.  */
+  if(_bootNoNet){
+    _bootNoNet = false;
+    config.initPlaylistMode();
+    player.lockOutput = false;
+    if(config.store.smartstart == 1) player.sendCommand({PR_PLAY, config.lastStation()});
+    if (network_on_connect) network_on_connect();
+    pm.on_connect();
   }
   display.putRequest(NEWIP, 0);
   display.putRequest(NEWMODE, PLAYER);
@@ -403,4 +473,14 @@ void MyNetwork::_staUp(){
 
 void MyNetwork::requestWeatherSync(){
   display.putRequest(NEWWEATHER);
+}
+
+void MyNetwork::dump(){
+  static const char* ST[] = { "CONNECTED", "SOFT_AP", "FAILED", "SDREADY" };
+  static const char* TR[] = { "NONE", "RUN", "OK", "BADPASS", "NOTFOUND", "FAIL" };
+  uint32_t now = millis();
+  Serial.printf("WSTATE status=%s wifi=%d ssid='%s' ip=%s linkLost=%d paused=%d(%lus) try=%s held=%d reTry=%u reNext=%u reCur=%d next=%lds bootNoNet=%d\n",
+    status <= SDREADY ? ST[status] : "?", (int)WiFi.status(), WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(),
+    linkLost, staPaused, staPaused ? (unsigned long)((now - _pauseAt) / 1000) : 0UL, _try <= TRY_FAIL ? TR[_try] : "?", tryHeld ? 1 : 0,
+    (unsigned)_reTry, (unsigned)_reNext, (int)_reCur, (long)((int32_t)(_reAt - now) / 1000), _bootNoNet ? 1 : 0);
 }

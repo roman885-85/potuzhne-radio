@@ -288,6 +288,11 @@ void YoMenu::_chrome(const char* title, uint8_t icon){
     приходить дотик, крутиться декодер звуку, і пауза там чутна.  */
 void YoMenu::_show(int8_t p){
   _lastAct = millis();
+  Serial.printf("##MENU#\tсторінка %d -> %d\n", (int)_cur, (int)p);
+  /*  З екрана підсумку спроби пішли — спробу закриваємо тут же: інакше
+      повернення в збережені мережі стоїть, доки її хтось не закриє.  */
+  if(_cur == PG_WCONN && p != PG_WCONN && network.tryState() >= TRY_OK) network.tryClear();
+  network.tryHeld = (p == PG_WCONN);
   /*  Пошук мереж і спроби повернутися в мережу живуть в одному радіомодулі:
       поки людина вибирає мережу, спроби спинено — інакше ні пошуку, ні
       підключення не діждешся.  */
@@ -320,6 +325,8 @@ void YoMenu::_fade(){
       if(_closeReq){                           /* вихід із меню — теж у темряві */
         _closeReq = false;
         network.pauseSta(false);
+        if(_cur == PG_WCONN && network.tryState() >= TRY_OK) network.tryClear();
+        network.tryHeld = false;
         if(_cur >= 0 && _pg[_cur]) _pg[_cur]->setActive(false);
         _cur = PG_OFF;
         dsp.setFont();
@@ -1669,6 +1676,13 @@ void YoMenu::render(){
   if(_cur == PG_OFF && _fadeStep < 0) return;
   if(_fadeStep >= 0){ _fade(); return; }   /* поки триває зміна — тільки вона */
   if(_cur == PG_OFF) return;
+  /*  Мережі не було, і меню не мало виходу; радіо саме повернулось у
+      збережену мережу — замок знімаємо й повертаємось на плеєр (набір
+      пароля не перериваємо).  */
+  if(_apLock && network.status == CONNECTED && _cur != PG_WCONN){
+    _apLock = false;
+    if(_cur != PG_KBD){ close(); return; }
+  }
   /*  Хвилину без дотиків — назад на плеєр, тим самим плавним переходом.
       Клавіатуру й налаштування мережі без неї не чіпаємо: там людина
       може думати над паролем.  */
@@ -2072,6 +2086,7 @@ void YoMenu::_kbAction(int8_t k){
     case K_PAGE:  _kbdPage = (_kbdPage == 2) ? 0 : 2; _kbDirty |= 2; return;
     case K_EYE:   _kbdShow = !_kbdShow; _kbDirty |= 1 | 4; return;
     case K_OK:
+      Serial.printf("##KBD#\tOK: крок=%d мережа='%s' пароль %u симв.\n", (int)_kbdNext, _wSsid, (unsigned)strlen(_wPass));
       /*  OK: лишаємо набране. Раніше тут, як і у відміні, викликався
           _loadWifi(), який перечитує поля з налаштувань — тобто набраний
           пароль щоразу губився, і ввести мережу з екрана було неможливо. */

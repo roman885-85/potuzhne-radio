@@ -395,6 +395,13 @@ void yodbgLoop(){
       const char* w = mic.simStart(!strcmp(kind, "voice") ? 2 : !strcmp(kind, "knock") ? 1 : 0, (uint8_t)n, (uint16_t)gap);
       Serial.printf("MICSIM %s\n", w ? w : "почато");
     }
+    else if(!strncmp(buf,"micext ",7)){
+      /*  micext <clap|knock> <скільки> <крок, мс> <пік, дБ> — удар «із кімнати» в сигнал мікрофона  */
+      char kind[8] = {0}; int n = 2, gap = 300, pk = -20;
+      sscanf(buf+7, "%7s %d %d %d", kind, &n, &gap, &pk);
+      const char* w = mic.extStart(!strcmp(kind, "knock") ? 1 : 0, (uint8_t)n, (uint16_t)gap, (int8_t)pk);
+      Serial.printf("MICEXT %s\n", w ? w : "почато");
+    }
     else if(!strcmp(buf,"micstop")){ mic.sweepAbort(); Serial.println("самоперевірка звуку: зупиняю"); }
     else if(!strcmp(buf,"micres")){
       /*  Машинний формат — його читає tools/selftest.py:
@@ -443,6 +450,22 @@ void yodbgLoop(){
       char* bar = strchr(buf+6, '|');
       if(bar){ *bar = 0; network.connectTo(buf+6, bar+1); Serial.printf("WJOIN %s\n", buf+6); }
     }
+    else if(!strcmp(buf,"wlist")){
+      /*  Збережені мережі: назва й довжина пароля (самого пароля не друкуємо).  */
+      for(uint8_t i = 0; i < config.ssidsCount; i++)
+        Serial.printf("WLIST %u%s %s  пароль %u симв.\n", (unsigned)(i + 1), config.store.lastSSID == i + 1 ? "*" : " ",
+                      config.ssids[i].ssid, (unsigned)strlen(config.ssids[i].password));
+      File f = SPIFFS.open(SSIDS_PATH, "r");
+      Serial.printf("WLIST end %u, файл %u байт\n", (unsigned)config.ssidsCount, f ? (unsigned)f.size() : 0);
+      if(f) f.close();
+    }
+    else if(!strcmp(buf,"wstate")) network.dump();
+    else if(!strcmp(buf,"wnonet")){
+      Serial.println("WNONET перезавантажуюсь, наче мережі поруч немає");
+      MyNetwork::skipBootWifi();
+      delay(300);
+      ESP.restart();
+    }
     else if(!strcmp(buf,"wtry")){
       Serial.printf("WTRY стан=%d status()=%d ssid='%s' ip=%s\n", (int)network.tryState(), (int)WiFi.status(), WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
     }
@@ -459,11 +482,18 @@ void yodbgLoop(){
       if(esp_wifi_get_config(WIFI_IF_STA, &c) != ESP_OK || !c.sta.ssid[0]){
         Serial.println("радіомодуль не пам'ятає жодної мережі");
       }else{
-        char line[110];
-        snprintf(line, sizeof(line), "%s\t%s\n", (const char*)c.sta.ssid, (const char*)c.sta.password);
-        config.saveWifiList(line);
+        /*  Додаємо першою, а решту збережених лишаємо. Раніше команда
+            записувала лише цю одну — і стерла власникові домашню мережу.  */
+        String out = String((const char*)c.sta.ssid) + "\t" + String((const char*)c.sta.password) + "\n";
+        uint8_t n = 1;
+        for(uint8_t i = 0; i < config.ssidsCount && n < 5; i++){
+          if(!strcmp(config.ssids[i].ssid, (const char*)c.sta.ssid)) continue;
+          out += String(config.ssids[i].ssid) + "\t" + String(config.ssids[i].password) + "\n";
+          n++;
+        }
+        config.saveWifiList(out.c_str());
         config.setLastSSID(1);
-        Serial.printf("мережу %s збережено до списку\n", (const char*)c.sta.ssid);
+        Serial.printf("мережу %s збережено першою, усього в списку %u\n", (const char*)c.sta.ssid, (unsigned)config.ssidsCount);
       }
     }
     else if(!strcmp(buf,"page")){

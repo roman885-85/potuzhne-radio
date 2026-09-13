@@ -32,6 +32,11 @@ class MyNetwork {
     n_Try_e tryState() const { return _try; }
     const char* trySsid() const { return _tryS; }
     void tryClear();                 /* спробу закрито; не вийшло — повертаємось до збережених мереж */
+    /*  Меню саме показує підсумок спроби — не закривати її за нього. Інакше
+        спробу, з якої вийшли не кнопкою, закриває сам loop() за 20 с.  */
+    volatile bool tryHeld = false;
+    void dump();                     /* відладка: стан повернення в мережу */
+    static void skipBootWifi();      /* відладка: наступний старт — наче жодної мережі поруч */
   private:
     uint32_t _reAt = 0;              /* час наступної спроби */
     uint32_t _pauseAt = 0;           /* коли спинили спроби */
@@ -41,9 +46,12 @@ class MyNetwork {
     volatile n_Try_e _try = TRY_NONE;
     char     _tryS[33] = {0}, _tryP[65] = {0};
     uint32_t _tryAt = 0;
+    uint32_t _tryEndAt = 0;          /* коли спроба скінчилась (успіх чи відмова) */
+    bool     _bootNoNet = false;     /* стартували без мережі: служби й станції ще не підняті */
     bool     _staReady = false;      /* setWifiParams уже зроблено */
     bool     _apWas = false;         /* на час спроби точку доступу прибрали */
     uint8_t  _tryAgain = 0;          /* друга спроба: перший відмов буває хибним */
+    bool     _tryEv = false;         /* на цю спробу вже прийшла відповідь драйвера */
     bool     _evReady = false;       /* події Wi-Fi уже підписані */
     void     _staUp();               /* мережа з'явилась на ходу: підняти служби */
     void _noNetwork();               /* мережі немає: чекаємо, доки людина вибере */
