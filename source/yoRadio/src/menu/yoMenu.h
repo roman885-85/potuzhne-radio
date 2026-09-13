@@ -44,6 +44,8 @@ class YoMenu {
     void openFav();              /* обране */
     void openHome();             /* кнопка «☰» у шапці плеєра: головне меню */
     void openPage(int8_t p);     /* службова консоль: будь-яка сторінка */
+    void openKbdTest(){ if(_cur == PG_OFF){ _build(); _apLock = false; } _kbTest[0] = 0; _openKbd(_kbTest, sizeof(_kbTest), true, "перевірка"); }
+    const char* kbdTest() const { return _kbTest; }
     void close();
     void render();               /* із задачі дисплея */
     void onRelease(uint16_t x, uint16_t y, uint32_t held = 0);
@@ -188,9 +190,25 @@ class YoMenu {
     uint8_t _kbdPage = 0;
     bool   _kbdIsPass = false;
     bool   _kbdShow = true;           /* пароль видно, поки не сховали оком */
-    int16_t _kbFlashX = -1, _kbFlashY = 0, _kbFlashW = 0, _kbFlashH = 0;
-    uint32_t _kbFlashT = 0;           /* підсвітка натиснутої клавіші */
-    void   _kbdRefresh();             /* рядок вводу: зірочки чи самі знаки */
+    /*  Клавіатура: дотик лише запам'ятовує, яка клавіша під пальцем, а малює
+        все задача дисплея. Раніше спалах клавіші й рядок вводу малювались
+        просто з потоку дотику, поки паралельно малювала задача дисплея, —
+        шрифт у дисплея спільний, і текст то зникав, то міняв розмір.  */
+    char     _kbTest[YOM_PASS_LEN] = {0};   /* поле для перевірки клавіатури з консолі */
+    volatile int8_t  _kbKey = -1;     /* клавіша під пальцем */
+    volatile bool    _kbDown = false;
+    volatile uint8_t _kbDirty = 0;    /* 1 рядок, 2 клавіші, 4 око, 8 підсвітка */
+    int8_t   _kbShown = -1;           /* що зараз підсвічено на екрані */
+    int16_t  _kbPopX = -1, _kbPopY = 0;   /* збільшена клавіша над пальцем */
+    uint32_t _kbDownT = 0, _kbRepT = 0;
+    bool     _kbRep = false;
+    int8_t   _kbKeyAt(int16_t x, int16_t y) const;
+    bool     _kbKeyRect(int8_t k, int16_t& x, int16_t& y, int16_t& w, int16_t& h) const;
+    void     _kbDrawKey(int8_t k, bool hl);
+    void     _kbRestore(int16_t x, int16_t y, int16_t w, int16_t h);
+    void     _kbAction(int8_t k);
+    void     _kbRender();
+    void   _kbdRefresh();             /* рядок вводу: зірочки чи самі знаки (лише з задачі дисплея) */
     void   _drawKbdEye();
     int8_t _kbdBack = PG_WIFI;
     const char* _kbdTitle = "";

@@ -353,7 +353,9 @@ void YoMenu::_paint(){
   dsp.fillScreen(C_BG);
   if(p == PG_KBD){
     _chrome(_kbdTitle);
+    _kbShown = -1; _kbPopX = -1; _kbDirty = 0;
     _drawKbdKeys();
+    _kbdRefresh();                 /* текст — до активації: віджет намалює себе вже з ним */
   }else if(p == PG_HOME){
     _chrome("меню", 2);
     _drawHome();
@@ -1681,11 +1683,7 @@ void YoMenu::render(){
     if(_favDirty){ _favDirty = false; _drawSaved(); }
     return;
   }
-  if(_cur == PG_KBD){
-    /*  Спалах на натиснутій клавіші гасне сам — так видно, куди влучив палець.  */
-    if(_kbFlashX >= 0 && millis() - _kbFlashT > 110){ _kbFlashX = -1; _drawKbdKeys(); }
-    return;
-  }
+  if(_cur == PG_KBD){ _kbRender(); return; }
   if(_cur == PG_WCONN){
     int8_t st = (int8_t)network.tryState();
     if(st != _wcShown){
@@ -1869,11 +1867,27 @@ static const char* KROWS[3][4] = {
 
 /*  Рядок вводу: пароль видно, доки його не сховали оком. Набирати наосліп
     по зірочках, ще й пальцем по дрібних клавішах, — марна справа.  */
+/*  Рядок вводу: пароль видно, доки його не сховали оком. Довгий — показуємо
+    кінець, щоб видно було саме те, що набирається, а не обрізаний початок.  */
 void YoMenu::_kbdRefresh(){
+  if(!_kbdTarget) return;
   char shown[YOM_PASS_LEN+2];
-  if(_kbdIsPass && !_kbdShow){ size_t n=strlen(_kbdTarget); if(n>26) n=26; memset(shown,'*',n); shown[n]='\0'; }
+  if(_kbdIsPass && !_kbdShow){ size_t n=strlen(_kbdTarget); if(n>YOM_PASS_LEN) n=YOM_PASS_LEN; memset(shown,'*',n); shown[n]='\0'; }
   else snprintf(shown, sizeof(shown), "%s", _kbdTarget);
-  _kbdField.setText(shown);
+  dsp.setFont(&yoUI12b); dsp.setTextSize(1);
+  const uint16_t room = SW - 74 - 8;
+  char* v = shown;
+  char t[YOM_PASS_LEN+4];
+  bool cut = false;
+  for(;;){
+    snprintf(t, sizeof(t), "%s%s", cut ? ".." : "", utf8Rus(v, false));
+    if(!*v || textW(t) <= room) break;
+    v++; while((*v & 0xC0) == 0x80) v++;          /* не різати посеред літери */
+    cut = true;
+  }
+  dsp.setFont();
+  snprintf(t, sizeof(t), "%s%s", cut ? ".." : "", v);
+  _kbdField.setText(t);
 }
 
 /*  Око праворуч від рядка: показати чи сховати набране.  */
@@ -1891,43 +1905,194 @@ void YoMenu::_drawKbdEye(){
   if(!_kbdShow) for(int16_t d = -10; d <= 10; d++) dsp.drawPixel(cx + d, cy - d, C_TXT);   /* перекреслене */
 }
 
+#define K_SHIFT  64
+#define K_BACK   65
+#define K_PAGE   66
+#define K_SPACE  67
+#define K_OK     68
+#define K_CANCEL 69
+#define K_EYE    70
+#define K_ROW3X  46                 /* між «ABC» і «<-» */
+#define K_ROW3W  (SW - 92)
+
+/*  Ряд клавіш: де починається й яка ширина клавіші. Нижній ряд знаків
+    стоїть між «ABC» і «<-»; у знаках там 8 клавіш — вужчих, щоб не
+    налізали на «стерти», як було.  */
+static void kbRow(uint8_t page, uint8_t r, int16_t& x0, int16_t& kw, uint8_t& len){
+  const char* row = KROWS[page][r];
+  len = strlen(row);
+  if(r == 3){
+    kw = (int16_t)(K_ROW3W / len); if(kw > KKW) kw = KKW;
+    x0 = K_ROW3X + (K_ROW3W - kw * len) / 2;
+  }else{
+    kw = KKW;
+    x0 = (SW - len * KKW) / 2;
+  }
+}
+
+bool YoMenu::_kbKeyRect(int8_t k, int16_t& x, int16_t& y, int16_t& w, int16_t& h) const {
+  const int16_t by = KY0 + 4 * KROWH;
+  h = KROWH - 2;
+  switch(k){
+    case K_SHIFT:  x = 0;       y = KY0 + 3 * KROWH; w = 44; return true;
+    case K_BACK:   x = SW - 44; y = KY0 + 3 * KROWH; w = 44; return true;
+    case K_PAGE:   x = 0;   y = by; w = 58;  return true;
+    case K_SPACE:  x = 60;  y = by; w = 118; return true;
+    case K_OK:     x = 180; y = by; w = 66;  return true;
+    case K_CANCEL: x = 248; y = by; w = 72;  return true;
+    case K_EYE:    x = SW - 62; y = 32; w = 54; h = 26; return true;
+  }
+  if(k < 0 || k >= 64) return false;
+  uint8_t r = k >> 4, c = k & 15, len; int16_t x0, kw;
+  kbRow(_kbdPage, r, x0, kw, len);
+  if(c >= len) return false;
+  x = x0 + c * kw; y = KY0 + r * KROWH; w = kw - 2;
+  return true;
+}
+
+/*  Клавіша під пальцем — найближча в ряду: проміжків, де дотик пропадає,
+    немає.  */
+int8_t YoMenu::_kbKeyAt(int16_t x, int16_t y) const {
+  if(y < KY0){
+    if(x >= SW - 64 && y >= HDR + 10) return K_EYE;       /* вище — зона стрілки «назад» */
+    return -1;
+  }
+  int r = (y - KY0) / KROWH; if(r > 4) r = 4;
+  if(r == 4) return x < 59 ? K_PAGE : x < 179 ? K_SPACE : x < 247 ? K_OK : K_CANCEL;
+  if(r == 3 && x < K_ROW3X) return K_SHIFT;
+  if(r == 3 && x >= SW - K_ROW3X) return K_BACK;
+  uint8_t len; int16_t x0, kw;
+  kbRow(_kbdPage, r, x0, kw, len);
+  int c = (x - x0) / kw;
+  if(x < x0) c = 0;
+  if(c >= len) c = len - 1;
+  return (int8_t)(r * 16 + c);
+}
+
+void YoMenu::_kbDrawKey(int8_t k, bool hl){
+  int16_t x, y, w, h;
+  if(!_kbKeyRect(k, x, y, w, h)) return;
+  if(k == K_EYE){ _drawKbdEye(); if(hl) dsp.drawRect(x, y, w, h, C_ACC); return; }
+  bool ok = k == K_OK;
+  uint16_t bg = hl ? (ok ? C_TXT : C_ACC) : (ok ? C_ACC : C_PAN2);
+  uint16_t fg = (hl || ok) ? C_BG : C_TXT;
+  dsp.fillRect(x, y, w, h, bg);
+  char t[20];
+  const GFXfont* f = &yoUI12b;
+  int16_t base = y + 23;
+  if(k < 64){ t[0] = KROWS[_kbdPage][k >> 4][k & 15]; t[1] = 0; }
+  else{
+    f = (k == K_SHIFT || k == K_BACK) ? &yoUI9b : &yoUI8;
+    base = y + 21;
+    const char* l = k == K_SHIFT ? (_kbdPage == 1 ? "abc" : "ABC") : k == K_BACK ? "<-" :
+                    k == K_PAGE ? (_kbdPage == 2 ? "абв" : "?123") : k == K_SPACE ? "пробіл" : k == K_OK ? "OK" : "відміна";
+    snprintf(t, sizeof(t), "%s", utf8Rus(l, false));
+  }
+  dsp.setFont(f); dsp.setTextSize(1); dsp.setTextColor(fg);
+  dsp.setCursor(x + (w - (int16_t)textW(t)) / 2, base); dsp.print(t);
+  dsp.setFont();
+}
+
 void YoMenu::_drawKbdKeys(){
-  for(uint8_t r=0;r<4;r++){
+  dsp.fillRect(0, KY0, SW, SH - KY0, C_BG);
+  for(uint8_t r = 0; r < 4; r++){
     const char* row = KROWS[_kbdPage][r];
-    uint8_t len = strlen(row);
-    int16_t y = KY0 + r*KROWH;
-    int16_t x0 = (r==2) ? (SW - len*KKW)/2 : (r==3 ? 48 : 0);
-    if(r==3){
-      dsp.fillRect(0, y, 46, KROWH-2, C_PAN2);
-      dsp.setFont(&yoUI9b); dsp.setTextColor(C_TXT);
-      dsp.setCursor(6, y+22); dsp.print(_kbdPage==1?"abc":"ABC"); dsp.setFont();
-    }
-    for(uint8_t c=0;c<len;c++){
-      int16_t x = x0 + c*KKW;
-      dsp.fillRect(x, y, KKW-2, KROWH-2, C_PAN2);
-      char k[2] = { row[c], 0 };
-      dsp.setFont(&yoUI12b); dsp.setTextColor(C_TXT);
-      dsp.setCursor(x+9, y+23); dsp.print(k); dsp.setFont();
-    }
-    if(r==3){
-      dsp.fillRect(SW-46, y, 46, KROWH-2, C_PAN2);
-      dsp.setFont(&yoUI9b); dsp.setTextColor(C_TXT);
-      dsp.setCursor(SW-34, y+22); dsp.print("<-"); dsp.setFont();
+    for(uint8_t c = 0; c < strlen(row); c++) _kbDrawKey((int8_t)(r * 16 + c), false);
+  }
+  for(int8_t k = K_SHIFT; k <= K_EYE; k++) _kbDrawKey(k, false);
+}
+
+/*  Прибрати збільшену клавішу: перемалювати все, що вона накривала.  */
+void YoMenu::_kbRestore(int16_t px, int16_t py, int16_t pw, int16_t ph){
+  dsp.fillRect(px, py, pw, ph, C_BG);
+  for(int8_t k = 0; k <= K_EYE; k++){
+    int16_t x, y, w, h;
+    if(!_kbKeyRect(k, x, y, w, h)) continue;
+    if(x < px + pw && x + w > px && y < py + ph && y + h > py) _kbDrawKey(k, k == _kbShown);
+  }
+  if(py < KY0){ _kbdField.redraw(); }
+}
+
+/*  Такт клавіатури в задачі дисплея.  */
+void YoMenu::_kbRender(){
+  uint8_t d = _kbDirty;
+  if(!d) return;
+  _kbDirty &= ~d;
+  if(d & 2){ _drawKbdKeys(); _kbShown = -1; _kbPopX = -1; d |= 8; }
+  if(d & 1) _kbdRefresh();
+  if(d & 4) _drawKbdEye();
+  if(d & 8){
+    int8_t want = _kbDown ? _kbKey : -1;
+    if(want != _kbShown){
+      int8_t old = _kbShown;
+      _kbShown = want;
+      if(_kbPopX >= 0){ int16_t px = _kbPopX; _kbPopX = -1; _kbRestore(px, _kbPopY, 44, 50); }
+      if(old >= 0) _kbDrawKey(old, false);
+      if(want >= 0){
+        _kbDrawKey(want, true);
+        int16_t x, y, w, h;
+        if(want < 64 && _kbKeyRect(want, x, y, w, h)){
+          /*  Збільшена клавіша над пальцем — видно, що саме введеться, ще
+              до відпускання; палець можна довести до потрібної.  */
+          int16_t px = x + w / 2 - 22, py = y - 52;
+          if(px < 0) px = 0;
+          if(px > SW - 44) px = SW - 44;
+          if(py < HDR + 2) py = HDR + 2;
+          dsp.fillRect(px, py, 44, 50, C_ACC);
+          dsp.fillRect(px + 2, py + 2, 40, 46, C_BG);
+          char t[2] = { KROWS[_kbdPage][want >> 4][want & 15], 0 };
+          dsp.setFont(&yoUI12b); dsp.setTextSize(2); dsp.setTextColor(C_ACC);
+          int16_t x1, y1; uint16_t tw, th;
+          dsp.getTextBounds(t, 0, 40, &x1, &y1, &tw, &th);
+          dsp.setCursor(px + (44 - (int16_t)tw) / 2 - x1, py + 38);
+          dsp.print(t);
+          dsp.setTextSize(1); dsp.setFont();
+          _kbPopX = px; _kbPopY = py;
+        }
+      }
     }
   }
-  _drawKbdEye();
-  int16_t y = KY0 + 4*KROWH;
-  struct { int16_t x,w; const char* s; uint16_t bg; } ab[4] = {
-    { 0,   58, _kbdPage==2?"абв":"?123", C_PAN2 },
-    { 60, 118, "пробіл",                 C_PAN2 },
-    { 180, 66, "OK",                     C_ACC  },
-    { 248, 72, "відміна",                C_PAN2 } };
-  for(uint8_t i=0;i<4;i++){
-    dsp.fillRect(ab[i].x, y, ab[i].w, KROWH-2, ab[i].bg);
-    dsp.setFont(&yoUI8); dsp.setTextColor(ab[i].bg==C_ACC?C_BG:C_TXT);
-    char t[20]; snprintf(t, sizeof(t), "%s", utf8Rus(ab[i].s, false));
-    int16_t x1,y1; uint16_t tw,th; dsp.getTextBounds(t,0,40,&x1,&y1,&tw,&th);
-    dsp.setCursor(ab[i].x + (ab[i].w-(int16_t)tw)/2, y+21); dsp.print(t); dsp.setFont();
+}
+
+/*  Дія клавіші — при відпусканні пальця, з тієї клавіші, де він був
+    наостанок (а не де торкнувся).  */
+void YoMenu::_kbAction(int8_t k){
+  if(!_kbdTarget) return;
+  size_t l = strlen(_kbdTarget);
+  if(k >= 0 && k < 64){
+    char ch = KROWS[_kbdPage][k >> 4][k & 15];
+    if(ch && l + 1 < _kbdMax){ _kbdTarget[l] = ch; _kbdTarget[l+1] = '\0'; }
+    _kbDirty |= 1;
+    return;
+  }
+  switch(k){
+    case K_BACK:  if(l > 0) _kbdTarget[l-1] = '\0'; _kbDirty |= 1; return;
+    case K_SPACE: if(l + 1 < _kbdMax){ _kbdTarget[l] = ' '; _kbdTarget[l+1] = '\0'; } _kbDirty |= 1; return;
+    case K_SHIFT: _kbdPage = (_kbdPage == 1) ? 0 : 1; _kbDirty |= 2; return;
+    case K_PAGE:  _kbdPage = (_kbdPage == 2) ? 0 : 2; _kbDirty |= 2; return;
+    case K_EYE:   _kbdShow = !_kbdShow; _kbDirty |= 1 | 4; return;
+    case K_OK:
+      /*  OK: лишаємо набране. Раніше тут, як і у відміні, викликався
+          _loadWifi(), який перечитує поля з налаштувань — тобто набраний
+          пароль щоразу губився, і ввести мережу з екрана було неможливо. */
+      if(_kbdNext == 1 && _wSsid[0]){            /* назву є — тепер пароль */
+        _kbdNext = 2;
+        snprintf(_kbdTitleBuf, sizeof(_kbdTitleBuf), "пароль: %s", _wSsid);
+        _openKbd(_wPass, YOM_PASS_LEN, true, _kbdTitleBuf);
+        return;
+      }
+      if(_kbdNext == 2){ _kbdNext = 0; _wifiConnect(); return; }
+      _kbdNext = 0;
+      if(_kbdBack == PG_WIFI) _showWifi();
+      _show(_kbdBack);
+      return;
+    case K_CANCEL:
+      /*  Відміна: повертаємо те, що було до правки.  */
+      _kbdNext = 0;
+      strlcpy(_kbdTarget, _kbdUndo, _kbdMax);
+      if(_kbdBack == PG_WIFI) _showWifi();
+      _show(_kbdBack);
+      return;
   }
 }
 
@@ -1937,8 +2102,8 @@ void YoMenu::_openKbd(char* target, size_t max, bool isPass, const char* title){
   if(_cur != PG_KBD) _kbdBack = _cur;   /* з клавіатури на клавіатуру — назад туди ж, звідки прийшли */
   strlcpy(_kbdUndo, target, sizeof(_kbdUndo));   /* щоб відміна справді відміняла */
   _kbdShow = true;                 /* набирати наосліп по зірочках — мука */
-  _show(PG_KBD);
-  _kbdRefresh();
+  _kbDown = false; _kbKey = -1; _kbShown = -1; _kbPopX = -1;
+  _show(PG_KBD);                   /* рядок і клавіші намалює задача дисплея */
 }
 
 /*  ---------- дотики ---------- */
@@ -1949,6 +2114,13 @@ void YoMenu::onRelease(uint16_t x, uint16_t y, uint32_t held){
   _lastAct = millis();
   /*  координати тут — місця натискання, а не відпускання: значення вже взяте з руху  */
   if(_cur == PG_EQ && _eqBand >= 0){ _eqBand = -1; _eqApply(true); return; }
+  if(_cur == PG_KBD){
+    int8_t k = _kbKey;
+    bool was = _kbDown, rep = _kbRep;
+    _kbDown = false; _kbKey = -1; _kbRep = false;
+    _kbDirty |= 8;
+    if(was && k >= 0){ if(!(k == K_BACK && rep)) _kbAction(k); return; }
+  }
   if(_isList(_cur)){
     if(_smHold >= 0){                      /* відпустили кнопку списку */
       int8_t b = _smHold; _smHold = -1; _smBtnDraw = 4 + b;   /* 4+ — намалювати відпущеною */
@@ -1972,6 +2144,13 @@ void YoMenu::onRelease(uint16_t x, uint16_t y, uint32_t held){
 
 void YoMenu::onPress(uint16_t x, uint16_t y){
   _lastAct = millis();
+  if(_cur == PG_KBD && _fadeStep < 0){
+    _kbKey = _kbKeyAt(x, y);
+    _kbDown = _kbKey >= 0;
+    _kbDownT = millis(); _kbRep = false;
+    _kbDirty |= 8;
+    return;
+  }
   if(_cur == PG_EQ && _fadeStep < 0 && y >= EQ_COL0 && y < EQ_T1 + 12){
     int b = ((int)x - CX) * 10 / CW;
     if(b < 0) b = 0; if(b > 9) b = 9;
@@ -1997,6 +2176,22 @@ void YoMenu::onPress(uint16_t x, uint16_t y){
 void YoMenu::onDrag(uint16_t x, uint16_t y){
   (void)x;
   if(_cur == PG_EQ && _eqBand >= 0){ _eqTouch(y); return; }
+  if(_cur == PG_KBD && _kbDown){
+    /*  Палець поїхав: клавіша міняється, лише коли він вийшов за межі
+        поточної на 5 пікселів, — дрож на межі не перемикає сусідню.  */
+    int16_t kx, ky, kw, kh;
+    int8_t cur = _kbKey;
+    bool inside = cur >= 0 && _kbKeyRect(cur, kx, ky, kw, kh) &&
+                  (int)x >= kx - 5 && (int)x < kx + kw + 5 && (int)y >= ky - 5 && (int)y < ky + kh + 5;
+    if(!inside){
+      int8_t k = _kbKeyAt(x, y);
+      if(k != cur){ _kbKey = k; _kbDownT = millis(); _kbRep = false; _kbDirty |= 8; }
+    }
+    /*  «стерти», якщо тримати, стирає далі  */
+    uint32_t now = millis();
+    if(_kbKey == K_BACK && now - _kbDownT > 500 && now - _kbRepT > 110){ _kbRepT = now; _kbRep = true; _kbAction(K_BACK); }
+    return;
+  }
   if(!_dActive || !_isList(_cur)) return;
   int16_t dy = (int16_t)y - _dY0;
   if(!_dMoved){
@@ -2089,66 +2284,6 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
     return;                                    /* значок ліворуч — лише значок */
   }
 
-  if(_cur == PG_KBD){
-    size_t l = strlen(_kbdTarget);
-    int16_t ay = KY0 + 4*KROWH;
-    if(y >= ay){
-      if(x < 58){ _kbdPage = (_kbdPage==2)?0:2; _drawKbdKeys(); return; }
-      if(x < 180){ if(l+1 < _kbdMax){ _kbdTarget[l]=' '; _kbdTarget[l+1]='\0'; } }
-      else if(x < 248){
-        /*  OK: лишаємо набране. Раніше тут, як і у відміні, викликався
-            _loadWifi(), який перечитує поля з налаштувань — тобто набраний
-            пароль щоразу губився, і ввести мережу з екрана було неможливо. */
-        if(_kbdNext == 1 && _wSsid[0]){            /* назву є — тепер пароль */
-          _kbdNext = 2;
-          snprintf(_kbdTitleBuf, sizeof(_kbdTitleBuf), "пароль: %s", _wSsid);
-          _openKbd(_wPass, YOM_PASS_LEN, true, _kbdTitleBuf);   /* пароль — зірочками: його видно з-за плеча */
-          return;
-        }
-        if(_kbdNext == 2){ _kbdNext = 0; _wifiConnect(); return; }
-        _kbdNext = 0;
-        if(_kbdBack==PG_WIFI) _showWifi();
-        _show(_kbdBack); return;
-      }
-      else {
-        /*  Відміна: повертаємо те, що було до правки.  */
-        _kbdNext = 0;
-        if(_kbdTarget) strlcpy(_kbdTarget, _kbdUndo, _kbdMax);
-        if(_kbdBack==PG_WIFI) _showWifi();
-        _show(_kbdBack); return;
-      }
-    }else if(y < KY0 && (int)x >= SW-62){        /* око: показати чи сховати */
-      _kbdShow = !_kbdShow;
-      _drawKbdEye();
-      _kbdRefresh();
-      return;
-    }else if(y >= KY0){
-      uint8_t r = (y - KY0)/KROWH;
-      if(r > 3) return;
-      const char* row = KROWS[_kbdPage][r];
-      uint8_t len = strlen(row);
-      int16_t x0 = (r==2) ? (SW - len*KKW)/2 : (r==3 ? 48 : 0);
-      if(r==3 && x < 46){ _kbdPage = (_kbdPage==1)?0:1; _drawKbdKeys(); return; }
-      if(r==3 && x >= SW-46){
-        if(l>0) _kbdTarget[l-1]='\0';
-        _kbFlashX = SW-46; _kbFlashY = KY0 + r*KROWH; _kbFlashW = 46; _kbFlashH = KROWH-2;
-      }
-      else{
-        if((int)x < x0) return;
-        uint8_t c = (x - x0)/KKW;
-        if(c >= len) return;
-        if(l+1 < _kbdMax){ _kbdTarget[l]=row[c]; _kbdTarget[l+1]='\0'; }
-        /*  Видно, куди саме влучив палець: клавіша спалахує на мить.  */
-        _kbFlashX = x0 + c*KKW; _kbFlashY = KY0 + r*KROWH; _kbFlashW = KKW-2; _kbFlashH = KROWH-2;
-      }
-      if(_kbFlashX >= 0){
-        dsp.fillRect(_kbFlashX, _kbFlashY, _kbFlashW, _kbFlashH, C_ACC);
-        _kbFlashT = millis();
-      }
-    }else return;
-    _kbdRefresh();
-    return;
-  }
 
   if(_isSound(_cur) && _hitSound(x, y)) return;
   switch(_cur){

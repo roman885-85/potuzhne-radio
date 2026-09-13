@@ -414,6 +414,28 @@ void yodbgLoop(){
       /*  Хто скільки процесора з'їв: список задач FreeRTOS від самого ядра.  */
       printRunningTasks(Serial);
     }
+    else if(!strcmp(buf,"wscan")){
+      /*  Що бачить радіо: назва, сигнал, канал, захист, BSSID. 5 ГГц ESP32-S3 не бачить зовсім.  */
+      network.pauseSta(true);
+      int16_t n = WiFi.scanNetworks(false, true);
+      static const char* AUTH[] = { "відкрита", "WEP", "WPA", "WPA2", "WPA/WPA2", "WPA2-Ent", "WPA3", "WPA2/WPA3", "WAPI", "OWE", "WPA3-Ent", "WPA3-Ent192" };
+      for(int16_t i = 0; i < n; i++){
+        uint8_t a = WiFi.encryptionType(i);
+        Serial.printf("WSCAN %-32s %4d dBm  кан %2d  %-10s %s\n", WiFi.SSID(i).c_str(), (int)WiFi.RSSI(i), (int)WiFi.channel(i),
+                      a < 12 ? AUTH[a] : "?", WiFi.BSSIDstr(i).c_str());
+      }
+      Serial.printf("WSCAN end %d\n", (int)n);
+      WiFi.scanDelete();
+      network.pauseSta(false);
+    }
+    else if(!strncmp(buf,"wjoin ",6)){
+      /*  wjoin <назва>|<пароль> — та сама спроба, що й з меню  */
+      char* bar = strchr(buf+6, '|');
+      if(bar){ *bar = 0; network.connectTo(buf+6, bar+1); Serial.printf("WJOIN %s\n", buf+6); }
+    }
+    else if(!strcmp(buf,"wtry")){
+      Serial.printf("WTRY стан=%d status()=%d ssid='%s' ip=%s\n", (int)network.tryState(), (int)WiFi.status(), WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+    }
     else if(!strcmp(buf,"wifioff")){
       /*  Погасити радіомодуль зовсім — перевірити, чи це він душить екран.  */
       WiFi.scanDelete();
@@ -466,6 +488,11 @@ void yodbgLoop(){
     else if(!strcmp(buf,"menu"))   yomenu.open();
     else if(!strcmp(buf,"mwifi"))  yomenu.openWifi(false);   /* без замка: це перевірка, а не режим точки доступу */
     else if(!strcmp(buf,"mclose")) yomenu.close();
+    else if(!strcmp(buf,"mkbd"))   yomenu.openKbdTest();
+    else if(!strcmp(buf,"kbtext")) Serial.printf("KBTEXT '%s'\n", yomenu.kbdTest());
+    else if(!strncmp(buf,"tdown ",6)){ int x=0,y=0; if(sscanf(buf+6,"%d %d",&x,&y)==2){ touchscreen.injectBegin(x,y); touchscreen.loop(); Serial.println("TDOWN"); } }
+    else if(!strncmp(buf,"tmove ",6)){ int x=0,y=0; if(sscanf(buf+6,"%d %d",&x,&y)==2){ touchscreen.injectMove(x,y); touchscreen.loop(); Serial.println("TMOVE"); } }
+    else if(!strcmp(buf,"tup"))    { touchscreen.injectEnd(); touchscreen.loop(); Serial.println("TUP"); }
     else if(!strncmp(buf,"mpage ",6)) yomenu.openPage((int8_t)atoi(buf+6));
     else if(!strncmp(buf,"tap ",4)){
       /*  Імітація дотику: дозволяє перевірити меню без людини біля екрана. */

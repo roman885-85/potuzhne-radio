@@ -32,6 +32,7 @@ class UiText : public Widget {
     void setText(const char* txt);
     void setText(int val, const char* fmt);
     void setColor(uint16_t fg){ _fgcolor = fg; }
+    void redraw(){ if(_active && !_locked){ _clear(); _draw(); } }   /* поверх його щось малювали */
   protected:
     const GFXfont* _font = nullptr;
     char     _text[52] = {0};
