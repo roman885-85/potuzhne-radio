@@ -1111,6 +1111,7 @@ void Display::_start() {
   _time(false);
   drawHeaderIcons();      /* при завантаженні сторінка ставиться тут, а не через _swichMode */
   _bootStep = 2;
+  if(_lostPending){ _lostPending = false; if(network.linkLost && WiFi.status() != WL_CONNECTED) putRequest(NEWMODE, LOST); }
   pm.on_display_player();
 }
 
@@ -1135,7 +1136,7 @@ void Display::_swichMode(displayMode_e newmode) {
       діалог «немає зв'язку» писав у ще не виділений буфер — і радіо
       перезавантажувалось по колу. До готового плеєра режими не міняємо —
       стан мережі наздожене її власний цикл.  */
-  if (_bootStep != 2) return;
+  if (_bootStep != 2){ if(newmode == LOST) _lostPending = true; return; }
   if(_fmOn){
     /*  Годинник спільний із заставкою — розблокувати; покажчику рівня
         повернути звичний розмір. Повернемось на плеєр — _favMain() знову

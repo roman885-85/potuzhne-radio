@@ -31,7 +31,7 @@ class MyNetwork {
     void connectTo(const char* ssid, const char* pass);   /* спроба просто зараз */
     n_Try_e tryState() const { return _try; }
     const char* trySsid() const { return _tryS; }
-    void tryClear(){ _try = TRY_NONE; }
+    void tryClear();                 /* спробу закрито; не вийшло — повертаємось до збережених мереж */
   private:
     uint32_t _reAt = 0;              /* час наступної спроби */
     uint32_t _pauseAt = 0;           /* коли спинили спроби */

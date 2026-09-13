@@ -69,7 +69,8 @@ class YoMic {
     bool     sweepDsp() const { return _swDsp; }   /* тони йшли через еквалайзер — перевірка самої обробки */
     void     sweepAbort() { if(_swState == 1) _swStop = true; }
     uint8_t  sweepState() const { return _swState; }   /* 0 не міряли, 1 міряє, 2 готово, 3 перервано */
-    const char* simStart(uint8_t kind, uint8_t count, uint16_t gapMs);   /* перевірка: 0 хлопки, 1 стук через свій динамік */
+    const char* simStart(uint8_t kind, uint8_t count, uint16_t gapMs);   /* перевірка: 0 хлопки, 1 стук, 2 голос — через свій динамік */
+    volatile uint32_t minMs = 60000;              /* «хвилина» таймера сну й присутності (перевірка: 1000) */
     bool     simBusy() const { return _tsKind != 0; }
     volatile bool _dbg = false;                    /* друкувати кожен удар і рішення */
     uint8_t  sweepPos() const { return _swPos; }
@@ -104,6 +105,7 @@ class YoMic {
     uint32_t _foreignMs = 0;
     float    _cLo = 0, _cHi = 0;                /* «динамік → мікрофон» по смугах, дБ */
     uint16_t _cN = 0;
+    uint8_t  _roomRun = 0;
     uint16_t _coupleN = 0;
     uint32_t _earFrom = 0, _presFrom = 0, _wokeFor = 0;
     uint32_t _blocks = 0;

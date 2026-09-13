@@ -335,6 +335,12 @@ static void onRecFile(AsyncWebServerRequest* r){
 }
 
 /*  ---------- Wi-Fi ---------- */
+/*  Підключення, замовлене сторінкою: що й чим закінчилось  */
+static char     _wjS[33] = {0}, _wjP[65] = {0}, _wjIp[16] = {0};
+static bool     _wjRun = false;
+static uint8_t  _wjRes = 0;          /* n_Try_e */
+static uint32_t _wjT = 0, _wjStartAt = 0;
+
 static void onWifi(AsyncWebServerRequest* r){
   char ss[WF_MAX][33], pw[WF_MAX][65];
   uint8_t n = readWifi(ss, pw);
@@ -349,6 +355,7 @@ static void onWifi(AsyncWebServerRequest* r){
   for(uint8_t i = 0; i < _scanN; i++){ o.obj(); o.ks("s", _scan[i].s); o.kn("r", _scan[i].r); o.kn("e", _scan[i].e); o.put('}'); }
   o.put(']');
   o.ks("fail", extras.wifiFail);
+  o.k("join"); o.put('{'); o.ks("s", _wjS); o.kn("st", _wjRes); o.ks("ip", _wjIp); o.kn("ago", _wjT ? (millis() - _wjT) / 1000 : -1); o.put('}');
   o.put('}');
   sendJson(r, o.b, o.n);
 }
@@ -589,21 +596,19 @@ static void apply(const WebCmd& c){
       if(!_scanning){ network.pauseSta(true); WiFi.scanDelete(); WiFi.scanNetworks(true, false); _scanning = true; _scanT0 = millis(); }
     }
     else if(!strcmp(k, "wifiJoin")){
+      /*  Як на самому радіо: підключаємось просто зараз, без перезавантаження,
+          а результат сторінка бере з /api/wifi (join). Вдалося — мережа
+          стає першою в списку; ні — радіо повертається до збережених.  */
       const char* t = strchr(v, '\t');
       if(!t) return;
-      char nss[33]; size_t l = t - v; if(l > 32) l = 32; memcpy(nss, v, l); nss[l] = 0;
-      char ss[WF_MAX][33], pw[WF_MAX][65];
-      uint8_t n = readWifi(ss, pw);
-      String out = String(nss) + "\t" + String(t + 1) + "\n";
-      uint8_t m = 1;
-      for(uint8_t i = 0; i < n && m < WF_MAX; i++){
-        if(!strcmp(ss[i], nss)) continue;
-        out += String(ss[i]) + "\t" + String(pw[i]) + "\n"; m++;
-      }
-      extras.wifiPending(nss);
-      config.setLastSSID(1);
-      delay(300);                        /* відповідь сторінці встигає піти */
-      config.saveWifiFromNextion(out.c_str());   /* записує й перезавантажує */
+      if(network.tryState() == TRY_RUN || _wjRun || _wjStartAt){ _msg = "радіо вже підключається"; return; }
+      size_t l = t - v; if(l > 32) l = 32;
+      memcpy(_wjS, v, l); _wjS[l] = 0;
+      strlcpy(_wjP, t + 1, sizeof(_wjP));
+      _wjRes = TRY_RUN; _wjIp[0] = 0; _wjT = millis();
+      /*  перемикаємо за пів секунди: відповідь сторінці має встигнути піти,
+          поки радіо ще в цій мережі  */
+      _wjStartAt = millis() + 600;
     }
     else if(!strcmp(k, "wifiForget") || !strcmp(k, "wifiFirst")){
       char ss[WF_MAX][33], pw[WF_MAX][65];
@@ -611,8 +616,8 @@ static void apply(const WebCmd& c){
       int f = -1; for(uint8_t i = 0; i < n; i++) if(!strcmp(ss[i], v)) f = i;
       if(f < 0) return;
       if(!strcmp(k, "wifiForget")){
-        /*  Прибрати можна й останню: радіо тоді підніме власну точку доступу,
-            а сторінка про це попереджає.  */
+        /*  Прибрати можна й останню: після вимкнення радіо лишиться без мережі
+            й попросить вибрати її на екрані; сторінка про це попереджає.  */
         for(uint8_t i = f; i + 1 < n; i++){ strcpy(ss[i], ss[i+1]); strcpy(pw[i], pw[i+1]); }
         n--;
       }else{
@@ -644,6 +649,35 @@ static void apply(const WebCmd& c){
 
 void yoWebApiLoop(){
   if(!_q) return;
+  if(_wjStartAt && (int32_t)(millis() - _wjStartAt) >= 0){
+    _wjStartAt = 0;
+    _wjRun = true;
+    network.connectTo(_wjS, _wjP);
+  }
+  if(_wjRun){
+    n_Try_e st = network.tryState();
+    if(st == TRY_OK){
+      /*  вдалося: мережа — першою в списку, решта збережених за нею  */
+      char ss[WF_MAX][33], pw[WF_MAX][65];
+      uint8_t n = readWifi(ss, pw);
+      String out = String(_wjS) + "\t" + String(_wjP) + "\n";
+      uint8_t m = 1;
+      for(uint8_t i = 0; i < n && m < WF_MAX; i++){
+        if(!strcmp(ss[i], _wjS)) continue;
+        out += String(ss[i]) + "\t" + String(pw[i]) + "\n"; m++;
+      }
+      config.saveWifiList(out.c_str());
+      config.setLastSSID(1);
+      strlcpy(_wjIp, WiFi.localIP().toString().c_str(), sizeof(_wjIp));
+      _wjRes = TRY_OK; _wjRun = false; _wjP[0] = 0;
+      network.tryClear();
+    }else if(st == TRY_BADPASS || st == TRY_NOTFOUND || st == TRY_FAIL){
+      _wjRes = st; _wjRun = false; _wjP[0] = 0;
+      network.tryClear();                      /* назад до збережених мереж */
+    }else if(st == TRY_NONE){
+      _wjRes = TRY_FAIL; _wjRun = false; _wjP[0] = 0;   /* спробу закрило меню радіо */
+    }
+  }
   WebCmd c;
   /*  по одній за прохід: команда плеєра може тривати, звук важливіший  */
   if(xQueueReceive(_q, &c, 0) == pdTRUE) apply(c);

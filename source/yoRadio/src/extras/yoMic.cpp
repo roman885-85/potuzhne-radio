@@ -224,8 +224,13 @@ void YoMic::_block(int16_t* x, int16_t* ref, bool playing){
   else if((_blocks & 15) == 0 && _noise < -20) _noise++;
   /*  тло — середній рівень за ~2 с (потужність), без самих ударів  */
   {
+    /*  Раніше тло оновлювалось лише тоді, коли звук тихіший за тло + 10 дБ, —
+        і музика, що завжди гучніша, його так і не зрушувала (-68 дБ при
+        музиці на -28). Тепер тло йде й за стійкою гучністю, а короткий удар
+        може підняти його не більше ніж на 10 дБ за блок.  */
     float pw = pow(10.0f, mdb / 10.0f), bg = pow(10.0f, _bgDb / 10.0f);
-    if(mdb < _bgDb + 10.0f) bg += (pw - bg) * 0.016f;
+    if(pw > bg * 10.0f) pw = bg * 10.0f;
+    bg += (pw - bg) * 0.03f;
     _bgDb = bg > 1e-10f ? 10.0f * log10(bg) : -100.0f;
   }
 
@@ -245,8 +250,16 @@ void YoMic::_block(int16_t* x, int16_t* ref, bool playing){
     _excess = mdb - _noise;                       /* своє мовчить — рахуємо від фону */
   }
   bool own = rdb > -60.0f;
-  bool roomSound = own ? _excess > 8.0f : db > _noise + 12;
-  if(roomSound){ _lastSound = now; _lastRoom = now; }
+  /*  Звук кімнати — стійкий: ~100 мс поспіль (3 блоки) і помітно гучніший —
+      над власним звуком на 10 дБ, у тиші на 15 дБ над фоном. Одиночний
+      сплеск музики чи далекий стук дверей тишу не перебиває, інакше «довго
+      тихо» не настає ніколи.  */
+  bool loudNow = own ? _excess > 10.0f : db > _noise + 15;
+  _roomRun = loudNow ? (_roomRun < 255 ? _roomRun + 1 : 255) : 0;
+  if(_roomRun >= 3){
+    _lastSound = now; _lastRoom = now;
+    if(_dbg && _roomRun == 3) Serial.printf("##ROOM#\tзвук кімнати: рівень %d, фон %d, понад своїм %.1f дБ\n", db, (int)_noise, _excess);
+  }
 
   /*  голос: WebRTC VAD на кадрах по 30 мс; поки грає — лише те, що
       вибивається над власним звуком (інакше співак у пісні — теж «голос»)  */
@@ -257,7 +270,10 @@ void YoMic::_block(int16_t* x, int16_t* ref, bool playing){
       bool sp = vad && vad_process(vad, vadBuf, MIC_FS, 30) == VAD_SPEECH && db > _noise + 6 && (!own || _excess > 6.0f);
       vadRun = sp ? (vadRun < 255 ? vadRun + 1 : 255) : 0;
       _speech = vadRun >= 4;                       /* ~120 мс поспіль — не клацання, а голос */
-      if(_speech){ _lastVoice = now; _lastRoom = now; }
+      if(_speech){
+        if(_dbg && now - _lastVoice > 1000) Serial.printf("##ROOM#\tголос: рівень %d, фон %d\n", db, (int)_noise);
+        _lastVoice = now; _lastRoom = now;
+      }
     }
   }
   _onset(x, own ? ref : nullptr, now);
@@ -274,6 +290,7 @@ void YoMic::_onset(int16_t* x, int16_t* ref, uint32_t now){
   dsps_fft2r_fc32(fftBuf, BLK);
   dsps_bit_rev_fc32(fftBuf, BLK);
   float val = 0, lo = 0, hi = 0;
+  double cenN = 0, cenD = 0;
   for(int b = 1; b < BLK/2; b++){
     float re = fftBuf[2*b], im = fftBuf[2*b+1];
     float m = sqrt(re*re + im*im);
@@ -285,6 +302,7 @@ void YoMic::_onset(int16_t* x, int16_t* ref, uint32_t now){
         якого удару широкосмуговий, а от тіло в стуку — низьке, у хлопку — високе  */
     if(b >= 2 && b <= 48)   lo += m * m;         /* ~60..1500 Гц: стук по корпусу */
     if(b >= 64 && b <= 224) hi += m * m;         /* ~2..7 кГц: хлопок */
+    if(b >= 2 && b <= 224){ cenN += (double)b * m * m; cenD += (double)m * m; }
     mag1[b] = m; ph2[b] = ph1[b]; ph1[b] = p;
   }
   _onLast = val;
@@ -337,13 +355,19 @@ void YoMic::_onset(int16_t* x, int16_t* ref, uint32_t now){
       плескати треба помітно гучніше за неї) і не тихіший за −62 дБ.  */
   bool loud = _lvl > _noise + 15 && _lvl > _bgDb + 10.0f && _lvl > -62 && val > 2.0f;
   bool apart = onN == 0 || now - onT[onN-1] > 100;          /* не частіше ніж раз на 100 мс */
-  uint8_t kind = hi > lo * 0.6f ? 1 : 2;
-  bool notOwn = !ref || (kind == 1 ? exHi > 8.0f : exLo > 8.0f);   /* удар у пісні радіо — не команда */
+  /*  Вид — за «центром ваги» спектра удару: хлопок у долоні зосереджений
+      вище ~1 кГц, стук по корпусу — нижче. Співвідношення двох смуг
+      залежало від того, як стоїть динамік і що він пропускає.  */
+  float centre = cenD > 0 ? (float)(cenN / cenD) * MIC_FS / BLK : 0;
+  uint8_t kind = centre > 1100.0f ? 1 : 2;
+  /*  удар у пісні радіо — не команда. У низу поріг вищий: на великій гучності
+      маленький динамік спотворює бас, і цих спотворень в опорному сигналі немає  */
+  bool notOwn = !ref || (kind == 1 ? exHi > 10.0f : exLo > 12.0f);
   if(kind == 1 && !clapOn) kind = 0;
   if(kind == 2 && !knockOn) kind = 0;
   bool accept = loud && notOwn && apart && kind;
-  if(_dbg) Serial.printf("##ONSET#\t%u val=%.2f поріг=%.2f низ=%.2f верх=%.2f рівень=%d фон=%d тло=%.0f понад=%.0f/%.0f вид=%u %s%s%s%s\n",
-                         (unsigned)now, val, thr, lo, hi, (int)_lvl, (int)_noise, _bgDb, exLo, exHi, kind,
+  if(_dbg) Serial.printf("##ONSET#\t%u центр=%.0fГц val=%.2f поріг=%.2f низ=%.2f верх=%.2f рівень=%d фон=%d тло=%.0f понад=%.0f/%.0f вид=%u %s%s%s%s\n",
+                         (unsigned)now, centre, val, thr, lo, hi, (int)_lvl, (int)_noise, _bgDb, exLo, exHi, kind,
                          loud ? "" : "тихо ", notOwn ? "" : "своє ", apart ? "" : "зарано ", accept ? "УДАР" : "");
   if(accept){
     if(onN == 4){ for(int i = 0; i < 3; i++){ onT[i] = onT[i+1]; onKind[i] = onKind[i+1]; } onN = 3; }
@@ -568,9 +592,9 @@ void YoMic::loop(){
   if(e.sleepEar && extras.sleepMinutes()){
     if(!_earFrom) _earFrom = now;
     uint32_t last = _lastRoom > _earFrom ? _lastRoom : _earFrom;
-    uint32_t need = (uint32_t)(e.sleepEarMin ? e.sleepEarMin : 10) * 60000UL;
+    uint32_t need = (uint32_t)(e.sleepEarMin ? e.sleepEarMin : 10) * minMs;
     if(now - last > need && extras.sleepSoon())
-      Serial.printf("##MIC#\tу кімнаті тихо %u хв — затихаю\n", (unsigned)(need / 60000));
+      Serial.printf("##MIC#\tу кімнаті тихо %u хв — затихаю\n", (unsigned)(need / minMs));
   }else _earFrom = 0;
 
   /*  Присутність: заговорили — екран прокидається; довго тихо — гасне.  */
@@ -583,7 +607,10 @@ void YoMic::loop(){
     uint32_t last = _lastRoom;
     if(extras.lastTouchMs() > last) last = extras.lastTouchMs();
     if(_presFrom > last) last = _presFrom;
-    extras.setPresenceDark(now - last > (uint32_t)e.presOff * 60000UL);
+    bool dark = now - last > (uint32_t)e.presOff * minMs;
+    if(dark && !extras.presenceDark()) Serial.println("##MIC#\tдовго тихо — гашу екран");
+    if(!dark && extras.presenceDark()) Serial.println("##MIC#\tу кімнаті хтось є — екран світить");
+    extras.setPresenceDark(dark);
   }else{ _presFrom = 0; extras.setPresenceDark(false); }
 }
 
@@ -600,7 +627,7 @@ const char* YoMic::simStart(uint8_t kind, uint8_t count, uint16_t gapMs){
   if(count > 6) count = 6;
   _tsCount = count; _tsGap = gapMs < 60 ? 60 : gapMs; _tsPos = 0;
   if(MUTE_PIN != 255) digitalWrite(MUTE_PIN, !MUTE_VAL);
-  _tsKind = kind ? 2 : 1;
+  _tsKind = kind >= 2 ? 3 : kind ? 2 : 1;
   return nullptr;
 }
 
@@ -612,13 +639,32 @@ void YoMic::_simChunk(int16_t* buf){
       хвіст, і вимкнений раніше підсилювач «з'їдав» останній удар  */
   uint32_t lead = fs * 4 / 10;                                  /* 400 мс: підсилювач щойно ввімкнено, він ще прокидається */
   uint32_t total = lead + period * (_tsCount - 1) + burst + fs * 3 / 2;
+  if(_tsKind == 3) total = lead + fs * 5 / 2 + fs * 3 / 2;          /* голос: 2,5 с «мови» */
   static uint32_t rnd = 22222;
   static int16_t prev = 0;
   for(uint32_t j = 0; j < FR; j++){
     uint32_t t = _tsPos + j;
     float v = 0;
     uint32_t n = t >= lead ? (t - lead) / period : 0xFFFF, k = t >= lead ? (t - lead) % period : 0;
-    if(n < _tsCount && k < burst){
+    if(_tsKind == 3){
+      /*  «голос»: гармоніки 140 Гц крізь три форманти (700, 1200, 2500 Гц),
+          склади 4 на секунду — WebRTC VAD такий сигнал бере за мову  */
+      if(t >= lead && t < lead + fs * 5 / 2){
+        float tt = (float)(t - lead) / fs;
+        float f0 = 140.0f + 10.0f * sin(2.0f * M_PI * 1.5f * tt);
+        static float ph = 0;
+        ph += 2.0f * M_PI * f0 / fs; if(ph > 2.0f * M_PI) ph -= 2.0f * M_PI;
+        float acc = 0;
+        for(int h = 1; h <= 20; h++){
+          float f = f0 * h;
+          float a = 1.0f / (1.0f + ((f - 700) / 150) * ((f - 700) / 150)) + 0.7f / (1.0f + ((f - 1200) / 200) * ((f - 1200) / 200))
+                  + 0.4f / (1.0f + ((f - 2500) / 300) * ((f - 2500) / 300));
+          acc += a * sin(ph * h);
+        }
+        float env = 0.5f * (1.0f - cos(2.0f * M_PI * 4.0f * tt));
+        v = acc * env * 0.22f;
+      }
+    }else if(n < _tsCount && k < burst){
       float tt = (float)k / fs;
       if(_tsKind == 1){
         rnd = rnd * 1664525UL + 1013904223UL;

@@ -1368,7 +1368,7 @@ VIEWS.wifi = page => {
       h('span', { class: 'pill' + (i === 0 ? ' acc' : '') }, i + 1),
       h('div', { class: 'lbl' }, h('b', null, s), s === data.cur ? h('small', null, 'підключено') : null),
       i > 0 ? btn('Першою', 'up', async () => { await setx({ wifiFirst: s }); load(); }, 'sm ghost') : null,
-      ibtn('trash', 'Забути', async () => { if (await confirmBox('Забути мережу?', data.saved.length > 1 ? `«${s}» і її пароль буде видалено з радіо.` : `«${s}» і її пароль буде видалено з радіо. Це остання збережена мережа: після перезавантаження радіо лишиться без мережі, і вибирати її доведеться на самому радіо.`, 'Забути', true)) { await setx({ wifiForget: s }); load(); } }, 'ghost sm'))));
+      ibtn('trash', 'Забути', async () => { if (await confirmBox('Забути мережу?', data.saved.length > 1 ? `«${s}» і її пароль буде видалено з радіо.` : `«${s}» і її пароль буде видалено з радіо. Це остання збережена мережа: після вимкнення радіо лишиться без мережі, і вибирати її доведеться на самому радіо.`, 'Забути', true)) { await setx({ wifiForget: s }); load(); } }, 'ghost sm'))));
     scan.textContent = '';
     if (data.busy) scan.append(h('div', { class: 'none' }, 'Шукаю мережі…'));
     else if (!data.scan.length) scan.append(h('div', { class: 'none' }, 'Натисніть «Шукати».'));
@@ -1386,19 +1386,54 @@ VIEWS.wifi = page => {
       ssid ? null : h('label', { class: 'fld' }, h('span', null, 'Назва мережі'), ss),
       ssid ? h('p', { style: { marginTop: 0 } }, h('b', null, ssid)) : null,
       enc ? h('label', { class: 'fld' }, h('span', null, 'Пароль'), pw, show) : h('p', { class: 'note' }, 'Відкрита мережа — пароль не потрібен.'),
-      h('p', { class: 'note' }, 'Радіо збереже мережу першою в списку й перезавантажиться. Якщо підключитися не вийде, воно спробує інші збережені мережі й скаже про це на екрані.'), err), [
+      h('p', { class: 'note' }, 'Радіо підключиться просто зараз, без перезавантаження, і скаже результат. Вдалося — мережа стане першою в списку; ні — радіо повернеться до мережі, де було. Якщо ця сторінка відкрита через ту саму мережу, зв\'язок на кілька секунд зникне.'), err), [
       btn('Скасувати', null, () => d.close(), 'ghost'),
       btn('Підключитися', 'wifi', async () => {
         const s = (ssid || ss.value).trim(), p = enc ? pw.value : '';
         if (!s) { err.textContent = 'Вкажіть назву мережі.'; return; }
         if (enc && p.length && p.length < 8) { err.textContent = 'Пароль Wi-Fi має бути не коротшим за 8 знаків.'; return; }
         const b = new URLSearchParams({ ssid: s, pass: p });
-        try { await api('/api/wifi/join', { method: 'POST', body: b }); } catch (e) { err.textContent = e.message; return; }
+        try { await api('/api/wifi/join', { method: 'POST', body: b }); }
+        catch (e) { if (!/помилка 4\d\d/.test(e.message) && !/задовга|немає назви/.test(e.message)) { /* зв'язок урвався — радіо вже перемикається */ } else { err.textContent = e.message; return; } }
         d.close();
-        page.textContent = '';
-        page.append(card('Підключаюся', h('p', null, `Радіо перезавантажується й підключається до «${s}».`), h('p', { class: 'note' }, 'Якщо адреса не зміниться, сторінка оновиться сама за хвилину.')));
-        setTimeout(() => location.reload(), 45000);
+        watch(s, enc);
       }, 'acc')]);
+  }
+  /*  Хід підключення: радіо відповідає в /api/wifi (join). Поки воно
+      перемикається, сторінка може на кілька секунд втратити зв'язок.  */
+  function watch(s, enc) {
+    const box = h('section', { class: 'card' });
+    page.prepend(box);
+    const t0 = Date.now();
+    let lost = 0;
+    const show = (title, text, kind, extra) => {
+      box.textContent = '';
+      box.append(h('h2', null, title), h('p', { style: { color: kind === 'bad' ? 'var(--bad)' : kind === 'ok' ? 'var(--ok, #5ccf6a)' : '' } }, text), extra || null);
+    };
+    show('Підключаюся', `Радіо підключається до «${s}»…`);
+    const tick = async () => {
+      let j = null;
+      try { j = (await api('/api/wifi')).join; lost = 0; } catch (e) { lost++; }
+      const secs = (Date.now() - t0) / 1000;
+      if (j && j.s === s && j.st !== 1 && j.ago >= 0 && j.ago <= secs + 5) {
+        if (j.st === 2) {
+          const here = location.hostname === j.ip;
+          show('Готово', `Радіо в мережі «${s}», адреса ${j.ip}.`, 'ok',
+            here ? null : h('p', null, h('a', { href: `http://${j.ip}/` }, `Відкрити сторінку радіо: http://${j.ip}/`)));
+          load();
+        } else {
+          const why = j.st === 3 ? 'невірний пароль' : j.st === 4 ? 'мережі не видно (радіо бачить лише 2,4 ГГц)' : 'підключитися не вдалося';
+          show('Не вийшло', `«${s}»: ${why}. Радіо повертається до мережі, де було.`, 'bad',
+            h('div', { class: 'bar' }, btn('Спробувати ще', 'wifi', () => { box.remove(); join(s, enc); }, 'sm')));
+          load();
+        }
+        return;
+      }
+      if (lost >= 4) show('Підключаюся', `Зв'язку зі сторінкою поки немає: радіо перемикається на «${s}». Якщо воно лишиться там, його нова адреса — внизу екрана радіо.`);
+      if (secs < 60) setTimeout(tick, 1500);
+      else show('Невідомо', 'Радіо так і не відповіло. Подивіться на екран радіо: там видно мережу й адресу.', 'bad');
+    };
+    setTimeout(tick, 1500);
   }
   load();
   if (!data || !data.scan.length) doScan();

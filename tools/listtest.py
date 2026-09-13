@@ -40,7 +40,9 @@ run("shold 120 56 60", 1.2); b = st(); check("дотик до рядка на 2 
 run("shold 120 152 60", 1.2); c = st(); check("дотик до сусіднього рядка", c == s + 1, f"{b} → {c}")
 os.write(p.fd, b"shold 120 184 60\n"); time.sleep(0.22)
 run("shold 120 184 60", 1.4); d = st(); check("другий дотик під час пружини вибирає, а не зупиняє", d is not None and d >= c + 3, f"{c} → {d}")
-run("shold 120 131 60", 1.2); e = st(); check("дотик біля межі смуги (+11 px) — та сама станція, не сусідня", e == d, f"{d} → {e}")
+run("shold 120 139 60", 1.2); e = st(); check("дотик на 3 px нижче смуги — наступна станція, не через одну", e == d + 1, f"{d} → {e}")
+run("shold 120 100 60", 1.2); e2 = st(); check("дотик на 4 px вище смуги — попередня, не через одну", e2 == e - 1, f"{e} → {e2}")
+e = e2
 t = run("drag 120 210 50 180", 3.2); f = st()
 check("кидок угору", f is not None and f - e >= 6, f"{e} → {f} (" + ";".join(l.split('\t')[1] for l in t.splitlines() if '##PL#' in l) + ")")
 t = run("drag 120 60 188 900", 3.4); g = st(); check("повільне ведення вниз на 4 рядки", g is not None and abs((f - g) - 4) <= 1, f"{f} → {g}")

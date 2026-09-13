@@ -378,11 +378,19 @@ void yodbgLoop(){
     }
     else if(!strncmp(buf,"aecmode ",8)){ int m=0,l=4; sscanf(buf+8, "%d %d", &m, &l); mic.aecSet((uint8_t)m, (uint8_t)l); Serial.printf("AEC режим %d, фільтр %d\n", m, l); }
     else if(!strncmp(buf,"micdbg ",7)){ mic._dbg = atoi(buf+7) != 0; Serial.printf("удари: %s\n", mic._dbg ? "друкую" : "мовчу"); }
+    else if(!strncmp(buf,"micfast ",8)){ mic.minMs = atoi(buf+8) ? 1000 : 60000; Serial.printf("хвилина мікрофона = %u мс\n", (unsigned)mic.minMs); }
+    else if(!strcmp(buf,"pres")){
+      uint32_t now = millis();
+      Serial.printf("PRES темно=%d пригашено=%d голос=%d тиша=%u с дотик=%u с сон=%u с ear=%u wake=%u off=%u\n",
+        extras.presenceDark()?1:0, extras.screenDim()?1:0, mic.speech()?1:0,
+        (unsigned)(mic.lastRoomMs() ? (now - mic.lastRoomMs()) / 1000 : 9999), (unsigned)((now - extras.lastTouchMs()) / 1000),
+        (unsigned)extras.sleepLeftSec(), extras.s.sleepEar, extras.s.presWake, extras.s.presOff);
+    }
     else if(!strncmp(buf,"micsim ",7)){
       /*  micsim <clap|knock> <скільки> <крок, мс>  */
       char kind[8] = {0}; int n = 2, gap = 300;
       sscanf(buf+7, "%7s %d %d", kind, &n, &gap);
-      const char* w = mic.simStart(!strcmp(kind, "knock") ? 1 : 0, (uint8_t)n, (uint16_t)gap);
+      const char* w = mic.simStart(!strcmp(kind, "voice") ? 2 : !strcmp(kind, "knock") ? 1 : 0, (uint8_t)n, (uint16_t)gap);
       Serial.printf("MICSIM %s\n", w ? w : "почато");
     }
     else if(!strcmp(buf,"micstop")){ mic.sweepAbort(); Serial.println("самоперевірка звуку: зупиняю"); }

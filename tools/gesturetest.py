@@ -52,6 +52,12 @@ def run(kind, n, gap, expect):
 def music(sec):
     """Станція грає з увімкненими хлопками й стуком: жодної команди бути не має."""
     p.ask("play 66", wait=1)
+    for _ in range(20):                         # дочекатися, доки справді заграє
+        if state()[1] == 1: break
+        drain(1.0)
+    if state()[1] != 1:
+        print("ПОМИЛКА музика: станція не заграла — перевірку не зроблено"); return 0
+    drain(3.0)                                  # зв'язок «динамік → мікрофон» вивчився
     txt = drain(sec)
     got = re.findall(r"##MIC#\t(.+)", txt)
     hits = [l for l in txt.splitlines() if "УДАР" in l]
@@ -63,6 +69,7 @@ VERB = "-v" in sys.argv
 p.ask("micon 1", wait=0.5)
 p.ask("micset 1 1 0", wait=0.5)
 p.ask("micdbg 1", wait=0.5)
+drain(4.0)                                      # мікрофон прогрівся: фон і поріг устоялись
 res = []
 res.append(run("clap", 2, 300, "2 хлопки"))
 res.append(run("clap", 3, 300, "3 хлопки"))

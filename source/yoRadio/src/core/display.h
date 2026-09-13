@@ -132,6 +132,7 @@ class Display {
     bool  _plScroll = false;
     float _plScrollPos = 0.0f;
     uint8_t _bootStep;
+    bool    _lostPending = false;   /* зв'язок зник ще на заставці — показати, щойно плеєр готовий */
     void _time(bool redraw = false);
     void _noNetScreen();          /* мережі немає: одразу список мереж */
     void _swichMode(displayMode_e newmode);

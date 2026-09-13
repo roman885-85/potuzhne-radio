@@ -99,6 +99,7 @@ class YoExtras {
     bool     screenDim() const { return _dark || _saver || _presDark || _pwmCur == 0; }   /* екран погашено чи пригашено */
     void     screenOff() { _dark = true; }       /* погасити до дотику (жест мікрофона) */
     void     setPresenceDark(bool d) { _presDark = d; }   /* мікрофон: у кімнаті давно тихо */
+    bool     presenceDark() const { return _presDark; }
     uint32_t lastTouchMs() const { return _lastTouch; }
     bool     sleepSoon();                  /* таймер сну: почати затихання зараз (у кімнаті тихо) */
     void     forceNight(int8_t on) { _forceNight = on; }

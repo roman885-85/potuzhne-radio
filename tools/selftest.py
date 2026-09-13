@@ -217,6 +217,10 @@ def main():
 
 def sweep(p, cmd, o, npts):
     """Запустити замір і дочекатися. → (state, рядки SW) або (None, [])."""
+    for _ in range(40):                     # попередній замір ще доігрує — чекаємо
+        rr = p.ask("micres", until=r"SWEEP end", wait=3)
+        if not any("SWEEP state=1" in l for l in rr): break
+        time.sleep(1)
     r = p.ask(cmd, until=r"самоперевірка звуку", wait=2)
     if o.v:
         for l in r:
@@ -247,18 +251,26 @@ def sweep(p, cmd, o, npts):
 
 def eq_read(p):
     """Поточні налаштування звуку — щоб повернути їх після перевірки."""
-    r = p.ask("eq", until=r"EQB 16000", wait=3)
+    r = p.ask("eq", until=r"EQB 16000", wait=6)
     h = grab(r, r"EQ on=(\d+) preset=(\d+)\(.*\) loud=(\d+) guard=(\d+) vbass=(\d+) room=(\d+)")
     bands = [int(l.split()[2]) for l in r if l.startswith("EQB ")]
     return h, bands
 
 
 def eq_restore(p, h, bands):
-    for i, b in enumerate(bands):
-        p.ask(f"eqb {i} {b}", until=r"смуга", wait=1)
-    p.ask(f"eqo {h[0]} {h[2]} {h[3]} {h[4]} {h[5]}", until=r"звук:", wait=1)
-    if h[1]:
-        p.ask(f"eqp {h[1]}", until=r"пресет", wait=1)
+    """Повернути налаштування звуку людини — і перевірити: команда в порту
+    може загубитись, а чужий еквалайзер лишати не можна."""
+    for attempt in range(4):
+        for i, b in enumerate(bands):
+            p.ask(f"eqb {i} {b}", until=r"смуга", wait=1.5)
+        p.ask(f"eqo {h[0]} {h[2]} {h[3]} {h[4]} {h[5]}", until=r"звук:", wait=1.5)
+        if h[1]:
+            p.ask(f"eqp {h[1]}", until=r"пресет", wait=1.5)
+        h2, b2 = eq_read(p)
+        if h2 and list(h2) == list(h) and b2 == bands:
+            return True
+    print("  УВАГА: налаштування звуку не вдалося повернути точно — перевірте еквалайзер")
+    return False
 
 
 def eq_check(p, o, raw_rows, result):

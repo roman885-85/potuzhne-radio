@@ -350,7 +350,21 @@ void MyNetwork::pauseSta(bool on){
 
 /*  Підключитись просто зараз: без перезавантаження й з негайною відповіддю.
     Відповідь дає подія: невірний пароль, мережі не видно чи вийшло.  */
+/*  Спробу закрито. Якщо радіо не в мережі (спроба вибила його з тієї, де
+    воно було, а нова не вдалась), повертаємось до збережених: раніше спроба
+    не позначала втрату зв'язку, і радіо так і лишалось без мережі.  */
+void MyNetwork::tryClear(){
+  _try = TRY_NONE;
+  if(WiFi.status() == WL_CONNECTED || status == SOFT_AP || config.ssidsCount == 0) return;
+  linkLost = true;
+  beginReconnect = true;
+  _reTry = 0; _reNext = 0;
+  _reAt = millis() + 500;
+}
+
 void MyNetwork::connectTo(const char* ssid, const char* pass){
+  /*  грало — після підключення (нового чи повернення) заграє знову  */
+  if(player.isRunning()) lostPlaying = true;
   strlcpy(_tryS, ssid, sizeof(_tryS));
   strlcpy(_tryP, pass ? pass : "", sizeof(_tryP));
   _try = TRY_RUN;
