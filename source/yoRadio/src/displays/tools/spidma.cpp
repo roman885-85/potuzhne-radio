@@ -105,8 +105,10 @@ void* spidmaScratch(size_t len){
   return s_buf;
 }
 
+uint32_t spidmaBytes = 0;                        /* налагодження: скільки пішло в екран */
 bool spidmaWrite(const void* buf, size_t len){
   if(!s_chan || s_broken || !buf || !len) return false;
+  spidmaBytes += len;
   const uint8_t* p = (const uint8_t*)buf;
   while(len){                                    /* довше за межу — кількома заходами */
     size_t c = len > SPIDMA_MAX ? SPIDMA_MAX : len;

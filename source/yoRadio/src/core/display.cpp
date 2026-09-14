@@ -1313,6 +1313,12 @@ void Display::loop() {
     else sfx.test(SFX_START);
   }
   if(_splashDemoUntil){
+#ifdef USE_YOMENU
+    /*  Кнопка «показати заставку» в меню: меню закривається в темряві (гасить
+        підсвітку) і засвічує її вже після. Заставка тут повертала керування
+        раніше, ніж меню встигало засвітити, — і вся йшла на чорному екрані.  */
+    if(yomenu.fading()) yomenu.render();
+#endif
     if(millis() < _splashDemoUntil && splash.active()){ splash.tick(); return; }
     _splashDemoUntil = 0; splash.stop(); forceRedraw();
     return;

@@ -329,6 +329,10 @@ void Config::_initHW(){
   }
   #endif
   #if BRIGHTNESS_PIN!=255
+    /*  Підсвітка — ШІМ 20 кГц замість типових 1 кГц ядра: на 1 кГц спалахи
+        підсвітки б'ються з розгорткою матриці, і на сірому тлі повільно
+        пливуть тьмяні смуги.  */
+    analogWriteFrequency(BRIGHTNESS_PIN, 20000);
     pinMode(BRIGHTNESS_PIN, OUTPUT);
     setBrightness(false);
   #endif

@@ -527,6 +527,9 @@ void yodbgLoop(){
       Serial.printf("  з них: меню %u мс, наплив %u мс, плеєр: %s %u мс\n",
                     (unsigned)yoMenuMs, (unsigned)yoFadeMs,
                     yoDspWhat[0] ? yoDspWhat : "-", (unsigned)yoDspWhatMs);
+      extern uint32_t spidmaBytes;
+      Serial.printf("  у екран через DMA: %u КБ за %u с\n", (unsigned)(spidmaBytes / 1024), (unsigned)ds);
+      spidmaBytes = 0;
       yoMenuMs = 0; yoFadeMs = 0; yoDspWhatMs = 0; yoDspWhat[0] = 0;
       yoDspN = 0; yoDspMax = 0; yoDspDraw = 0; yoDspNet = 0; yoDspFrom = millis();
       if(yoSlowMs) Serial.printf("найдовший крок циклу: %s %u мс\n", yoSlowWhat, (unsigned)yoSlowMs);
@@ -598,6 +601,9 @@ void yodbgLoop(){
       Serial.printf("ніч: %s %02u:%02u..%02u:%02u рівень %u, зараз ніч=%d темно=%d; підсвітка ціль %u\n",
         s.nightOn?"увімк":"вимк", s.nightFrom/2, (s.nightFrom%2)*30, s.nightTo/2, (s.nightTo%2)*30,
         s.nightLevel, extras.nightActive()?1:0, extras.dark()?1:0, extras.pwmTarget());
+#if BRIGHTNESS_PIN!=255
+      Serial.printf("підсвітка зараз: шпаруватість %u з 255, ШІМ %u Гц\n", (unsigned)ledcRead(BRIGHTNESS_PIN), (unsigned)ledcReadFreq(BRIGHTNESS_PIN));
+#endif
       Serial.printf("батарея %u мВ %d%% usb=%d; світлодіод %u; гучність %u override %d\n",
         extras.batMv(), extras.batPct(), extras.onUsb()?1:0, s.ledMode, config.store.volume, (int)player.volOverride);
     }
