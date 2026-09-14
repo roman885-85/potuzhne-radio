@@ -3,6 +3,7 @@
 #include "time.h"
 #include "rtcsupport.h"
 #include "network.h"
+#include "../extras/yoExtras.h"
 #include <esp_wifi.h>
 #include "display.h"
 #include "config.h"
@@ -466,7 +467,7 @@ void MyNetwork::_staUp(){
     _bootNoNet = false;
     config.initPlaylistMode();
     player.lockOutput = false;
-    if(config.store.smartstart == 1) player.sendCommand({PR_PLAY, config.lastStation()});
+    if(config.store.smartstart == 1 && !YoExtras::wokeForAlarm()) player.sendCommand({PR_PLAY, config.lastStation()});   /* перед будильником — тихо */
     if (network_on_connect) network_on_connect();
     pm.on_connect();
   }

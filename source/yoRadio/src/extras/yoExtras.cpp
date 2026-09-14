@@ -394,9 +394,14 @@ void YoExtras::_alarmWakeLoop(uint32_t now){
   static uint32_t t = 0;
   if(now - t < 1000) return;
   t = now;
-  /*  точний час: чекаємо синхронізації з мережею, але не довше 2 хвилин  */
-  const bool synced = sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED;
-  if(!synced && now < 120000UL) return;
+  /*  Точний час: мережа піднялась — ще 8 с на звірку годинника (SNTP), або
+      синхронізація вже відзвітувала; без мережі — не довше хвилини від старту.
+      Раніше чекали до 2 хвилин і з коротким запасом пропускали хвилину будильника.  */
+  static uint32_t netT = 0;
+  if(!netT && WiFi.status() == WL_CONNECTED) netT = now;
+  static bool synced = false;
+  if(!synced && sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) synced = true;
+  if(!synced && !(netT && now - netT > 8000) && now < 60000UL) return;
   const int32_t passed = _alarmPassedSecs();
   if(passed >= 0 && passed < 600 && (s_alarmTestAt || _lastAlarmKey != s.alarmH * 60 + s.alarmM)){
     /*  прокинулись пізніше, ніж треба (годинник у сні відстав) — дзвонимо одразу  */
