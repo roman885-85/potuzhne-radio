@@ -348,6 +348,7 @@ static bool s_wokeAlarm = false;
 static bool s_alarmQuiet = false;
 bool YoExtras::wokeByTouch(){ return s_wokeTouch; }
 bool YoExtras::wokeForAlarm(){ return s_wokeAlarm; }
+bool YoExtras::alarmQuiet(){ return s_alarmQuiet; }
 
 void YoExtras::_armAlarmWake(){
   s_alarmWakeArmed = 0;
@@ -394,6 +395,8 @@ void YoExtras::_alarmWakeLoop(uint32_t now){
   static uint32_t t = 0;
   if(now - t < 1000) return;
   t = now;
+  /*  станцію ввімкнули звідкись (сторінка, програма) — радіо вже просто працює  */
+  if(player.isRunning()){ Serial.println("##ALARM#\tстанцію ввімкнули до будильника — радіо увімкнене"); s_alarmQuiet = false; return; }
   /*  Точний час: мережа піднялась — ще 8 с на звірку годинника (SNTP), або
       синхронізація вже відзвітувала; без мережі — не довше хвилини від старту.
       Раніше чекали до 2 хвилин і з коротким запасом пропускали хвилину будильника.  */

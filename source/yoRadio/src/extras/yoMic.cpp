@@ -779,6 +779,10 @@ void YoMic::loop(){
     if(menu || now - extras.lastTouchMs() < 3500){
       Serial.printf("##MIC#\t%s — не рахую: %s\n", gestureName(g), menu ? "відкрите меню" : "торкались екрана");
       g = MG_NONE;
+    }else if(extras.alarmQuiet()){
+      /*  радіо «вимкнене» й чекає будильника в темряві — звуки кімнати його не вмикають  */
+      Serial.printf("##MIC#\t%s — не рахую: чекаю будильника\n", gestureName(g));
+      g = MG_NONE;
     }
   }
   if(g != MG_NONE){
