@@ -21,6 +21,26 @@
 volatile uint32_t yoAuUnderN = 0, yoAuUnderMs = 0, yoAuMinFill = 0xFFFFFFFF;   /* audiostat */
 volatile bool yoAuLog = true;
 #include "esp_timer.h"
+
+/*  Вивід у I2S пачками. Бібліотека віддавала драйверу кожен відлік окремим
+    i2s_write — 44 тисячі викликів на секунду з м'ютексом і чергою всередині.
+    Разом з обробкою звуку й розшифровкою https це забирало ядро майже цілком,
+    і будь-яка додаткова робота (перевірка оновлення, обкладинка) давала
+    провали на 20–30 мс при повному буфері потоку («пригальмовує з хрипом»).
+    Тепер відліки збираються по 512 (11,6 мс) і йдуть одним викликом.  */
+static uint32_t s_ob[512];
+static uint16_t s_on = 0;
+static void yoOutFlush(uint8_t port){
+    const size_t len = (size_t)s_on * 4;
+    size_t off = 0;
+    while(off < len){
+        size_t w = 0;
+        if(i2s_write((i2s_port_t)port, (const char*)s_ob + off, len - off, &w, pdMS_TO_TICKS(100)) != ESP_OK || !w) break;
+        off += w;
+    }
+    s_on = 0;
+}
+static inline void yoOutDrop(){ s_on = 0; }
 #include "../extras/yoSfx.h"
 #include "../extras/yoSpectrum.h"
 
@@ -2363,6 +2383,7 @@ uint32_t Audio::stopSong() {
         log_w("Closing audio file");  // for debug
     }
     memset(m_outBuff, 0, sizeof(m_outBuff));     //Clear OutputBuffer
+    yoOutDrop();
     i2s_zero_dma_buffer((i2s_port_t) m_i2s_num);
     return pos;
 }
@@ -2387,6 +2408,7 @@ bool Audio::pauseResume() {
         retVal = true;
         if(!m_f_running) {
             memset(m_outBuff, 0, sizeof(m_outBuff));               //Clear OutputBuffer
+            yoOutDrop();
             i2s_zero_dma_buffer((i2s_port_t) m_i2s_num);
         }
     }
@@ -4869,16 +4891,8 @@ bool Audio::playSample(int16_t sample[2]) {
     if(m_f_internalDAC) {
         s32 += 0x80008000;
     }
-    m_i2s_bytesWritten = 0;
-    esp_err_t err = i2s_write((i2s_port_t) m_i2s_num, (const char*) &s32, sizeof(uint32_t), &m_i2s_bytesWritten, 100);
-    if(err != ESP_OK) {
-        log_e("ESP32 Errorcode %i", err);
-        return false;
-    }
-    if(m_i2s_bytesWritten < 4) {
-        log_e("Can't stuff any more in I2S..."); // increase waitingtime or outputbuffer
-        return false;
-    }
+    s_ob[s_on++] = s32;
+    if(s_on >= sizeof(s_ob) / sizeof(s_ob[0])) yoOutFlush(m_i2s_num);
     /*  Налагодження (команда audiostat): чи встигає звук. Поки буфер I2S повний,
         запис блокується, і звук іде врівень із годинником. Не встигли подати
         відліки — годинник утік уперед, і цей відрив лишається: так рахуємо
