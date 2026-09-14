@@ -288,10 +288,10 @@ void YoExtras::_powerOff(){
   Serial.println("##POWER#\tвимикаюсь: сон до дотику");
   bool was = player.status() == PLAYING && !player.remoteStationName;
   recorder.stop();
-  if(player.status() == PLAYING){
-    player.sendCommand({PR_STOP, 0});
-    for(int i = 0; i < 40 && player.status() == PLAYING; i++) delay(25);
-  }
+  /*  Звук — затихає тут же, у головному циклі. Раніше зупинка йшла чергою, а
+      цикл чекав у delay(): плеєр у цей час не крутився, і за секунду радіо
+      засинало з обірваним звуком.  */
+  if(player.status() == PLAYING) player.fadeStop();
   /*  грало радіо — після ввімкнення хай грає далі (якщо «грати після ввімкнення» не вимкнено)  */
   if(was && config.store.smartstart != 2) config.saveValue(&config.store.smartstart, (uint8_t)1);
   if(sdman.ready) sdman.stop();
