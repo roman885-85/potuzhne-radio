@@ -43,6 +43,8 @@ YoMenu yomenu;
 #define yoUI9b  aaUI9b
 #define yoUI11  aaUI11
 #define yoUI12b aaUI12b
+#include "../displays/fonts/aa/aaUI6.h"
+#include "../displays/fonts/aa/aaUI26b.h"
 
 /*  Кольори зняті з Nextion: жовта шапка, темні панелі, білий текст.  */
 #define C_BG    0x0000
@@ -115,6 +117,60 @@ static const char* TITLES[7] = { "інформація", "еквалайзер",
 #define C_ROOM     0x07FF    /* поправка під кімнату — бірюзова */
 #define C_VOICE    0x07E0
 
+/*  ---------- стиль: заокруглені плашки й згладжені значки ----------
+    Усе малюється в кадр меню (uicanvas), тож краї фігур змішуються з тлом.
+    Кути плашок рахуються над відомим тлом (bg), а не над тим, що в кадрі:
+    кнопка, перемальована іншим кольором, не лишає на кутах слідів.  */
+#define R_BTN   7            /* кнопки */
+#define R_TILE  9            /* плитки */
+
+static void icGear(float cx, float cy, float s, uint16_t c){
+  dsp.arcAA(cx, cy, 5.2f * s, 2.3f * s, c);
+  for(uint8_t k = 0; k < 8; k++){
+    float a = k * 0.785398f;
+    dsp.lineAA(cx + 7.4f * s * sinf(a), cy - 7.4f * s * cosf(a), cx + 9.4f * s * sinf(a), cy - 9.4f * s * cosf(a), 2.7f * s, c);
+  }
+}
+static void icMenu(float cx, float cy, uint16_t c){
+  for(uint8_t i = 0; i < 3; i++) dsp.lineAA(cx - 8, cy - 6 + i * 6, cx + 8, cy - 6 + i * 6, 2.4f, c);
+}
+static void icStar(float cx, float cy, float R, uint16_t c){
+  float xy[20];
+  for(uint8_t i = 0; i < 10; i++){
+    float a = -1.5708f + i * 0.62832f;
+    float r = (i % 2) ? R * 0.45f : R;
+    xy[2 * i] = cx + r * cosf(a); xy[2 * i + 1] = cy + r * sinf(a);
+  }
+  dsp.polyAA(xy, 10, c);
+}
+/*  Хвилі мережі над точкою (cx, cy) — точка знизу.  */
+static void icWifi(float cx, float cy, float s, uint16_t c){
+  for(uint8_t k = 1; k <= 3; k++) dsp.arcAA(cx, cy, 5.5f * k * s, 2.4f * s, c, -45, 45);
+  dsp.fillCircleAA(cx, cy, 2.6f * s, c);
+}
+static void icPower(float cx, float cy, float r, float wd, uint16_t c){
+  dsp.arcAA(cx, cy, r, wd, c, 38, 322);
+  dsp.lineAA(cx, cy - r - 2.5f, cx, cy - r * 0.25f, wd, c);
+}
+static void icCross(float cx, float cy, float r, float wd, uint16_t c){
+  dsp.lineAA(cx - r, cy - r, cx + r, cy + r, wd, c);
+  dsp.lineAA(cx - r, cy + r, cx + r, cy - r, wd, c);
+}
+/*  «›» — перехід далі.  */
+static void icNext(float x, float cy, uint16_t c){
+  dsp.lineAA(x, cy - 5.5f, x + 5.5f, cy, 2.3f, c);
+  dsp.lineAA(x + 5.5f, cy, x, cy + 5.5f, 2.3f, c);
+}
+/*  Перша літера — велика: «Параметри», «Звук» (CP1251, як віддає utf8Rus).  */
+static void capFirst(char* t){
+  uint8_t c = (uint8_t)t[0];
+  if(c >= 'a' && c <= 'z') t[0] = c - 0x20;
+  else if(c >= 0xE0) t[0] = c - 0x20;
+  else if(c == 0xB3) t[0] = (char)0xB2;          /* і → І */
+  else if(c == 0xBF) t[0] = (char)0xAF;          /* ї → Ї */
+  else if(c == 0xBA) t[0] = (char)0xAA;          /* є → Є */
+}
+
 
 static const uint16_t SLEEP_MIN[5] = { 0, 15, 30, 60, 90 };
 static const char* const SLEEP_LBL[5] = { "вимк", "15", "30", "60", "90" };
@@ -152,8 +208,8 @@ void YoMenu::_build(){
 
   /*  TIMEZONE: поточний час і два лічильники  */
   _tmNow.init(wc(CX, 40, WA_CENTER), &yoUI12b, CW, 24, C_ACC, C_BG);
-  _tmH.init(wc(CX+60,  110, WA_CENTER), &yoUI12b, 70, 30, C_TXT, C_PANEL);
-  _tmM.init(wc(CX+160, 110, WA_CENTER), &yoUI12b, 70, 30, C_TXT, C_PANEL);
+  _tmH.init(wc(CX+60,  110, WA_CENTER), &yoUI12b, 70, 30, C_TXT, C_PANEL); _tmH.setInset(R_BTN);
+  _tmM.init(wc(CX+160, 110, WA_CENTER), &yoUI12b, 70, 30, C_TXT, C_PANEL); _tmM.setInset(R_BTN);
   _pg[PG_TIME]->addWidget(&_tmNow);
   _pg[PG_TIME]->addWidget(&_tmH);
   _pg[PG_TIME]->addWidget(&_tmM);
@@ -173,8 +229,8 @@ void YoMenu::_build(){
   _slSeg.setItems(5, SLEEP_LBL);
   _chkAlarm.init(wc(CX, AL_CHK_Y), &yoUI9, 110, C_TXT, C_BG, C_ACC); _chkAlarm.setLabel("будильник");
   _alStat.init(wc(CX+120, AL_CHK_Y-4, WA_RIGHT), &yoUI9, CW-120, 18, C_DIM, C_BG);
-  _alH.init(wc(CX+38,  AL_ROW_Y, WA_CENTER), &yoUI12b, 48, 30, C_TXT, C_PANEL);
-  _alM.init(wc(CX+178, AL_ROW_Y, WA_CENTER), &yoUI12b, 48, 30, C_TXT, C_PANEL);
+  _alH.init(wc(CX+38,  AL_ROW_Y, WA_CENTER), &yoUI12b, 48, 30, C_TXT, C_PANEL); _alH.setInset(R_BTN);
+  _alM.init(wc(CX+178, AL_ROW_Y, WA_CENTER), &yoUI12b, 48, 30, C_TXT, C_PANEL); _alM.setInset(R_BTN);
   _alDays.init(wc(CX, AL_DAYS_Y), &yoUI9b, CW, 28, C_TXT, C_BG, C_ACC, C_PAN2);
   _alDays.setItems(2, DAYS_LBL);
   _alSta.init(wc(CX, 200), &yoUI9, CW, 20, C_DIM, C_BG);
@@ -193,8 +249,8 @@ void YoMenu::_build(){
   _chkNight.init(wc(CX, NT_CHK_Y), &yoUI9, CW, C_TXT, C_BG, C_ACC); _chkNight.setLabel("нічний режим");
   _saveSeg.init(wc(CX, NT_SAVE_Y), &yoUI9b, CW, 26, C_TXT, C_BG, C_ACC, C_PAN2);
   _saveSeg.setItems(5, SAVE_LBL);
-  _nFrom.init(wc(CX+34,  NT_ROW_Y, WA_CENTER), &yoUI11, 66, 26, C_TXT, C_PANEL);
-  _nTo.init  (wc(CX+188, NT_ROW_Y, WA_CENTER), &yoUI11, 66, 26, C_TXT, C_PANEL);
+  _nFrom.init(wc(CX+34,  NT_ROW_Y, WA_CENTER), &yoUI11, 66, 26, C_TXT, C_PANEL); _nFrom.setInset(R_BTN);
+  _nTo.init  (wc(CX+188, NT_ROW_Y, WA_CENTER), &yoUI11, 66, 26, C_TXT, C_PANEL); _nTo.setInset(R_BTN);
   _nLevel.init(wc(CX, NT_LVL_Y), &yoUI9, CW, 0, 100, C_TXT, C_BG, C_ACC); _nLevel.setLabel("яскравість уночі");
   _pg[PG_NIGHT]->addWidget(&_bright);
   _pg[PG_NIGHT]->addWidget(&_saveSeg);
@@ -227,6 +283,7 @@ void YoMenu::_build(){
   /*  Клавіатура: єдиний віджет — рядок вводу. Самі клавіші статичні,
       їх досить намалювати один раз при відкритті.  */
   _kbdField.init(wc(8, 32), &yoUI12b, SW-74, 26, C_TXT, C_PANEL);
+  _kbdField.setInset(R_BTN);
   _pg[PG_KBD]->addWidget(&_kbdField);
 
   _buildSound();                     /* звук і мікрофон */
@@ -268,34 +325,21 @@ void YoMenu::_sidebar(){
   dsp.fillRect(SIDE, HDR, 1, SH-HDR, C_PAN2);
 }
 
-/*  П'ятикутна зірка з десяти трикутників від центру.  */
-static void drawStar(int16_t cx, int16_t cy, int16_t R, uint16_t c){
-  int16_t px[10], py[10];
-  for(uint8_t i=0;i<10;i++){
-    float a = -1.5708f + i * 0.62832f;
-    float r = (i % 2) ? R * 0.42f : R;
-    px[i] = cx + (int16_t)lroundf(r * cosf(a));
-    py[i] = cy + (int16_t)lroundf(r * sinf(a));
-  }
-  for(uint8_t i=0;i<10;i++){ uint8_t j = (i+1) % 10; dsp.fillTriangle(cx, cy, px[i], py[i], px[j], py[j], c); }
-}
-
 static void fitText(char* t, uint16_t w);      /* оголошення: сама вона нижче */
 
 void YoMenu::_chrome(const char* title, uint8_t icon){
-  dsp.fillRect(0, 0, SW, HDR, C_ACC);
-  if(icon == 1) drawStar(14, 15, 10, C_BG);
-  else if(icon == 2){ for(uint8_t i=0;i<3;i++) dsp.fillRect(5, 7 + i*6, 18, 3, C_BG); }
-  else{
-    dsp.drawCircle(14, 14, 6, C_BG); dsp.drawCircle(14, 14, 5, C_BG);
-    dsp.fillRect(13, 5, 3, 4, C_BG); dsp.fillRect(13, 19, 3, 4, C_BG);
-    dsp.fillRect(5, 13, 4, 3, C_BG); dsp.fillRect(19, 13, 4, 3, C_BG);
-  }
-  dsp.setFont(&yoUI12b); dsp.setTextSize(1); dsp.setTextColor(C_BG);
+  /*  Шапка — темна: жовтий значок і назва, біла стрілка повернення, під
+      ними тонка лінія, що гасне праворуч. Раніше — суцільна жовта смуга.  */
+  dsp.fillRect(0, 0, SW, HDR, C_BG);
+  if(icon == 1) icStar(14, 14, 10, C_ACC);
+  else if(icon == 2) icMenu(14, 14, C_ACC);
+  else icGear(14, 14, 1.0f, C_ACC);
+  dsp.setFont(&yoUI12b); dsp.setTextSize(1); dsp.setTextColor(C_ACC);
   /*  Довга назва (а надто «пароль: <мережа>») наповзала на стрілку
       повернення праворуч — обрізаємо по місцю, що лишилось.  */
   char tt[64];
-  snprintf(tt, sizeof(tt), "%s", utf8Rus(title, true));
+  snprintf(tt, sizeof(tt), "%s", utf8Rus(title, false));
+  if(title != _wSsid) capFirst(tt);            /* назву мережі — як є */
   fitText(tt, SW - 34 - 46);
   dsp.setCursor(34, 20); dsp.print(tt);
   _titleEnd = dsp.getCursorX();              /* підказку в шапці ставимо лише правіше */
@@ -304,8 +348,13 @@ void YoMenu::_chrome(const char* title, uint8_t icon){
       задано, тож і стрілку не малюємо: намальована, але мертва кнопка
       виглядає поламаною.  */
   if(!(_apLock && _cur != PG_KBD && _cur != PG_WSAVED && _cur != PG_WPICK && _cur != PG_WCONN)){
-    dsp.fillTriangle(SW-26, 14, SW-16, 8, SW-16, 20, C_BG);
-    dsp.fillRect(SW-16, 12, 8, 5, C_BG);
+    dsp.lineAA(SW - 11, 14, SW - 26, 14, 2.2f, C_TXT);
+    dsp.lineAA(SW - 20, 8, SW - 26, 14, 2.2f, C_TXT);
+    dsp.lineAA(SW - 26, 14, SW - 20, 20, 2.2f, C_TXT);
+  }
+  for(int16_t x = 0; x < SW; x++){
+    float k = 1.0f - (float)x / SW;
+    dsp.drawPixel(x, HDR - 1, dsp.blend(C_BG, C_ACC, (uint8_t)(170 * k * k)));
   }
 }
 
@@ -391,6 +440,7 @@ void YoMenu::_paint(){
   dsp.fillScreen(C_BG);
   if(p == PG_KBD){
     _chrome(_kbdTitle);
+    dsp.box(8, 32, SW-74, 26, R_BTN, C_PANEL, C_BG);   /* рядок вводу */
     _kbShown = -1; _kbPopX = -1; _kbDirty = 0;
     _drawKbdKeys();
     _kbdRefresh();                 /* текст — до активації: віджет намалює себе вже з ним */
@@ -469,9 +519,9 @@ void YoMenu::_paint(){
     if(p == PG_TIME){
       for(uint8_t i=0;i<2;i++){
         int16_t x = CX+60 + i*100;
-        dsp.fillTriangle(x+35, 74, x+20, 96, x+50, 96, C_ACC);    /* ▲ */
-        dsp.fillTriangle(x+35, 178, x+20, 156, x+50, 156, C_ACC); /* ▼ */
-        dsp.fillRect(x, 110, 70, 30, C_PANEL);
+        dsp.triAA(x+35, 76, x+21, 96, x+49, 96, C_ACC);           /* ▲ */
+        dsp.triAA(x+35, 176, x+21, 156, x+49, 156, C_ACC);        /* ▼ */
+        dsp.box(x, 110, 70, 30, R_BTN, C_PANEL, C_BG);
       }
       dsp.setFont(&yoUI9); dsp.setTextColor(C_DIM);
       dsp.setCursor(CX+72, 210); dsp.print(utf8Rus("години", false));
@@ -483,12 +533,12 @@ void YoMenu::_paint(){
       dsp.setFont();
       /*  [−] гг [+]  :  [−] хх [+]  */
       _stepper(CX,     AL_ROW_Y, 34, 34, false);
-      dsp.fillRect(CX+38, AL_ROW_Y, 48, 34, C_PANEL);
+      dsp.box(CX+38, AL_ROW_Y, 48, 34, R_BTN, C_PANEL, C_BG);
       _stepper(CX+90,  AL_ROW_Y, 34, 34, true);
-      dsp.fillRect(CX+130, AL_ROW_Y+10, 4, 4, C_TXT);
-      dsp.fillRect(CX+130, AL_ROW_Y+21, 4, 4, C_TXT);
+      dsp.fillCircleAA(CX+132, AL_ROW_Y+12, 2.2f, C_TXT);
+      dsp.fillCircleAA(CX+132, AL_ROW_Y+23, 2.2f, C_TXT);
       _stepper(CX+140, AL_ROW_Y, 34, 34, false);
-      dsp.fillRect(CX+178, AL_ROW_Y, 48, 34, C_PANEL);
+      dsp.box(CX+178, AL_ROW_Y, 48, 34, R_BTN, C_PANEL, C_BG);
       _stepper(CX+230, AL_ROW_Y, 34, 34, true);
     }
     if(p == PG_NIGHT){
@@ -497,11 +547,11 @@ void YoMenu::_paint(){
       dsp.setFont();
       /*  два однакові блоки часу з тире між ними: [−][22:00][+] — [−][07:00][+]  */
       _stepper(CX,     NT_ROW_Y, 32, 30, false);
-      dsp.fillRect(CX+34,  NT_ROW_Y, 66, 30, C_PANEL);
+      dsp.box(CX+34,  NT_ROW_Y, 66, 30, R_BTN, C_PANEL, C_BG);
       _stepper(CX+102, NT_ROW_Y, 32, 30, true);
-      dsp.fillRect(CX+139, NT_ROW_Y+14, 10, 3, C_DIM);
+      dsp.lineAA(CX+140, NT_ROW_Y+15, CX+148, NT_ROW_Y+15, 2.2f, C_DIM);
       _stepper(CX+154, NT_ROW_Y, 32, 30, false);
-      dsp.fillRect(CX+188, NT_ROW_Y, 66, 30, C_PANEL);
+      dsp.box(CX+188, NT_ROW_Y, 66, 30, R_BTN, C_PANEL, C_BG);
       _stepper(CX+256, NT_ROW_Y, 32, 30, true);
     }
     if(p == PG_SYS){
@@ -531,10 +581,10 @@ void YoMenu::_paint(){
 
 /*  Кнопка лічильника: темна плашка з мінусом або плюсом.  */
 void YoMenu::_stepper(int16_t x, int16_t y, int16_t w, int16_t h, bool plus){
-  dsp.fillRect(x, y, w, h, C_PAN2);
-  int16_t cx = x + w/2, cy = y + h/2;
-  dsp.fillRect(cx-6, cy-1, 13, 3, C_ACC);
-  if(plus) dsp.fillRect(cx-1, cy-6, 3, 13, C_ACC);
+  dsp.box(x, y, w, h, R_BTN, C_PAN2, C_BG);
+  float cx = x + w/2.0f, cy = y + h/2.0f;
+  dsp.lineAA(cx-6, cy, cx+6, cy, 2.6f, C_ACC);
+  if(plus) dsp.lineAA(cx, cy-6, cx, cy+6, 2.6f, C_ACC);
 }
 
 /*  Назву станції обрізаємо по літерах, а не по байтах: кирилиця в UTF-8
@@ -635,7 +685,7 @@ void YoMenu::_setMsg(const char* m){
 void YoMenu::_drawHdrMsg(){
   int16_t x0 = _titleEnd + 8;
   if(x0 > SW-60) return;
-  dsp.fillRect(x0, 0, SW-40-x0, HDR, C_ACC);
+  dsp.fillRect(x0, 0, SW-40-x0, HDR-1, C_BG);
   char t[72];
   if(_cur == PG_FAV){
     snprintf(t, sizeof(t), "%s", utf8Rus(_msg, false));   /* підказка — під плитками */
@@ -646,7 +696,7 @@ void YoMenu::_drawHdrMsg(){
     if(n) snprintf(t, sizeof(t), "%u-%u / %u", _smTop + 1, (_smTop + SM_ROWS < n ? _smTop + SM_ROWS : n), n);
     else t[0] = 0;
   }
-  dsp.setFont(&yoUI9); dsp.setTextSize(1); dsp.setTextColor(C_BG);
+  dsp.setFont(&yoUI9); dsp.setTextSize(1); dsp.setTextColor(C_DIM);
   fitText(t, SW-44-x0);
   dsp.setCursor(SW-44 - textW(t), 19); dsp.print(t);
   dsp.setFont();
@@ -656,11 +706,10 @@ void YoMenu::_drawTile(uint8_t i){
   int16_t x = FV_X(i), y = FV_Y(i);
   const FavItem& f = extras.fav[i];
   if(!f.url[0]){
-    dsp.fillRect(x, y, FV_W, FV_H, C_BG);
-    dsp.drawRect(x, y, FV_W, FV_H, C_PAN2);
+    dsp.frame(x, y, FV_W, FV_H, R_TILE, 1.2f, C_PAN2, C_BG, C_BG);
     /*  «+» і підказка в два рядки: в один не влазило  */
     int16_t cx = x + FV_W / 2;
-    dsp.fillRect(cx - 7, y + 13, 15, 3, C_DIM); dsp.fillRect(cx - 1, y + 7, 3, 15, C_DIM);
+    dsp.lineAA(cx - 6.5f, y + 14, cx + 6.5f, y + 14, 2.2f, C_DIM); dsp.lineAA(cx, y + 7.5f, cx, y + 20.5f, 2.2f, C_DIM);
     dsp.setFont(&yoUI8); dsp.setTextSize(1); dsp.setTextColor(C_DIM);
     char t[40]; snprintf(t, sizeof(t), "%s", utf8Rus("додати станцію,", false));
     dsp.setCursor(cx - (int16_t)textW(t) / 2, y + 36); dsp.print(t);
@@ -670,8 +719,8 @@ void YoMenu::_drawTile(uint8_t i){
     return;
   }
   bool on = extras.favPlaying() == (int8_t)i;
-  dsp.fillRect(x, y, FV_W, FV_H, C_PANEL);
-  if(on){ dsp.drawRect(x, y, FV_W, FV_H, C_ACC); dsp.drawRect(x+1, y+1, FV_W-2, FV_H-2, C_ACC); }
+  if(on) dsp.frame(x, y, FV_W, FV_H, R_TILE, 2.0f, C_ACC, C_PANEL, C_BG);
+  else    dsp.box(x, y, FV_W, FV_H, R_TILE, C_PANEL, C_BG);
   dsp.setFont(&yoUI11); dsp.setTextSize(1); dsp.setTextColor(on ? C_ACC : C_TXT);
   char t[72]; snprintf(t, sizeof(t), "%s", utf8Rus(f.name, false));
   const uint16_t W = FV_W - 10;
@@ -700,9 +749,9 @@ void YoMenu::_drawBottom(){
   int16_t y = FV_BOT_Y;
   char t[48];
   /*  проповіді: хрест і підпис  */
-  dsp.fillRect(6, y, FV_W, FV_BOT_H, C_PAN2);
-  dsp.fillRect(20, y+12, 4, 32, C_ACC);
-  dsp.fillRect(12, y+20, 20, 4, C_ACC);
+  dsp.box(6, y, FV_W, FV_BOT_H, R_TILE, C_PAN2, C_BG);
+  dsp.lineAA(22, y+13, 22, y+43, 4.0f, C_ACC);
+  dsp.lineAA(13.5f, y+22, 30.5f, y+22, 4.0f, C_ACC);
   dsp.setFont(&yoUI12b); dsp.setTextSize(1); dsp.setTextColor(C_TXT);
   snprintf(t, sizeof(t), "%s", utf8Rus("проповіді", false));
   dsp.setCursor(42, y+25); dsp.print(t);
@@ -712,9 +761,9 @@ void YoMenu::_drawBottom(){
   /*  запис ефіру  */
   int16_t x = 6 + 157;
   bool rec = recorder.active();
-  dsp.fillRect(x, y, FV_W, FV_BOT_H, rec ? 0x8000 : C_PAN2);
-  if(rec) dsp.fillRect(x+12, y+14, 16, 16, C_TXT);
-  else    dsp.fillCircle(x+20, y+22, 8, 0xF800);
+  dsp.box(x, y, FV_W, FV_BOT_H, R_TILE, rec ? 0x8000 : C_PAN2, C_BG);
+  if(rec) dsp.fillRoundRectAA(x+12, y+14, 16, 16, 3, C_TXT);
+  else    dsp.fillCircleAA(x+20.5f, y+22.5f, 8, 0xF800);
   dsp.setFont(&yoUI12b); dsp.setTextColor(C_TXT);
   snprintf(t, sizeof(t), "%s", utf8Rus(rec ? "зупинити" : "запис ефіру", false));
   dsp.setCursor(x+36, y+27); dsp.print(t);
@@ -738,8 +787,11 @@ void YoMenu::_drawFav(){
   dsp.setCursor(6, 234); dsp.print(t);
   /*  праворуч — чи показувати обране рядком логотипів на головному екрані  */
   bool on = !extras.s.favHide;
-  dsp.drawRect(FV_CHK_X, 223, 13, 13, on ? C_ACC : C_DIM);
-  if(on) dsp.fillRect(FV_CHK_X + 3, 226, 7, 7, C_ACC);
+  if(on){
+    dsp.box(FV_CHK_X, 223, 13, 13, 3, C_ACC, C_BG);
+    dsp.lineAA(FV_CHK_X + 3.2f, 229.8f, FV_CHK_X + 5.6f, 232.2f, 1.8f, C_BG);
+    dsp.lineAA(FV_CHK_X + 5.6f, 232.2f, FV_CHK_X + 10.0f, 227.0f, 1.8f, C_BG);
+  }else dsp.frame(FV_CHK_X, 223, 13, 13, 3, 1.3f, C_DIM, C_BG, C_BG);
   dsp.setTextColor(on ? C_TXT : C_DIM);
   snprintf(t, sizeof(t), "%s", utf8Rus("на головному", false));
   dsp.setCursor(FV_CHK_X + 19, 234); dsp.print(t);
@@ -921,37 +973,36 @@ void YoMenu::_drawSetup(){
   static const char* lbl[7] = { "інформація", "Wi-Fi", "час", "система", "мікрофон", "розробник", "живлення" };
   for(uint8_t i=0;i<7;i++){
     int16_t x = HM_X(i), y = HM_Y(i), w = HM_W, h = HM_H;
-    int16_t cx = x + w / 2, cy = y + 24;
-    dsp.fillRect(x, y, w, h, C_PANEL);
+    float cx = x + w / 2.0f, cy = y + 24;
+    dsp.box(x, y, w, h, R_TILE, C_PANEL, C_BG);
     const uint16_t c = C_ACC;
     switch(i){
-      case 0: dsp.drawCircle(cx, cy, 13, c); dsp.drawCircle(cx, cy, 12, c);
-              dsp.fillRect(cx-2, cy-3, 5, 11, c); dsp.fillRect(cx-2, cy-9, 5, 4, c); break;
-      case 1: for(int r = 5; r <= 17; r += 6) for(int a = -140; a <= -40; a += 3){
-                float rad = a * 3.14159f / 180.0f;
-                dsp.drawPixel(cx + (int)(r * cosf(rad)), cy + 9 + (int)(r * sinf(rad)), c);
-                dsp.drawPixel(cx + (int)((r+1) * cosf(rad)), cy + 9 + (int)((r+1) * sinf(rad)), c); }
-              dsp.fillCircle(cx, cy + 9, 3, c); break;
-      case 2: dsp.drawCircle(cx, cy, 13, c); dsp.drawCircle(cx, cy, 12, c);
-              dsp.fillRect(cx-1, cy-8, 3, 9, c); dsp.fillRect(cx, cy-1, 7, 3, c); break;
-      case 3: for(uint8_t k=0;k<3;k++){ dsp.fillRect(cx-14, cy-9 + k*9, 28, 2, c); dsp.fillRect(cx-8 + k*7, cy-12 + k*9, 5, 8, c); }
+      case 0: /*  «i» у колі  */
+              dsp.arcAA(cx, cy, 12, 2.3f, c);
+              dsp.fillCircleAA(cx, cy - 6, 1.9f, c);
+              dsp.lineAA(cx, cy - 1.5f, cx, cy + 6.5f, 3.0f, c); break;
+      case 1: icWifi(cx, cy + 10, 1.0f, c); break;
+      case 2: /*  годинник  */
+              dsp.arcAA(cx, cy, 12, 2.3f, c);
+              dsp.lineAA(cx, cy, cx, cy - 7, 2.4f, c);
+              dsp.lineAA(cx, cy, cx + 5.5f, cy + 1.5f, 2.4f, c); break;
+      case 3: /*  повзунки  */
+              for(uint8_t k = 0; k < 3; k++){
+                float yy = cy - 9 + k * 9, kx = cx + (k == 0 ? -6 : k == 1 ? 5 : -1);
+                dsp.lineAA(cx - 13, yy, cx + 13, yy, 2.0f, c);
+                dsp.fillCircleAA(kx, yy, 4.6f, C_PANEL);
+                dsp.fillCircleAA(kx, yy, 3.4f, c);
+              }
               break;
       case 4: /*  мікрофон: капсула, дужка й ніжка  */
-              dsp.fillRoundRect(cx-5, cy-15, 11, 19, 5, c);
-              for(int a = 0; a <= 180; a += 4){
-                float rad = a * 3.14159f / 180.0f;
-                for(int r = 9; r <= 10; r++) dsp.drawPixel(cx + (int)(r * cosf(rad)), cy - 3 + (int)(r * sinf(rad)), c);
-              }
-              dsp.fillRect(cx-1, cy+7, 3, 5, c); dsp.fillRect(cx-6, cy+12, 13, 2, c);
+              dsp.fillRoundRectAA((int16_t)cx - 5, (int16_t)cy - 15, 11, 19, 5.5f, c);
+              dsp.arcAA(cx + 0.5f, cy - 4, 9.5f, 2.2f, c, 95, 265);
+              dsp.lineAA(cx + 0.5f, cy + 6, cx + 0.5f, cy + 11, 2.2f, c);
+              dsp.lineAA(cx - 5, cy + 12, cx + 6, cy + 12, 2.2f, c);
               break;
-      case 6: for(int a = -55; a <= 235; a += 2){
-                float rad = (a - 90) * 3.14159f / 180.0f;
-                for(int r = 12; r <= 14; r++) dsp.drawPixel(cx + (int)(r * cosf(rad)), cy + (int)(r * sinf(rad)), c);
-              }
-              dsp.fillRect(cx-1, cy-16, 3, 14, c);
-              break;
+      case 6: icPower(cx, cy + 1, 12.5f, 2.6f, c); break;
       default: dsp.setFont(&yoUI12b); dsp.setTextSize(1); dsp.setTextColor(c);
-              dsp.setCursor(cx - 16, cy + 6); dsp.print("</>"); dsp.setFont();
+              dsp.setCursor((int16_t)cx - 16, (int16_t)cy + 6); dsp.print("</>"); dsp.setFont();
               break;
     }
     dsp.setFont(&yoUI8); dsp.setTextSize(1); dsp.setTextColor(C_TXT);
@@ -995,22 +1046,13 @@ void YoMenu::_drawPower(){
     int16_t y = PW_Y(i);
     bool armed = (_pwrArm == (int8_t)i);
     uint16_t bg = armed ? C_ACC : C_PANEL, fg = armed ? C_BG : C_TXT, sub = armed ? C_BG : C_DIM, ic = armed ? C_BG : C_ACC;
-    dsp.fillRect(CX, y, CW, PW_H, bg);
-    int16_t cx = CX + 26, cy = y + PW_H / 2;
+    dsp.box(CX, y, CW, PW_H, R_TILE + 1, bg, C_BG);
+    float cx = CX + 26.5f, cy = y + PW_H / 2.0f;
     if(i == 0){
       /*  коло зі стрілкою  */
-      for(int a = 30; a <= 330; a += 2){
-        float rad = (a - 90) * 3.14159f / 180.0f;
-        for(int r = 11; r <= 13; r++) dsp.drawPixel(cx + (int)(r * cosf(rad)), cy + (int)(r * sinf(rad)), ic);
-      }
-      dsp.fillTriangle(cx + 4, cy - 17, cx + 4, cy - 7, cx + 11, cy - 12, ic);
-    }else{
-      for(int a = -55; a <= 235; a += 2){
-        float rad = (a - 90) * 3.14159f / 180.0f;
-        for(int r = 11; r <= 13; r++) dsp.drawPixel(cx + (int)(r * cosf(rad)), cy + (int)(r * sinf(rad)), ic);
-      }
-      dsp.fillRect(cx - 1, cy - 15, 3, 13, ic);
-    }
+      dsp.arcAA(cx, cy, 12, 2.6f, ic, 25, 320);
+      dsp.triAA(cx + 1, cy - 17.5f, cx + 1, cy - 6.5f, cx + 9, cy - 12, ic);
+    }else icPower(cx, cy, 12, 2.6f, ic);
     char t[40];
     dsp.setFont(&yoUI11); dsp.setTextSize(1); dsp.setTextColor(fg);
     snprintf(t, sizeof(t), "%s", utf8Rus(t1[i], false));
@@ -1036,18 +1078,18 @@ void YoMenu::_drawDevBtn(){
   char t[64];
   /*  логотипи станцій: знайдені плата шукає й сама; кнопка — шукати знову
       для тих, де минулого разу не знайшлось  */
-  dsp.fillRect(CX, 114, CW, 30, C_PAN2);
+  dsp.box(CX, 114, CW, 30, R_BTN, C_PAN2, C_BG);
   dsp.setFont(&yoUI9); dsp.setTextSize(1); dsp.setTextColor(C_TXT);
   snprintf(t, sizeof(t), "%s", utf8Rus(_msg[0] ? _msg : "оновити логотипи станцій", false));
   fitText(t, CW - 16);
   dsp.setCursor(CX + (CW - (int16_t)textW(t)) / 2, 134); dsp.print(t);
   /*  звуки подій і заставка — окремою сторінкою (власник: усе це — у розробнику)  */
-  dsp.fillRect(CX, 148, CW, 32, C_PAN2);
+  dsp.box(CX, 148, CW, 32, R_BTN, C_PAN2, C_BG);
   dsp.setTextColor(C_TXT);
   snprintf(t, sizeof(t), "%s", utf8Rus("звуки й заставка", false));
   dsp.setCursor(CX + 10, 169); dsp.print(t);
-  dsp.fillTriangle(CX + CW - 16, 156, CX + CW - 16, 172, CX + CW - 8, 164, C_ACC);   /* › */
-  dsp.fillRect(CX, 184, CW, 44, C_PAN2);
+  icNext(CX + CW - 16, 164, C_ACC);                                                  /* › */
+  dsp.box(CX, 184, CW, 44, R_BTN, C_PAN2, C_BG);
   dsp.setFont(&yoUI8); dsp.setTextColor(C_DIM);
   snprintf(t, sizeof(t), "%s", utf8Rus("аудіовихід", false));
   dsp.setCursor(CX + 10, 197); dsp.print(t);
@@ -1057,7 +1099,7 @@ void YoMenu::_drawDevBtn(){
   snprintf(t, sizeof(t), "%s", utf8Rus(DAC_KIND[extras.s.dac], false));
   fitText(t, CW - 130);
   dsp.setCursor(CX + 120, 218); dsp.print(t);
-  dsp.fillTriangle(CX + CW - 16, 198, CX + CW - 16, 214, CX + CW - 8, 206, C_ACC);   /* › */
+  icNext(CX + CW - 16, 206, C_ACC);                                                  /* › */
   dsp.setFont();
 }
 
@@ -1065,7 +1107,7 @@ void YoMenu::_drawDevBtn(){
     й підказка — тут.  */
 void YoMenu::_drawDevSnd(){
   char t[64];
-  dsp.fillRect(CX, 172, CW, 32, C_PAN2);
+  dsp.box(CX, 172, CW, 32, R_BTN, C_PAN2, C_BG);
   dsp.setFont(&yoUI9); dsp.setTextSize(1); dsp.setTextColor(C_TXT);
   snprintf(t, sizeof(t), "%s", utf8Rus("показати заставку", false));
   dsp.setCursor(CX + (CW - (int16_t)textW(t)) / 2, 193); dsp.print(t);
@@ -1080,7 +1122,7 @@ void YoMenu::_drawDacList(){
   for(uint8_t i = 0; i < 5; i++){
     int16_t y = 32 + i * 41;
     bool cur = (extras.s.dac == i);
-    dsp.fillRect(CX - 6, y, CW + 12, 38, cur ? C_PAN2 : C_PANEL);
+    dsp.box(CX - 6, y, CW + 12, 38, R_BTN, cur ? C_PAN2 : C_PANEL, C_BG);
     /*  назва — зверху, опис — другим рядком під нею: в один рядок
         вони наповзали одне на одне  */
     dsp.setFont(&yoUI9b); dsp.setTextSize(1); dsp.setTextColor(cur ? C_ACC : C_TXT);
@@ -1116,7 +1158,7 @@ void YoMenu::_drawDacInfo(){
       for(uint8_t k = 0; k < 4; k++){
         int16_t x = 8 + k * 76;
         bool on = H[h].used & (1 << k);
-        dsp.fillRect(x, y + 15, 72, 18, on ? C_ACC : C_PAN2);
+        dsp.box(x, y + 15, 72, 18, 4, on ? C_ACC : C_PAN2, C_BG);
         dsp.setFont(&yoUI9b); dsp.setTextColor(on ? C_BG : C_DIM);
         dsp.setCursor(x + (72 - (int16_t)textW(H[h].pin[k])) / 2, y + 29); dsp.print(H[h].pin[k]);
         if(on && H[h].to[k][0]){
@@ -1126,7 +1168,7 @@ void YoMenu::_drawDacInfo(){
         }
       }
     }
-    dsp.fillRect(8, 212, SW - 16, 26, C_PAN2);
+    dsp.box(8, 212, SW - 16, 26, R_BTN, C_PAN2, C_BG);
     dsp.setFont(&yoUI9b); dsp.setTextColor(C_TXT);
     snprintf(t, sizeof(t), "%s", utf8Rus("назад до схеми", false));
     dsp.setCursor((SW - (int16_t)textW(t)) / 2, 230); dsp.print(t);
@@ -1167,10 +1209,10 @@ void YoMenu::_drawDacInfo(){
       bool pwr = !strncmp(pins[k].esp, "5V", 2) || !strncmp(pins[k].esp, "3V3", 3);
       bool gnd = !strncmp(pins[k].esp, "GND", 3);
       uint16_t wc = pwr ? 0xF800 : (gnd ? 0x8410 : C_ACC);
-      dsp.fillRect(8, y + 1, 72, rh - 2, C_PAN2);
-      dsp.fillRect(SW - 68, y + 1, 60, rh - 2, C_PAN2);
-      dsp.fillRect(80, cy - 1, SW - 148, 3, wc);                    /* провід */
-      dsp.fillCircle(80, cy, 3, wc); dsp.fillCircle(SW - 68, cy, 3, wc);
+      dsp.box(8, y + 1, 72, rh - 2, 4, C_PAN2, C_BG);
+      dsp.box(SW - 68, y + 1, 60, rh - 2, 4, C_PAN2, C_BG);
+      dsp.lineAA(80, cy + 0.5f, SW - 68, cy + 0.5f, 2.4f, wc);          /* провід */
+      dsp.fillCircleAA(80, cy + 0.5f, 3.2f, wc); dsp.fillCircleAA(SW - 68, cy + 0.5f, 3.2f, wc);
       dsp.setFont(&yoUI8); dsp.setTextColor(C_TXT);
       dsp.setCursor(13, cy + 5); dsp.print(pins[k].esp);
       dsp.setCursor(SW - 63, cy + 5); dsp.print(pins[k].mod);
@@ -1180,11 +1222,11 @@ void YoMenu::_drawDacInfo(){
     const char* blk[4] = { "ESP32-S3", "ES8311", "SC8002B", "динамік" };
     for(uint8_t k = 0; k < 4; k++){
       int16_t x = 8 + k * 78;
-      dsp.fillRect(x, 70, 70, 40, C_PAN2);
+      dsp.box(x, 70, 70, 40, R_BTN, C_PAN2, C_BG);
       dsp.setFont(&yoUI8); dsp.setTextColor(C_TXT);
       snprintf(t, sizeof(t), "%s", utf8Rus(blk[k], false));
       dsp.setCursor(x + (70 - (int16_t)textW(t)) / 2, 95); dsp.print(t);
-      if(k < 3) dsp.fillRect(x + 70, 88, 8, 3, C_ACC);
+      if(k < 3) dsp.lineAA(x + 70, 89.5f, x + 78, 89.5f, 2.2f, C_ACC);
     }
   }
   /*  опис  */
@@ -1196,13 +1238,13 @@ void YoMenu::_drawDacInfo(){
   }
   /*  кнопка  */
   if(_dacSel == 4){
-    dsp.fillRect(8, 212, SW - 16, 26, C_PAN2);
+    dsp.box(8, 212, SW - 16, 26, R_BTN, C_PAN2, C_BG);
     dsp.setFont(&yoUI9b); dsp.setTextColor(C_TXT);
     snprintf(t, sizeof(t), "%s", utf8Rus("де ці роз'єми на платі", false));
     dsp.setCursor((SW - (int16_t)textW(t)) / 2, 230); dsp.print(t);
   }else{
     bool cur = (extras.s.dac == _dacSel);
-    dsp.fillRect(8, 212, SW - 16, 26, cur ? C_PAN2 : C_ACC);
+    dsp.box(8, 212, SW - 16, 26, R_BTN, cur ? C_PAN2 : C_ACC, C_BG);
     dsp.setFont(&yoUI9b); dsp.setTextColor(cur ? C_DIM : C_BG);
     snprintf(t, sizeof(t), "%s", utf8Rus(cur ? "зараз звук іде сюди" : "увімкнути цей вихід", false));
     dsp.setCursor((SW - (int16_t)textW(t)) / 2, 230); dsp.print(t);
@@ -1217,61 +1259,71 @@ void YoMenu::_drawDacInfo(){
 enum { HM_STATIONS = 0, HM_FAV, HM_SERM, HM_SRC, HM_REC, HM_ALARM, HM_SCREEN, HM_SOUND, HM_SETUP };
 
 void YoMenu::_drawHomeTile(uint8_t i){
-  int16_t x = HM_X(i), y = HM_Y(i), cx = x + HM_W / 2, cy = y + 24;
+  int16_t x = HM_X(i), y = HM_Y(i);
+  float cx = x + HM_W / 2.0f, cy = y + 24;
   bool rec = recorder.active();
-  dsp.fillRect(x, y, HM_W, HM_H, (i == HM_REC && rec) ? 0x8000 : C_PANEL);
+  const uint16_t tb = (i == HM_REC && rec) ? 0x8000 : C_PANEL;      /* тло плитки — для вирізів */
+  dsp.box(x, y, HM_W, HM_H, R_TILE, tb, C_BG);
   const uint16_t c = C_ACC;
   const char* lbl = "";
   char buf[24];
   switch(i){
     case HM_STATIONS:
-      for(uint8_t k=0;k<3;k++){ dsp.fillRect(cx-13, cy-9 + k*8, 4, 4, c); dsp.fillRect(cx-6, cy-9 + k*8, 19, 4, c); }
+      for(uint8_t k=0;k<3;k++){
+        dsp.fillCircleAA(cx - 11, cy - 8 + k * 8, 2.3f, c);
+        dsp.lineAA(cx - 5, cy - 8 + k * 8, cx + 12, cy - 8 + k * 8, 3.2f, c);
+      }
       lbl = "станції"; break;
     case HM_FAV:
-      drawStar(cx, cy, 13, c); lbl = "обране"; break;
+      icStar(cx, cy + 1, 13.5f, c); lbl = "обране"; break;
     case HM_SERM:
-      dsp.fillRect(cx-2, cy-14, 5, 28, c); dsp.fillRect(cx-10, cy-7, 21, 5, c);
+      dsp.lineAA(cx, cy - 13, cx, cy + 13, 4.4f, c);
+      dsp.lineAA(cx - 9, cy - 5, cx + 9, cy - 5, 4.4f, c);
       lbl = "проповіді"; break;
     case HM_SRC:
       if(config.getMode() == PM_SDCARD){          /* куди перемкне: на радіо */
-        dsp.fillRect(cx-1, cy-3, 3, 16, c); dsp.fillCircle(cx, cy-5, 3, c);
-        for(int8_t r = 8; r <= 13; r += 5)
-          for(int16_t a = -55; a <= 55; a += 6){
-            float rad = a * 3.14159f / 180.0f;
-            dsp.drawPixel(cx - (int16_t)(r * cosf(rad)), cy-5 + (int16_t)(r * sinf(rad)), c);
-            dsp.drawPixel(cx + (int16_t)(r * cosf(rad)), cy-5 + (int16_t)(r * sinf(rad)), c);
-          }
+        dsp.lineAA(cx, cy - 3, cx, cy + 12, 2.6f, c);
+        dsp.fillCircleAA(cx, cy - 5, 3.2f, c);
+        for(uint8_t k = 1; k <= 2; k++){
+          dsp.arcAA(cx, cy - 5, 4 + 5 * k, 2.2f, c, 55, 125);
+          dsp.arcAA(cx, cy - 5, 4 + 5 * k, 2.2f, c, 235, 305);
+        }
         lbl = "радіо";
       }else{                                      /* на картку */
-        dsp.fillRect(cx-9, cy-13, 12, 26, c); dsp.fillRect(cx+3, cy-8, 6, 21, c);
-        dsp.fillTriangle(cx+3, cy-13, cx+3, cy-8, cx+8, cy-8, c);
-        for(uint8_t k=0;k<3;k++) dsp.fillRect(cx-7 + k*4, cy-11, 2, 6, C_PANEL);
+        const float xy[10] = { cx - 9, cy - 13, cx + 4, cy - 13, cx + 9, cy - 8, cx + 9, cy + 13, cx - 9, cy + 13 };
+        dsp.polyAA(xy, 5, c);
+        for(uint8_t k=0;k<3;k++) dsp.lineAA(cx - 5 + k * 4, cy - 10.5f, cx - 5 + k * 4, cy - 6, 1.8f, tb);
         lbl = "картка";
       }
       break;
     case HM_REC:
       if(rec){
-        dsp.fillRect(cx-8, cy-8, 16, 16, C_TXT);
+        dsp.fillRoundRectAA((int16_t)cx - 8, (int16_t)cy - 8, 16, 16, 3, C_TXT);
         uint32_t sec = recorder.seconds();
         snprintf(buf, sizeof(buf), "%u:%02u", (unsigned)(sec/60), (unsigned)(sec%60));
         lbl = buf;
-      }else{ dsp.fillCircle(cx, cy, 10, 0xF800); lbl = "запис"; }
+      }else{ dsp.fillCircleAA(cx, cy, 10, 0xF800); lbl = "запис"; }
       break;
-    case HM_ALARM:
-      dsp.fillCircle(cx, cy-3, 9, c); dsp.fillRect(cx-9, cy-3, 19, 10, c);
-      dsp.fillRect(cx-12, cy+6, 25, 3, c); dsp.fillCircle(cx, cy+11, 3, c);
-      lbl = "будильник"; break;
+    case HM_ALARM: {
+      /*  дзвоник: купол, розширення донизу, обідок і язичок  */
+      dsp.fillCircleAA(cx, cy - 4, 8.5f, c);
+      const float xy[8] = { cx - 8.5f, cy - 4, cx + 8.5f, cy - 4, cx + 12, cy + 7, cx - 12, cy + 7 };
+      dsp.polyAA(xy, 4, c);
+      dsp.lineAA(cx - 12.5f, cy + 7.5f, cx + 12.5f, cy + 7.5f, 2.6f, c);
+      dsp.fillCircleAA(cx, cy + 11.5f, 3, c);
+      lbl = "будильник"; break; }
     case HM_SCREEN:
-      dsp.drawCircle(cx, cy-4, 9, c); dsp.drawCircle(cx, cy-4, 8, c);
-      dsp.fillRect(cx-5, cy+6, 11, 3, c); dsp.fillRect(cx-5, cy+10, 11, 3, c);
+      dsp.arcAA(cx, cy - 4, 8.5f, 2.3f, c);
+      dsp.lineAA(cx - 4.5f, cy + 8, cx + 4.5f, cy + 8, 2.4f, c);
+      dsp.lineAA(cx - 3, cy + 12, cx + 3, cy + 12, 2.4f, c);
       lbl = "екран"; break;
     case HM_SOUND:
-      dsp.fillRect(cx-12, cy-2, 5, 14, c); dsp.fillRect(cx-3, cy-12, 5, 24, c); dsp.fillRect(cx+6, cy-6, 5, 18, c);
+      dsp.fillRoundRectAA((int16_t)cx - 12, (int16_t)cy - 2, 5, 14, 2.5f, c);
+      dsp.fillRoundRectAA((int16_t)cx - 3, (int16_t)cy - 12, 5, 24, 2.5f, c);
+      dsp.fillRoundRectAA((int16_t)cx + 6, (int16_t)cy - 6, 5, 18, 2.5f, c);
       lbl = "звук"; break;
     default:
-      dsp.drawCircle(cx, cy, 9, c); dsp.drawCircle(cx, cy, 8, c); dsp.fillCircle(cx, cy, 3, c);
-      dsp.fillRect(cx-2, cy-14, 5, 5, c); dsp.fillRect(cx-2, cy+10, 5, 5, c);
-      dsp.fillRect(cx-14, cy-2, 5, 5, c); dsp.fillRect(cx+10, cy-2, 5, 5, c);
+      icGear(cx, cy, 1.35f, c);
       lbl = "параметри"; break;
   }
   /*  Verdana 8: у 9 «будильник» і «параметри» не влазили в плитку  */
@@ -1412,7 +1464,7 @@ void YoMenu::_drawWconn(){
     static const char* lb[2] = { "ще раз", "до списку" };
     for(uint8_t i = 0; i < 2; i++){
       int16_t x = CX + i * 148, w = 140;
-      dsp.fillRect(x, WC_BTN_Y, w, WC_BTN_H, i ? C_PANEL : C_ACC);
+      dsp.box(x, WC_BTN_Y, w, WC_BTN_H, R_TILE, i ? C_PANEL : C_ACC, C_BG);
       dsp.setFont(&yoUI11); dsp.setTextColor(i ? C_TXT : C_BG);
       snprintf(t, sizeof(t), "%s", utf8Rus(lb[i], false));
       fitText(t, w - 10);
@@ -1437,24 +1489,13 @@ void YoMenu::_drawWpick(){
     bool armed = (i == 2 && _wpArm == 0);
     uint16_t bg = armed ? C_ACC : C_PANEL, fg = armed ? C_BG : C_TXT,
              sub = armed ? C_BG : C_DIM, ic = armed ? C_BG : C_ACC;
-    dsp.fillRect(CX, y, CW, WP_H, bg);
-    int16_t cx = CX + 28, cy = y + WP_H / 2;
-    if(i == 0){                                  /* значок мережі: три дуги */
-      for(int r = 5; r <= 15; r += 5) for(int a = -140; a <= -40; a += 3){
-        float rad = a * 3.14159f / 180.0f;
-        dsp.drawPixel(cx + (int)(r * cosf(rad)), cy + 8 + (int)(r * sinf(rad)), ic);
-        dsp.drawPixel(cx + (int)((r+1) * cosf(rad)), cy + 8 + (int)((r+1) * sinf(rad)), ic);
-      }
-      dsp.fillCircle(cx, cy + 8, 3, ic);
-    }else if(i == 1){                            /* олівець */
-      for(int8_t d = 0; d < 14; d++) dsp.drawFastHLine(cx - 7 + d, cy + 6 - d, 3, ic);
-      dsp.fillTriangle(cx - 9, cy + 8, cx - 5, cy + 8, cx - 9, cy + 4, ic);
-    }else{                                       /* × */
-      for(int8_t d = -8; d <= 8; d++){
-        dsp.drawPixel(cx + d, cy + d, ic); dsp.drawPixel(cx + d + 1, cy + d, ic);
-        dsp.drawPixel(cx + d, cy - d, ic); dsp.drawPixel(cx + d + 1, cy - d, ic);
-      }
-    }
+    dsp.box(CX, y, CW, WP_H, R_TILE, bg, C_BG);
+    float cx = CX + 28, cy = y + WP_H / 2.0f;
+    if(i == 0) icWifi(cx, cy + 8, 0.95f, ic);    /* значок мережі: три дуги */
+    else if(i == 1){                             /* олівець */
+      dsp.lineAA(cx - 4, cy + 4, cx + 7, cy - 7, 4.6f, ic);
+      dsp.triAA(cx - 9.5f, cy + 9.5f, cx - 7.5f, cy + 2.5f, cx - 2.5f, cy + 7.5f, ic);
+    }else icCross(cx, cy, 7.5f, 2.6f, ic);       /* × */
     dsp.setFont(&yoUI11); dsp.setTextSize(1); dsp.setTextColor(fg);
     snprintf(t, sizeof(t), "%s", utf8Rus(armed ? "ще раз - і забуду" : t1[i], false));
     fitText(t, CW - 60);
@@ -1494,7 +1535,7 @@ void YoMenu::_drawSaved(){
     int16_t y = WS_TOP + i * WS_ROW;
     bool armed = (_wsArm == (int8_t)i);
     bool cur = sta && !strcmp(_curSsid, _ssid[i]);
-    dsp.fillRect(CX, y, CW, WS_H, armed ? C_ACC : (cur ? C_PAN2 : C_PANEL));
+    dsp.box(CX, y, CW, WS_H, R_BTN, armed ? C_ACC : (cur ? C_PAN2 : C_PANEL), C_BG);
     dsp.setFont(&yoUI9b); dsp.setTextSize(1);
     dsp.setTextColor(armed ? C_BG : (cur ? C_ACC : C_TXT));
     if(armed) snprintf(t, sizeof(t), "%s", utf8Rus("ще раз - і забуду", false));
@@ -1508,16 +1549,12 @@ void YoMenu::_drawSaved(){
     uint16_t ic = armed ? C_BG : C_ACC;
     /*  ↑ — підняти першою (у першого рядка нема куди)  */
     if(i > 0){
-      int16_t ax = CX + CW - 72 + 17, ay = y + WS_H / 2;
-      dsp.fillTriangle(ax, ay - 8, ax - 7, ay + 1, ax + 7, ay + 1, ic);
-      dsp.fillRect(ax - 3, ay + 1, 6, 7, ic);
+      float ax = CX + CW - 72 + 17.5f, ay = y + WS_H / 2.0f;
+      dsp.triAA(ax, ay - 8, ax - 7, ay + 0.5f, ax + 7, ay + 0.5f, ic);
+      dsp.lineAA(ax, ay, ax, ay + 7, 3.6f, ic);
     }
     /*  × — забути  */
-    int16_t bx = CX + CW - 36 + 17, by2 = y + WS_H / 2;
-    for(int8_t d = -7; d <= 7; d++){
-      dsp.drawPixel(bx + d, by2 + d, ic); dsp.drawPixel(bx + d + 1, by2 + d, ic);
-      dsp.drawPixel(bx + d, by2 - d, ic); dsp.drawPixel(bx + d + 1, by2 - d, ic);
-    }
+    icCross(CX + CW - 36 + 17.5f, y + WS_H / 2.0f, 6.0f, 2.4f, ic);
   }
   dsp.setFont(&yoUI8); dsp.setTextColor(C_DIM);
   /*  Довге тире перетворювач у CP1251 не знає — на екрані з нього виходить
@@ -1964,18 +2001,17 @@ void YoMenu::_kbdRefresh(){
 }
 
 /*  Око праворуч від рядка: показати чи сховати набране.  */
+static bool s_eyeHl = false;                     /* палець на оці — жовта рамка */
 void YoMenu::_drawKbdEye(){
   int16_t x = SW-62, y = 32, w = 54, h = 26;
-  dsp.fillRect(x, y, w, h, C_PAN2);
-  int16_t cx = x + w/2, cy = y + h/2;
+  if(s_eyeHl) dsp.frame(x, y, w, h, R_BTN, 1.5f, C_ACC, C_PAN2, C_BG);
+  else        dsp.box(x, y, w, h, R_BTN, C_PAN2, C_BG);
+  float cx = x + w/2.0f, cy = y + h/2.0f;
   uint16_t c = _kbdShow ? C_ACC : C_DIM;
-  for(int16_t dx = -13; dx <= 13; dx++){          /* два дуги — контур ока */
-    int16_t dy = (int16_t)(5.0f * cosf(dx * 3.14159f / 26.0f));
-    dsp.drawPixel(cx + dx, cy - dy, c);
-    dsp.drawPixel(cx + dx, cy + dy, c);
-  }
-  dsp.fillCircle(cx, cy, 3, c);
-  if(!_kbdShow) for(int16_t d = -10; d <= 10; d++) dsp.drawPixel(cx + d, cy - d, C_TXT);   /* перекреслене */
+  dsp.arcAA(cx, cy + 10, 15, 1.8f, c, -50, 50);  /* дві дуги — контур ока */
+  dsp.arcAA(cx, cy - 10, 15, 1.8f, c, 130, 230);
+  dsp.fillCircleAA(cx, cy, 3.3f, c);
+  if(!_kbdShow) dsp.lineAA(cx - 9, cy + 8, cx + 9, cy - 8, 1.8f, C_TXT);   /* перекреслене */
 }
 
 #define K_SHIFT  64
@@ -2045,11 +2081,11 @@ int8_t YoMenu::_kbKeyAt(int16_t x, int16_t y) const {
 void YoMenu::_kbDrawKey(int8_t k, bool hl){
   int16_t x, y, w, h;
   if(!_kbKeyRect(k, x, y, w, h)) return;
-  if(k == K_EYE){ _drawKbdEye(); if(hl) dsp.drawRect(x, y, w, h, C_ACC); return; }
+  if(k == K_EYE){ s_eyeHl = hl; _drawKbdEye(); s_eyeHl = false; return; }
   bool ok = k == K_OK;
   uint16_t bg = hl ? (ok ? C_TXT : C_ACC) : (ok ? C_ACC : C_PAN2);
   uint16_t fg = (hl || ok) ? C_BG : C_TXT;
-  dsp.fillRect(x, y, w, h, bg);
+  dsp.box(x, y, w, h, 5, bg, C_BG);
   char t[20];
   const GFXfont* f = &yoUI12b;
   int16_t base = y + 23;
@@ -2111,13 +2147,12 @@ void YoMenu::_kbRender(){
           if(px < 0) px = 0;
           if(px > SW - 44) px = SW - 44;
           if(py < HDR + 2) py = HDR + 2;
-          dsp.fillRect(px, py, 44, 50, C_ACC);
-          dsp.fillRect(px + 2, py + 2, 40, 46, C_BG);
+          dsp.frame(px, py, 44, 50, 8, 2.0f, C_ACC, C_BG, C_BG);
           char t[2] = { KROWS[_kbdPage][want >> 4][want & 15], 0 };
-          dsp.setFont(&yoUI12b); dsp.setTextSize(2); dsp.setTextColor(C_ACC);
+          dsp.setFont(&aaUI26b); dsp.setTextSize(1); dsp.setTextColor(C_ACC);
           int16_t x1, y1; uint16_t tw, th;
           dsp.getTextBounds(t, 0, 40, &x1, &y1, &tw, &th);
-          dsp.setCursor(px + (44 - (int16_t)tw) / 2 - x1, py + 38);
+          dsp.setCursor(px + (44 - (int16_t)tw) / 2 - x1, py + 37);
           dsp.print(t);
           dsp.setTextSize(1); dsp.setFont();
           _kbPopX = px; _kbPopY = py;
@@ -2218,6 +2253,11 @@ void YoMenu::onRelease(uint16_t x, uint16_t y, uint32_t held){
 
 void YoMenu::onPress(uint16_t x, uint16_t y){
   _lastAct = millis();
+  /*  Відгук під пальцем — хвиля світла по кнопці. Клавіатура підсвічує клавішу
+      сама, списки й смуги еквалайзера ведуться пальцем — там хвилі не треба.  */
+  if(_fadeStep < 0 && _cur != PG_OFF && _cur != PG_KBD && !_isList(_cur) &&
+     !(_cur == PG_EQ && y >= EQ_COL0 && y < EQ_T1 + 12))
+    ui.press(x, y, C_ACC);
   if(_cur == PG_KBD && _fadeStep < 0){
     _kbKey = _kbKeyAt(x, y);
     _kbDown = _kbKey >= 0;
@@ -2694,10 +2734,11 @@ static void uiText(int16_t x, int16_t y, const char* t, uint16_t c, const GFXfon
 /*  Дрібні підписи (частоти, значення смуг) — вбудованим шрифтом 5×7: у
     колонку 28 пікселів гладкий шрифт «125» уже не вміщує.  */
 static void uiTiny(int16_t x, int16_t w, int16_t y, const char* t, uint16_t c){
-  dsp.setFont(); dsp.setTextSize(1); dsp.setTextColor(c, C_BG);
+  /*  y — верх рядка, як у вбудованого шрифту; вузький згладжений шрифт  */
+  dsp.setFont(&aaUI6); dsp.setTextSize(1); dsp.setTextColor(c);
   char b[16]; snprintf(b, sizeof(b), "%s", utf8Rus(t, false));
-  int16_t tw = (int16_t)strlen(b) * 6 - 1;
-  dsp.setCursor(x + (w - tw) / 2, y); dsp.print(b);
+  dsp.setCursor(x + (w - (int16_t)textW(b)) / 2, y + 7); dsp.print(b);
+  dsp.setFont();
 }
 
 static void uiTextC(int16_t x, int16_t w, int16_t y, const char* t, uint16_t c, const GFXfont* f){
@@ -2709,15 +2750,15 @@ static void uiTextC(int16_t x, int16_t w, int16_t y, const char* t, uint16_t c, 
 }
 
 static void uiBtn(int16_t x, int16_t y, int16_t w, int16_t h, const char* t, bool on, const GFXfont* f){
-  dsp.fillRect(x, y, w, h, on ? C_ACC : C_PANEL);
+  dsp.box(x, y, w, h, R_BTN, on ? C_ACC : C_PANEL, C_BG);
   uiTextC(x, w, y + h / 2 + (f == &yoUI8 ? 4 : 5), t, on ? C_BG : C_TXT, f);
 }
 
 static void uiArrow(int16_t x, int16_t y, int16_t w, int16_t h, bool right){
-  dsp.fillRect(x, y, w, h, C_PAN2);
-  int16_t cx = x + w / 2, cy = y + h / 2;
-  if(right) dsp.fillTriangle(cx - 4, cy - 7, cx - 4, cy + 7, cx + 5, cy, C_ACC);
-  else      dsp.fillTriangle(cx + 4, cy - 7, cx + 4, cy + 7, cx - 5, cy, C_ACC);
+  dsp.box(x, y, w, h, R_BTN, C_PAN2, C_BG);
+  float cx = x + w / 2.0f, cy = y + h / 2.0f;
+  if(right) dsp.triAA(cx - 3.5f, cy - 6.5f, cx - 3.5f, cy + 6.5f, cx + 5, cy, C_ACC);
+  else      dsp.triAA(cx + 3.5f, cy - 6.5f, cx + 3.5f, cy + 6.5f, cx - 5, cy, C_ACC);
 }
 
 static const char* const GUARD_LBL[3]  = { "вимк", "м'який", "сильний" };
@@ -2773,7 +2814,7 @@ void YoMenu::_buildSound(){
 void YoMenu::_drawEqTop(){
   const ExtStore& e = extras.s;
   uiArrow(CX, EQ_TOP_Y, 34, EQ_TOP_H, false);
-  dsp.fillRect(CX + 36, EQ_TOP_Y, 116, EQ_TOP_H, C_PANEL);
+  dsp.box(CX + 36, EQ_TOP_Y, 116, EQ_TOP_H, R_BTN, C_PANEL, C_BG);
   uiTextC(CX + 36, 116, EQ_TOP_Y + 19, YoDsp::PRESET_NAME[e.eqPreset < EQ_PRESETS ? e.eqPreset : 0], e.eqOn ? C_TXT : C_DIM, &yoUI9b);
   uiArrow(CX + 154, EQ_TOP_Y, 34, EQ_TOP_H, true);
   uiBtn(CX + 196, EQ_TOP_Y, CW - 196, EQ_TOP_H, e.eqOn ? "увімкнено" : "вимкнено", e.eqOn, &yoUI8);
@@ -2788,16 +2829,16 @@ void YoMenu::_drawEqBand(uint8_t b){
   char t[8];
   if(v) snprintf(t, sizeof(t), "%+d", v); else snprintf(t, sizeof(t), "0");
   uiTiny(x0, EQ_COLW, EQ_VAL_Y - 7, t, (on && v) ? C_ACC : C_DIM);
-  dsp.fillRect(cx - 1, EQ_T0, 2, EQ_T1 - EQ_T0, C_PAN2);
-  dsp.fillRect(cx - 7, EQ_ZERO, 14, 1, C_DIM);
+  dsp.box(cx - 1, EQ_T0, 3, EQ_T1 - EQ_T0, 1.5f, C_PAN2, C_BG);
+  dsp.fillRect(cx - 6, EQ_ZERO, 13, 1, C_DIM);
   int16_t yv = eqY(v);
-  if(v) dsp.fillRect(cx - 3, v > 0 ? yv : EQ_ZERO, 6, abs(yv - EQ_ZERO), on ? C_ACC : C_DIM);
+  if(v) dsp.fillRect(cx - 2, v > 0 ? yv : EQ_ZERO, 5, abs(yv - EQ_ZERO), on ? C_ACC : C_DIM);
   /*  поправка під кімнату — бірюзовою позначкою там, де смуга звучить разом із нею  */
   if(e.eqRoomOn && e.eqRoom[b]){
     int16_t yr = eqY((float)(on ? v : 0) + e.eqRoom[b]);
     dsp.fillRect(cx + 5, yr - 2, 5, 5, C_ROOM);
   }
-  dsp.fillRect(cx - 9, yv - 3, 18, 6, on ? C_TXT : C_DIM);
+  dsp.fillRoundRectAA(cx - 9, yv - 3, 19, 7, 3.5f, on ? C_TXT : C_DIM);
 }
 
 void YoMenu::_drawEqBottom(){
@@ -2865,8 +2906,8 @@ void YoMenu::_drawRoom(bool full){
   else                          snprintf(t, sizeof(t), "%s", has ? "поправку зміряно" : "");
   uiText(CX, 182, t, st == 4 || _rmErr[0] ? 0xFB00 : C_TXT, &yoUI8);
   if(st == 1 || st == 2){
-    dsp.fillRect(CX, 188, CW, 4, C_PANEL);
-    dsp.fillRect(CX, 188, (int16_t)(CW * pr / 100), 4, C_ACC);
+    dsp.box(CX, 188, CW, 4, 2, C_PANEL, C_BG);
+    if(pr) dsp.box(CX, 188, (int16_t)(CW * pr / 100) < 4 ? 4 : (int16_t)(CW * pr / 100), 4, 2, C_ACC, C_PANEL);
   }
   bool busy = st == 1 || st == 2;
   uiBtn(CX, 202, 140, 34, busy ? "зупинити" : "зміряти", !busy, &yoUI9b);
@@ -2878,14 +2919,17 @@ void YoMenu::_drawRoom(bool full){
 void YoMenu::_drawMicLive(){
   const int16_t mx = CX + 160, mw = CW - 160;
   bool on = mic.listening();
-  if(_cur == PG_MIC) dsp.fillRect(mx, 40, mw, 20, C_PANEL);
+  if(_cur == PG_MIC){
+    dsp.fillRect(mx, 36, mw, 28, C_BG);
+    dsp.box(mx, 44, mw, 12, 6, C_PANEL, C_BG);
+  }
   if(on && _cur == PG_MIC){
     float lv = mic.levelDb(), nz = mic.noiseDb();
     int16_t w = (int16_t)((lv + 80.0f) * mw / 60.0f);
     if(w < 0) w = 0; if(w > mw) w = mw;
-    dsp.fillRect(mx, 40, w, 20, mic.speech() ? C_VOICE : C_ACC);
+    if(w >= 12) dsp.box(mx, 44, w, 12, 6, mic.speech() ? C_VOICE : C_ACC, C_PANEL);
     int16_t nx = (int16_t)((nz + 80.0f) * mw / 60.0f);
-    if(nx >= 0 && nx < mw - 1) dsp.fillRect(mx + nx, 38, 2, 24, C_TXT);
+    if(nx >= 0 && nx < mw - 1) dsp.box(mx + nx - 1, 39, 3, 22, 1.5f, C_TXT, C_BG);
   }
   char t[64];
   uint32_t now = millis();
@@ -2924,7 +2968,7 @@ void YoMenu::_drawGestRows(){
     dsp.fillRect(CX, y, CW, 32, C_BG);
     uiText(CX, y + 21, r ? "3 рази" : "2 рази", C_TXT, &yoUI9);
     uiArrow(CX + 70, y, 30, 30, false);
-    dsp.fillRect(CX + 102, y, 154, 30, C_PANEL);
+    dsp.box(CX + 102, y, 154, 30, R_BTN, C_PANEL, C_BG);
     uiTextC(CX + 102, 154, y + 20, YoMic::actionName(YoMic::actionFor(g)), C_TXT, &yoUI9);
     uiArrow(CX + 258, y, 30, 30, true);
   }

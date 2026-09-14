@@ -91,6 +91,20 @@ static bool spidmaOnce(const uint8_t* p, size_t len){
 
 bool spidmaOk(){ return s_chan && !s_broken; }
 
+void* spidmaScratch(size_t len){
+  static void* s_buf = nullptr; static size_t s_len = 0;
+  if(len > s_len){
+    /*  Перший запит беремо із запасом під найбільшу смугу (рядок списку 254×32),
+        щоб потім не перевиділяти й не дробити пам'ять.  */
+    size_t want = len < 16384 ? 16384 : len;
+    void* nb = heap_caps_malloc(want, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    if(!nb) return s_len >= len ? s_buf : nullptr;
+    if(s_buf) heap_caps_free(s_buf);
+    s_buf = nb; s_len = want;
+  }
+  return s_buf;
+}
+
 bool spidmaWrite(const void* buf, size_t len){
   if(!s_chan || s_broken || !buf || !len) return false;
   const uint8_t* p = (const uint8_t*)buf;
@@ -104,5 +118,10 @@ bool spidmaWrite(const void* buf, size_t len){
 #else
 bool spidmaBegin(){ return false; }
 bool spidmaOk(){ return false; }
+void* spidmaScratch(size_t len){
+  static void* s_buf = nullptr; static size_t s_len = 0;
+  if(len > s_len){ if(s_buf) free(s_buf); s_buf = malloc(len); s_len = s_buf ? len : 0; }
+  return s_buf;
+}
 bool spidmaWrite(const void* buf, size_t len){ (void)buf; (void)len; return false; }
 #endif

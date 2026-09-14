@@ -37,7 +37,7 @@ bool YoSplash::begin(bool sync, const char* path){
   }
   if(o > sz){ stop(); return false; }
   _size = sz;
-  _px = (uint8_t*)heap_caps_malloc(PX_CAP * 2, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+  _px = (uint8_t*)spidmaScratch(PX_CAP * 2);            /* спільна смуга (spidma.h) */
   if(!_px){ stop(); return false; }
   _cur = 0; _nextMs = millis();
   _hold = sync; _holdSince = millis();
@@ -47,7 +47,7 @@ bool YoSplash::begin(bool sync, const char* path){
 void YoSplash::stop(){
   if(_data){ heap_caps_free(_data); _data = nullptr; }
   if(_offs){ heap_caps_free(_offs); _offs = nullptr; }
-  if(_px){ heap_caps_free(_px); _px = nullptr; }
+  _px = nullptr;                                          /* смуга спільна — не звільняємо */
   _size = 0; _n = 0; _cur = 0;
 }
 

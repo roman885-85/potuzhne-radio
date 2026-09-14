@@ -36,6 +36,24 @@ class UiCanvas : public GFXcanvas16 {
     /*  Згладжене: коло й прямокутник із заокругленими кутами (край — змішуванням).  */
     void fillCircleAA(float cx, float cy, float r, uint16_t color);
     void fillRoundRectAA(int16_t x, int16_t y, int16_t w, int16_t h, float r, uint16_t color);
+    /*  Плашка з заокругленими кутами, кути — над відомим тлом bg (не над тим,
+        що лежить у кадрі): перемальована іншим кольором, вона не лишає
+        на кутах слідів старого.  */
+    void box(int16_t x, int16_t y, int16_t w, int16_t h, float r, uint16_t color, uint16_t bg);
+    /*  Рамка товщиною t: лінія line, всередині fill, навколо bg.  */
+    void frame(int16_t x, int16_t y, int16_t w, int16_t h, float r, float t, uint16_t line, uint16_t fill, uint16_t bg);
+    /*  Лінія з круглими кінцями, дуга (кути в градусах: 0 — вгору, за годинниковою),
+        трикутник — усе з покриттям краю, поверх того, що в кадрі.  */
+    void lineAA(float x0, float y0, float x1, float y1, float wd, uint16_t color);
+    void arcAA(float cx, float cy, float r, float wd, uint16_t color, float a0 = 0, float a1 = 360);
+    void triAA(float x0, float y0, float x1, float y1, float x2, float y2, uint16_t color);
+    void polyAA(const float* xy, uint8_t n, uint16_t color);     /* будь-який многокутник (x,y парами) */
+
+    /*  Відгук на дотик: хвиля світла від пальця в межах кнопки під ним (кнопку
+        знаходить сам — за кольором кадру); на порожньому тлі — м'яке сяйво.
+        Кадр не змінює: накладається лише під час виводу.  */
+    void press(int16_t x, int16_t y, uint16_t glow);
+    void fxFreeze(int16_t ageMs){ _fxFreeze = ageMs; }        /* налагодження: зупинити хвилю на цій миті (-1 — ні) */
     uint16_t blend(uint16_t bg, uint16_t fg, uint8_t a) const;   /* a 0..255 */
     uint16_t pixelAt(int16_t x, int16_t y) const { return getPixel(x, y); }
 
@@ -55,6 +73,13 @@ class UiCanvas : public GFXcanvas16 {
     uint32_t _dirty[TH] = {0};
     bool     _active = false;
     uint8_t* _dma = nullptr;                       /* смуга на вивід, внутрішня пам'ять для DMA */
+    struct Fx { bool on, req, panel; int16_t x, y, bx, by, bw, bh; float rmax; uint16_t glow; uint32_t t0; };
+    Fx       _fx = {};
+    int16_t  _fxFreeze = -1;
+    uint32_t* _seen = nullptr;                     /* для пошуку кнопки під пальцем */
+    uint16_t* _stack = nullptr;
+    bool     _region(int16_t x, int16_t y, int16_t& bx, int16_t& by, int16_t& bw, int16_t& bh);
+    void     _cover(int16_t px, int16_t py, float cov, uint16_t color);
     portMUX_TYPE _mux = portMUX_INITIALIZER_UNLOCKED;
     void _markRaw(int16_t x, int16_t y, int16_t w, int16_t h);
     void _drawAAGlyph(int16_t x, int16_t y, uint8_t c);

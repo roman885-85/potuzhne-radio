@@ -33,8 +33,10 @@ class UiText : public Widget {
     void setText(int val, const char* fmt);
     void setColor(uint16_t fg){ _fgcolor = fg; }
     void redraw(){ if(_active && !_locked){ _clear(); _draw(); } }   /* поверх його щось малювали */
+    void setInset(uint8_t px){ _inset = px; }   /* текст лежить на заокругленій плашці: кути не чіпати */
   protected:
     const GFXfont* _font = nullptr;
+    uint8_t  _inset = 0;
     char     _text[52] = {0};
     char     _old[52]  = {0};
     uint16_t _boxw = 0, _boxh = 0;
@@ -58,7 +60,7 @@ class UiSlider : public Widget {
     const GFXfont* _font = nullptr;
     char     _label[48] = {0};
     uint16_t _boxw = 0, _barcolor = 0;
-    int      _lo = 0, _hi = 100, _val = 0, _oldfill = -1;
+    int      _lo = 0, _hi = 100, _val = 0, _oldfill = -1;   /* _oldfill — положення ручки, пікселі */
     char     _shown[12] = {0};            /* що вже написано на екрані */
     uint32_t _animTick = 0;               /* крок анімації ходу смуги */
     void _draw() override;
@@ -106,6 +108,9 @@ class UiSeg : public Widget {
     int8_t   _sel = -1;
     bool     _dirty = false;
     int16_t  _segW() const { return _n ? (int16_t)((_boxw - 4 * (_n - 1)) / _n) : 0; }
+    float    _pos = -1;                   /* де зараз жовта плашка (в кнопках): їде до вибраної */
+    uint32_t _animT = 0;
+    void _paint();
     void _draw() override;
     void _clear() override;
 };

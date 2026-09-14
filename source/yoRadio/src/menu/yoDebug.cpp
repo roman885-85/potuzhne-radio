@@ -15,6 +15,7 @@
 #include <SPIFFS.h>
 #include "../ES8311/yoES8311.h"
 #include "yoMenu.h"
+#include "uicanvas.h"
 #include "../core/touchscreen.h"
 #include "../extras/yoExtras.h"
 #include "../extras/yoRecorder.h"
@@ -574,6 +575,10 @@ void yodbgLoop(){
         Serial.printf("після жесту: станція %d\n", display.currentPlItem);
       }
     }
+    else if(!strncmp(buf,"sdown ",6)){ int x=0,y=0; if(sscanf(buf+6, "%d %d", &x,&y)==2){ touchscreen.injectBegin(x,y); Serial.printf("палець %d,%d тримає\n", x, y); } }
+    else if(!strncmp(buf,"smove ",6)){ int x=0,y=0; if(sscanf(buf+6, "%d %d", &x,&y)==2) touchscreen.injectMove(x,y); }
+    else if(!strcmp(buf,"sup")){ touchscreen.injectEnd(); Serial.println("палець відпущено"); }
+    else if(!strncmp(buf,"uifx ",5)){ int a = atoi(buf+5); ui.fxFreeze((int16_t)a); Serial.printf("UIFX хвиля %s %d мс\n", a >= 0 ? "стоїть на" : "жива", a); }
     else if(!strncmp(buf,"stap ",5)){
       int x=0,y=0;
       if(sscanf(buf+5, "%d %d", &x,&y)==2){

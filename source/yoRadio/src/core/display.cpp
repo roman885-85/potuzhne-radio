@@ -1340,7 +1340,14 @@ void Display::loop() {
     while(xQueueReceive(displayQueue, &drop, 0)) { }
     return;
   }
+  /*  Бігучий рядок списку не малюємо, коли зверху меню (скажімо, меню мереж
+      відкрилось саме, поки список був на екрані): він писав би просто в
+      дисплей поверх сторінки.  */
+#ifdef USE_YOMENU
+  if(_mode==STATIONS && _plwidget && !_plScroll && !yomenu.active() && !yomenu.fading()) _plwidget->marqueeTick();
+#else
   if(_mode==STATIONS && _plwidget && !_plScroll) _plwidget->marqueeTick();
+#endif
 #endif
 #ifdef USE_YOMENU
   /*  Пока открыто меню, обычная отрисовка молчит, а очередь просто

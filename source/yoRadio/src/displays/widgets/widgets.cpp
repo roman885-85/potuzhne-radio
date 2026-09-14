@@ -72,6 +72,49 @@ class RowCanvas : public Adafruit_GFX {
         if(x >= _bw || x >= _clipW) break;
       }
     }
+    /*  Те саме для згладжених шрифтів (fonts/aa, 4 біти на піксель): край
+        літери змішується з тим, що вже лежить у рядку (смуга, сіра зебра).  */
+    void textFastAA(const char* s, int16_t x, int16_t baseline, uint16_t color, const GFXfont* f,
+                    int16_t cy0 = -32768, int16_t cy1 = 32767){
+      if(!_buf || !f) return;
+      if(cy0 < 0) cy0 = 0; if(cy1 > _bh) cy1 = _bh;
+      if(cy1 <= cy0) return;
+      for(; *s; s++){
+        uint8_t c = (uint8_t)*s;
+        if(c < f->first || c > f->last) continue;
+        const GFXglyph* g = &f->glyph[c - f->first];
+        const uint8_t* bmp = f->bitmap + g->bitmapOffset;
+        const int16_t w = g->width, h = g->height;
+        const int16_t gx = x + g->xOffset, gy = baseline + g->yOffset;
+        if(gx < _bw && gx + w > 0 && gx < _clipW){
+          for(int16_t yy = 0; yy < h; yy++){
+            const int16_t py = gy + yy;
+            if(py < cy0 || py >= cy1) continue;
+            const uint16_t col = (py >= _b0 && py < _b1) ? _fgBand : color;
+            const uint16_t fr = (col >> 11) & 31, fg = (col >> 5) & 63, fb = col & 31;
+            const uint16_t cs = _swap ? (uint16_t)((col << 8) | (col >> 8)) : col;
+            uint16_t* line = _buf + (size_t)py * _bw;
+            uint32_t idx = (uint32_t)yy * w;
+            for(int16_t xx = 0; xx < w; xx++, idx++){
+              const uint8_t a = (idx & 1) ? (bmp[idx >> 1] & 0x0F) : (bmp[idx >> 1] >> 4);
+              if(!a) continue;
+              const int16_t px = gx + xx;
+              if(px < 0 || px >= _bw || px >= _clipW) continue;
+              if(a == 15){ line[px] = cs; continue; }
+              uint16_t b = line[px];
+              if(_swap) b = (uint16_t)((b << 8) | (b >> 8));
+              const uint16_t ia = 15 - a;
+              uint16_t v = (uint16_t)((((fr * a + ((b >> 11) & 31) * ia) / 15) << 11) |
+                                      (((fg * a + ((b >> 5) & 63) * ia) / 15) << 5) |
+                                       ((fb * a + (b & 31) * ia) / 15));
+              line[px] = _swap ? (uint16_t)((v << 8) | (v >> 8)) : v;
+            }
+          }
+        }
+        x += g->xAdvance;
+        if(x >= _bw || x >= _clipW) break;
+      }
+    }
     /*  Заливка кількох рядків буфера одним кольором — по два пікселі за раз.  */
     void fillLines(int16_t y0, int16_t y1, uint16_t c){
       if(!_buf) return;
@@ -107,6 +150,8 @@ static void plRowText(const char* nm, int16_t lb0, int16_t lb1, int16_t sx, bool
   #include "../fonts/yoUI15.h"
   #include "../fonts/yoMono12.h"
   #include "../fonts/yoUI11.h"     /* список станцій: звичайна Verdana, не жирна */
+  #include "../fonts/aa/aaUI11.h"  /* ті самі розміри, згладжені (Roboto) */
+  #include "../fonts/aa/aaUI15.h"
   #include "../fonts/nxbuttons.h"
   #include "../tools/spidma.h"
   #include "esp_heap_caps.h"
@@ -1405,10 +1450,8 @@ void PlayListWidget::drawSmooth(float pos){
   int   from = base - PL_CUR - 1;
   if(_cacheFrom == 0 || from < _cacheFrom || from + PL_ROWS + 2 > _cacheFrom + PL_CACHE)
     loadCache(from - 2);
-  if(!_row){
-    _row = (uint16_t*)heap_caps_malloc((size_t)PL_LIST_W * PL_ROW_H * 2, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    if(!_row) return;
-  }
+  _row = (uint16_t*)spidmaScratch((size_t)PL_LIST_W * PL_ROW_H * 2);   /* спільна смуга (spidma.h) */
+  if(!_row) return;
   static int8_t dmaOk = -1;
   if(dmaOk < 0) dmaOk = spidmaBegin() ? 1 : 0;
 
@@ -1505,10 +1548,10 @@ static void plRowText(const char* nm, int16_t lb0, int16_t lb1, int16_t sx, bool
       після прокрутки виглядало як лупа, що «застрягла».  */
   int16_t x0 = playing ? 12 : 8;
   uint16_t cOut = playing ? PL_C_BAND : PL_C_TXT;
-  _rowCanvas.textFast(big, x0, PL_BASE, cOut, &yoUI11, 0, lb0);
-  _rowCanvas.textFast(big, x0, PL_BASE, cOut, &yoUI11, lb1, PL_ROW_H);
-  _rowCanvas.textFast(big, x0 - sx, PL_BASE_BIG, PL_C_TXT, &yoUI15, lb0, lb1);
-  if(wrap) _rowCanvas.textFast(big, x0 - sx + wrap, PL_BASE_BIG, PL_C_TXT, &yoUI15, lb0, lb1);   /* друга копія — коло без розриву */
+  _rowCanvas.textFastAA(big, x0, PL_BASE, cOut, &aaUI11, 0, lb0);
+  _rowCanvas.textFastAA(big, x0, PL_BASE, cOut, &aaUI11, lb1, PL_ROW_H);
+  _rowCanvas.textFastAA(big, x0 - sx, PL_BASE_BIG, PL_C_TXT, &aaUI15, lb0, lb1);
+  if(wrap) _rowCanvas.textFastAA(big, x0 - sx + wrap, PL_BASE_BIG, PL_C_TXT, &aaUI15, lb0, lb1);   /* друга копія — коло без розриву */
   if(playing){
     /*  під знаком у смузі — жовта підкладка: бігучий рядок іде під неї  */
     for(int16_t yy = (lb0 > 0 ? lb0 : 0); yy < (lb1 < PL_ROW_H ? lb1 : PL_ROW_H); yy++)
@@ -1549,18 +1592,15 @@ uint16_t plTextWidth(const char* utf8){
   uint16_t w = 0;
   for(; *s; s++){
     uint8_t c = (uint8_t)*s;
-    if(c < yoUI15.first || c > yoUI15.last) continue;
-    w += pgm_read_byte(&yoUI15.glyph[c - yoUI15.first].xAdvance);   /* у смузі — крупний шрифт */
+    if(c < aaUI15.first || c > aaUI15.last) continue;
+    w += aaUI15.glyph[c - aaUI15.first].xAdvance;                    /* у смузі — крупний шрифт */
   }
   return w;
 }
 
 void plGenericDraw(float pos, int count, const char* (*nameAt)(int), int16_t shift, bool bandOnly, int playIdx, int16_t wrapW, int16_t rightPad, int padUntil){
-  static uint16_t* row = nullptr;
-  if(!row){
-    row = (uint16_t*)heap_caps_malloc((size_t)PL_LIST_W * PL_ROW_H * 2, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    if(!row) return;
-  }
+  uint16_t* row = (uint16_t*)spidmaScratch((size_t)PL_LIST_W * PL_ROW_H * 2);   /* спільна смуга (spidma.h) */
+  if(!row) return;
   static int8_t dmaOk = -1;
   if(dmaOk < 0) dmaOk = spidmaBegin() ? 1 : 0;
   int   base = (int)floorf(pos);

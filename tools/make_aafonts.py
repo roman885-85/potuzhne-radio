@@ -29,6 +29,8 @@ SET = [
     ("aaUI13",  "Roboto-Regular.ttf", 17, 31),
     ("aaUI14b", "Oswald-Regular.ttf", 18, 33),
     ("aaUI15",  "Roboto-Regular.ttf", 20, 36),
+    ("aaUI6",   "RobotoCondensed-Regular.ttf", 7, 12),   # дрібні підписи еквалайзера (колонка 28 px)
+    ("aaUI26b", "Roboto-Bold.ttf",    24, 40),           # збільшена клавіша над пальцем
 ]
 GAMMA = 0.85          # трохи густіші краї: дрібний світлий текст на темному інакше «худне»
 
