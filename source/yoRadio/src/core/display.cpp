@@ -16,6 +16,7 @@
 #include "../displays/widgets/pages.h"
 #include "../displays/tools/l10n.h"
 #include "../menu/yoMenu.h"
+#include "../menu/uicanvas.h"
 #include "../extras/yoExtras.h"
 #include "../extras/yoRecorder.h"
 #include "../extras/yoSplash.h"
@@ -1347,9 +1348,10 @@ void Display::loop() {
       как только меню закроют.  */
   if(yomenu.active() || yomenu.fading()){
 #ifdef YO_DEBUG
-    { uint32_t m0 = millis(); yomenu.render(); uint32_t d = millis() - m0; if(d > yoMenuMs) yoMenuMs = d; }
+    { uint32_t m0 = millis(); yomenu.render(); ui.flush(); uint32_t d = millis() - m0; if(d > yoMenuMs) yoMenuMs = d; }
 #else
     yomenu.render();
+    ui.flush();                  /* кадр меню: на екран лише змінене */
 #endif
     requestParams_t drop;
     while(xQueueReceive(displayQueue, &drop, 0)) { }

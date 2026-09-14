@@ -5,6 +5,8 @@
 #include "../displays/dspcore.h"
 #include "../displays/tools/utf8Rus.h"
 extern DspCore dsp;
+#include "uicanvas.h"
+#define dsp ui          /* віджети меню малюють у кадр меню (menu/uicanvas) */
 
 /*  ---------------- UiText ---------------- */
 

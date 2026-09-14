@@ -27,6 +27,23 @@
 extern DspCore dsp;
 YoMenu yomenu;
 
+/*  Меню малює в кадр у пам'яті (menu/uicanvas): на екран іде лише змінене, а
+    текст — згладженими шрифтами Roboto замість 1-бітної Verdana. Далі в цьому
+    файлі «dsp» — це кадр, а шрифти меню — їхні згладжені двійники тих самих
+    розмірів, тож розкладка сторінок лишається.  */
+#include "uicanvas.h"
+#include "../displays/fonts/aa/aaUI8.h"
+#include "../displays/fonts/aa/aaUI9.h"
+#include "../displays/fonts/aa/aaUI9b.h"
+#include "../displays/fonts/aa/aaUI11.h"
+#include "../displays/fonts/aa/aaUI12b.h"
+#define dsp     ui
+#define yoUI8   aaUI8
+#define yoUI9   aaUI9
+#define yoUI9b  aaUI9b
+#define yoUI11  aaUI11
+#define yoUI12b aaUI12b
+
 /*  Кольори зняті з Nextion: жовта шапка, темні панелі, білий текст.  */
 #define C_BG    0x0000
 #define C_PANEL 0x2124
@@ -111,6 +128,7 @@ static WidgetConfig wc(uint16_t l, uint16_t t, WidgetAlign a=WA_LEFT){ WidgetCon
 
 void YoMenu::_build(){
   if(_built) return;
+  ui.begin();
   for(uint8_t i=0;i<PG_N;i++) _pg[i] = new Page();
 
   /*  INFO: сім рядків «підпис / значення»  */
@@ -298,6 +316,7 @@ void YoMenu::_chrome(const char* title, uint8_t icon){
     приходить дотик, крутиться декодер звуку, і пауза там чутна.  */
 void YoMenu::_show(int8_t p){
   _lastAct = millis();
+  if(_cur == PG_OFF) ui.setActive(true);          /* меню відкривається — малюємо в кадр */
   Serial.printf("##MENU#\tсторінка %d -> %d\n", (int)_cur, (int)p);
   /*  З екрана підсумку спроби пішли — спробу закриваємо тут же: інакше
       повернення в збережені мережі стоїть, доки її хтось не закриє.  */
@@ -340,6 +359,7 @@ void YoMenu::_fade(){
         if(_cur >= 0 && _pg[_cur]) _pg[_cur]->setActive(false);
         _cur = PG_OFF;
         dsp.setFont();
+        ui.setActive(false);                     /* далі екран — плеєра, напряму */
         display.forceRedraw();
         /*  «Станції» з меню: список малюємо ще в темряві, тож перехід один,
             а не два поспіль (меню → плеєр → список).  */

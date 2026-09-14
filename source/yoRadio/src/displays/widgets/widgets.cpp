@@ -3,6 +3,7 @@
 #include "../dspcore.h"
 #include "Arduino.h"
 #include "widgets.h"
+#include "../../menu/uicanvas.h"
 #if DSP_MODEL==DSP_ILI9341
 /*  Полотно поверх готового буфера: малюємо смугу у внутрішній пам'яті,
     щоб не возитися з повільним записом у PSRAM.  */
@@ -1524,6 +1525,11 @@ static void plRowText(const char* nm, int16_t lb0, int16_t lb1, int16_t sx, bool
 void plGenericChrome(){
   dsp.fillScreen(PL_C_BLACK);
   dsp.drawRect(PL_X0 - 1, PL_TOP - 1, PL_LIST_W + 2, PL_ROWS * PL_ROW_H + 2, PL_C_BAND);
+  uiMirrorFill(0, 0, 320, 240, PL_C_BLACK);
+  uiMirrorFill(PL_X0 - 1, PL_TOP - 1, PL_LIST_W + 2, 1, PL_C_BAND);
+  uiMirrorFill(PL_X0 - 1, PL_TOP + PL_ROWS * PL_ROW_H, PL_LIST_W + 2, 1, PL_C_BAND);
+  uiMirrorFill(PL_X0 - 1, PL_TOP - 1, 1, PL_ROWS * PL_ROW_H + 2, PL_C_BAND);
+  uiMirrorFill(PL_X0 + PL_LIST_W, PL_TOP - 1, 1, PL_ROWS * PL_ROW_H + 2, PL_C_BAND);
   for(uint8_t i = 0; i < 4; i++) plGenericButton(i, false);
 }
 
@@ -1535,6 +1541,7 @@ void plGenericButton(uint8_t i, bool on){
   dsp.setAddrWindow(PL_BTN_X, PL_BTN_Y(i), NXBTN_W, NXBTN_H);
   dsp.writePixels((uint16_t*)nxButtons[img[i][on ? 1 : 0]], NXBTN_W * NXBTN_H);
   dsp.endWrite();
+  uiMirror(PL_BTN_X, PL_BTN_Y(i), NXBTN_W, NXBTN_H, nxButtons[img[i][on ? 1 : 0]], false);
 }
 
 uint16_t plTextWidth(const char* utf8){
@@ -1589,6 +1596,7 @@ void plGenericDraw(float pos, int count, const char* (*nameAt)(int), int16_t shi
     dsp.setAddrWindow(PL_X0, y0, PL_LIST_W, y1 - y0);
     if(!(dmaOk && spidmaWrite(src, n * 2)))
       dsp.writePixels((uint16_t*)src, n, true, true);
+    uiMirror(PL_X0, y0, PL_LIST_W, y1 - y0, src, true);   /* кадр меню знає, що тут тепер */
   }
   dsp.endWrite();
   _rowCanvas.setSwap(false);
