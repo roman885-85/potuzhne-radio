@@ -18,6 +18,9 @@
 #include "../extras/yoMic.h"
 #include "../extras/yoDsp.h"
 #include "../extras/yoI2sLock.h"
+volatile uint32_t yoAuUnderN = 0, yoAuUnderMs = 0, yoAuMinFill = 0xFFFFFFFF;   /* audiostat */
+volatile bool yoAuLog = true;
+#include "esp_timer.h"
 #include "../extras/yoSfx.h"
 #include "../extras/yoSpectrum.h"
 
@@ -4875,6 +4878,31 @@ bool Audio::playSample(int16_t sample[2]) {
     if(m_i2s_bytesWritten < 4) {
         log_e("Can't stuff any more in I2S..."); // increase waitingtime or outputbuffer
         return false;
+    }
+    /*  Налагодження (команда audiostat): чи встигає звук. Поки буфер I2S повний,
+        запис блокується, і звук іде врівень із годинником. Не встигли подати
+        відліки — годинник утік уперед, і цей відрив лишається: так рахуємо
+        провали, які на слух — «пригальмовує з хрипом».  */
+    {
+        static int64_t t0 = 0, lastCall = 0, lagMin = 0, over0 = 0;
+        static uint64_t cnt = 0;
+        static uint32_t rate0 = 0;
+        const int64_t now = esp_timer_get_time();
+        const uint32_t rate = getSampleRate();
+        if(rate != rate0 || !t0 || now - lastCall > 300000){ rate0 = rate; t0 = now; cnt = 0; lagMin = INT64_MAX; over0 = 0; }
+        lastCall = now;
+        if((++cnt & 1023) == 0 && rate){
+            const int64_t lag = (now - t0) - (int64_t)(cnt * 1000000ULL / rate);
+            if(lag < lagMin) lagMin = lag;
+            const int64_t over = lag - lagMin;
+            if(cnt > (uint64_t)rate * 2 && over - over0 > 15000){
+                yoAuUnderN++; yoAuUnderMs += (uint32_t)((over - over0) / 1000);
+                if(yoAuLog) Serial.printf("##AUDIO#\tпровал звуку %u мс, у буфері потоку %u КБ\n", (unsigned)((over - over0) / 1000), (unsigned)(inBufferFilled() / 1024));
+            }
+            if(over > over0) over0 = over;
+            const uint32_t fill = inBufferFilled();
+            if(fill < yoAuMinFill) yoAuMinFill = fill;
+        }
     }
     return true;
 }
