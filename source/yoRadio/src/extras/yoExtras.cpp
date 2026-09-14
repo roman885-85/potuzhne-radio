@@ -535,8 +535,9 @@ void YoExtras::_sleepLoop(uint32_t now){
 
 /*  ---------- будильник ---------- */
 
-static uint8_t rampState = 0;            /* 0 — нема, 1 — чекаємо звуку, 2 — наростає */
+static uint8_t rampState = 0;            /* 0 — нема, 1 — чекаємо звуку, 2 — наростає, 3 — ще дзвенить дзвіночок */
 static uint32_t rampWait0 = 0;
+static uint32_t rampPlayAt = 0;          /* коли вмикати станцію (після дзвіночка) */
 static uint8_t  rampBase = 0;            /* гучність у налаштуваннях на момент старту */
 
 void YoExtras::alarmNow(){ _alarmStart(); }
@@ -558,11 +559,20 @@ void YoExtras::_alarmStart(){
   if(config.getMode() == PM_SDCARD) config.changeMode(PM_WEB);
   rampBase = config.store.volume;
   _rampTo = rampBase < ALARM_MIN_VOL ? ALARM_MIN_VOL : rampBase;
-  sfx.play(SFX_ALARM);                   /* дзвіночок одразу, станція наростає за ним */
   player.volOverride = 0;
   player.applyVol(0);
-  player.sendCommand({PR_PLAY, config.lastStation()});
-  rampState = 1; rampWait0 = now;
+  /*  Спершу дзвіночок цілком, потім станція. Разом вони заїкались: з'єднання
+      (TLS ~0,4 с) ішло пріоритетніше за звук, а далі дзвіночок домішувався в
+      потік, що саме набирав буфер.  */
+  if(sfx.willPlay(SFX_ALARM)){
+    sfx.play(SFX_ALARM);
+    rampPlayAt = millis() + sfx.clipMs(SFX_ALARM) + 350 + 400;   /* + пробудження підсилювача + хвіст */
+    rampState = 3;
+  }else{
+    player.sendCommand({PR_PLAY, config.lastStation()});
+    rampState = 1;
+  }
+  rampWait0 = now;
   _rampT0 = now;                         /* alarmRinging() */
 }
 
@@ -589,6 +599,8 @@ void YoExtras::_alarmLoop(uint32_t now){
     /*  Гучність рухнули пальцем — людина прокинулась, далі вона сама.  */
     if(config.store.volume != rampBase){
       rampState = 0; _rampT0 = 0; player.volOverride = -1;
+    }else if(rampState == 3){
+      if((int32_t)(now - rampPlayAt) >= 0){ player.sendCommand({PR_PLAY, config.lastStation()}); rampState = 1; rampWait0 = now; }
     }else if(rampState == 1){
       if(player.status() == PLAYING){ rampState = 2; _rampT0 = now; }
       else if(now - rampWait0 > ALARM_WAIT_MS){ rampState = 0; _rampT0 = 0; player.volOverride = -1; }

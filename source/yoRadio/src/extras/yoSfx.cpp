@@ -45,7 +45,8 @@ void YoSfx::begin(){
   Serial.printf("##[BOOT]#\tзвуки подій: %s\n", _fsOk ? "розділ ресурсів є" : "розділу ресурсів немає");
   _lock = xSemaphoreCreateMutex();
   _q = xQueueCreate(6, sizeof(uint8_t));
-  xTaskCreatePinnedToCore(_taskFn, "sfx", 4096, this, 2, nullptr, 1);
+  /*  вище за задачу з'єднання станції (3): інакше рукостискання TLS рвало звук  */
+  xTaskCreatePinnedToCore(_taskFn, "sfx", 4096, this, 4, nullptr, 1);
 }
 
 void YoSfx::refreshUser(){
