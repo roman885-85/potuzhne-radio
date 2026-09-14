@@ -111,10 +111,17 @@ static void loopDspTask(void * pvParameters){
     /*  Щойно вивели кадр (прокрутка, перехід, хвиля) — наступний без сну:
         10 мс між обертами самі по собі обмежували прокрутку до ~30 кадрів.
         Нічого не рухається — спимо, як і раніше.  */
+    /*  Але зовсім не віддавати ядро не можна: прокрутка без пауз не пускала
+        задачу простою, і сторож задач перезавантажував радіо (дамп: DspTask у
+        Menu::_flush). Тож між кадрами — 2 мс, а раз на чверть секунди руху — 8.  */
     {
-      static uint32_t seen = 0;
-      const uint32_t f = g_m2Frames;
-      vTaskDelay(f != seen ? 1 : DSP_TASK_DELAY);
+      static uint32_t seen = 0, busyT = 0;
+      const uint32_t f = g_m2Frames, now = millis();
+      if(f != seen){
+        if(!busyT) busyT = now;
+        if(now - busyT > 250){ vTaskDelay(pdMS_TO_TICKS(8)); busyT = now; }
+        else vTaskDelay(pdMS_TO_TICKS(2));
+      }else{ busyT = 0; vTaskDelay(DSP_TASK_DELAY); }
       seen = f;
     }
   #else

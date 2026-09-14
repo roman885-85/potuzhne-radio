@@ -13,6 +13,7 @@ static const int   SPIDMA_DESC  = 9;          /* 9 x 4092 = 36 КБ за оди�
 static const size_t SPIDMA_CHUNK = 4092;
 static const size_t SPIDMA_MAX   = 32768;     /* межа довжини передачі в регістрі SPI */
 static bool s_broken = false;                /* передача раз не завершилась — далі без DMA */
+uint32_t spidmaBytes = 0;                        /* налагодження: скільки пішло в екран */
 uint32_t spidmaHz = 40000000;                 /* частота шини дисплея — щоб знати, скільки спати під час передачі */
 
 bool spidmaBegin(){
@@ -34,7 +35,14 @@ bool spidmaBegin(){
   return true;
 }
 
-static bool spidmaOnce(const uint8_t* p, size_t len){
+static uint32_t s_userSave = 0;
+static size_t   s_len = 0;
+static int64_t  s_t0 = 0;
+static bool     s_busy = false;
+
+/*  Почати передачу й одразу повернутись: поки байти йдуть шиною, процесор
+    малює наступну смугу в інший буфер.  */
+static void spidmaKick(const uint8_t* p, size_t len){
   spi_dev_t* hw = &GPSPI2;
   int n = 0; size_t left = len;
   while(left && n < SPIDMA_DESC){
@@ -53,7 +61,7 @@ static bool spidmaOnce(const uint8_t* p, size_t len){
   /*  Ядро Arduino тримає SPI у повнодуплексному режимі з фазою прийому.
       На час передачі прийом вимикаємо, а після — повертаємо як було, щоб
       його власні записи через FIFO працювали далі без змін.  */
-  uint32_t userSave = hw->user.val;
+  s_userSave = hw->user.val;
   hw->user.usr_miso = 0;
   hw->user.usr_mosi = 1;
   gdma_reset(s_chan);
@@ -65,29 +73,53 @@ static bool spidmaOnce(const uint8_t* p, size_t len){
   hw->dma_int_clr.trans_done = 1;
   spi_ll_apply_config(hw);
   spi_ll_user_start(hw);
-  /*  Чекаємо кінця передачі, але не вічно. Раніше тут був порожній цикл без
-      межі: при швидкій прокрутці довгого списку «кінець» одного разу не
-      прийшов, задача екрана стала, і сторож задач перезавантажував радіо.
-      Кадр на 36 КБ при 40 МГц — 7 мс; 300 мс — уже точно збій.  */
-  int64_t t0 = esp_timer_get_time();
-  /*  Поки кадр іде шиною (40 МГц: 36 КБ — 7 мс), не крутимось упусту, а спимо:
-      на тому ж ядрі мікрофон і Wi-Fi, і порожнє очікування забирало в них час.  */
-  uint32_t ms = (uint32_t)((uint64_t)len * 8 * 1000 / spidmaHz);
-  if(ms >= 3) vTaskDelay(pdMS_TO_TICKS(ms - 1));
+  s_len = len; s_t0 = esp_timer_get_time(); s_busy = true;
+}
+
+/*  Дочекатися кінця передачі, але не вічно. Раніше тут був порожній цикл без
+    межі: при швидкій прокрутці довгого списку «кінець» одного разу не
+    прийшов, задача екрана стала, і сторож задач перезавантажував радіо.
+    Поки лишається більше 2 мс — спимо: на тому ж ядрі мікрофон і Wi-Fi.  */
+static bool spidmaFinish(){
+  if(!s_busy) return true;
+  spi_dev_t* hw = &GPSPI2;
+  const int64_t need = (int64_t)s_len * 8 * 1000000LL / spidmaHz;      /* мікросекунд на всю передачу */
   bool done = true;
   while(!hw->dma_int_raw.trans_done){
-    if(esp_timer_get_time() - t0 > 300000){ done = false; break; }
+    const int64_t el = esp_timer_get_time() - s_t0;
+    if(el > 300000){ done = false; break; }
+    if(need - el > 2500) vTaskDelay(pdMS_TO_TICKS(need - el > 4000 ? (need - el) / 1000 - 1 : 1));
   }
   if(!done){
     Serial.printf("##DSP#\tDMA: передача %u байт не завершилась (usr=%u raw=0x%08x) — далі без DMA\n",
-                  (unsigned)len, (unsigned)hw->cmd.usr, (unsigned)hw->dma_int_raw.val);
+                  (unsigned)s_len, (unsigned)hw->cmd.usr, (unsigned)hw->dma_int_raw.val);
     gdma_stop(s_chan);
     gdma_reset(s_chan);
   }
   hw->dma_int_clr.trans_done = 1;
   spi_ll_dma_tx_enable(hw, false);
-  hw->user.val = userSave;
+  hw->user.val = s_userSave;
+  s_busy = false;
   return done;
+}
+
+static bool spidmaOnce(const uint8_t* p, size_t len){
+  spidmaKick(p, len);
+  return spidmaFinish();
+}
+
+bool spidmaStart(const void* buf, size_t len){
+  if(!s_chan || s_broken || !buf || !len || len > SPIDMA_MAX) return false;
+  if(s_busy && !spidmaFinish()){ s_broken = true; return false; }
+  spidmaBytes += len;
+  spidmaKick((const uint8_t*)buf, len);
+  return true;
+}
+
+bool spidmaWait(){
+  if(!s_busy) return true;
+  if(!spidmaFinish()){ s_broken = true; return false; }
+  return true;
 }
 
 bool spidmaOk(){ return s_chan && !s_broken; }
@@ -106,9 +138,9 @@ void* spidmaScratch(size_t len){
   return s_buf;
 }
 
-uint32_t spidmaBytes = 0;                        /* налагодження: скільки пішло в екран */
 bool spidmaWrite(const void* buf, size_t len){
   if(!s_chan || s_broken || !buf || !len) return false;
+  if(s_busy && !spidmaFinish()){ s_broken = true; return false; }
   spidmaBytes += len;
   const uint8_t* p = (const uint8_t*)buf;
   while(len){                                    /* довше за межу — кількома заходами */
@@ -128,4 +160,6 @@ void* spidmaScratch(size_t len){
   return s_buf;
 }
 bool spidmaWrite(const void* buf, size_t len){ (void)buf; (void)len; return false; }
+bool spidmaStart(const void* buf, size_t len){ (void)buf; (void)len; return false; }
+bool spidmaWait(){ return true; }
 #endif

@@ -594,8 +594,13 @@ void Player::_flush(){
   bool any = false;
   for(int r = 0; r < 15; r++) if(rows[r]){ any = true; break; }
   if(!any) return;
-  uint16_t* buf = (uint16_t*)spidmaScratch((size_t)STRIP * 2);
-  if(!buf) return;
+  /*  як у меню: половина буфера малюється, поки друга йде шиною  */
+  uint16_t* scr = (uint16_t*)spidmaScratch((size_t)STRIP * 2);
+  if(!scr) return;
+  const int32_t HALF = STRIP / 2;
+  uint16_t* half[2] = { scr, scr + HALF };
+  uint8_t hi = 0;
+  bool pending = false;
   bool dma = spidmaOk() || spidmaBegin();
   Gfx g;
   _frameT = millis();                       /* одна мить на весь кадр: смуги виходять по черзі, а хвиля не має рватися */
@@ -612,8 +617,9 @@ void Player::_flush(){
       int16_t x0 = s * 16, w = (e - s) * 16;
       if(x0 + w > SW) w = SW - x0;
       int16_t y0 = r * 16, h = 16;
-      for(int rr = r + 1; rr < 15 && (rows[rr] & run) == run && (int32_t)w * (h + 16) <= STRIP; rr++){ rows[rr] &= ~run; h += 16; }
+      for(int rr = r + 1; rr < 15 && (rows[rr] & run) == run && (int32_t)w * (h + 16) <= HALF; rr++){ rows[rr] &= ~run; h += 16; }
       if(y0 + h > SH) h = SH - y0;
+      uint16_t* buf = half[hi];
       /*  тло — готове, із PSRAM  */
       for(int16_t yy = 0; yy < h; yy++){
         if(_bg) memcpy(buf + (int32_t)yy * w, _bg + (int32_t)(y0 + yy) * SW + x0, (size_t)w * 2);
@@ -623,10 +629,13 @@ void Player::_flush(){
       _draw(g);
       const uint32_t n = (uint32_t)w * h;
       for(uint32_t i = 0; i < n; i++){ uint16_t v = buf[i]; buf[i] = (uint16_t)((v >> 8) | (v << 8)); }
+      if(pending){ if(!spidmaWait()) dma = false; pending = false; }
       dsp.setAddrWindow(x0, y0, w, h);
-      if(!(dma && spidmaWrite(buf, n * 2))) dsp.writePixels(buf, n, true, true);
+      if(dma && spidmaStart(buf, n * 2)){ pending = true; hi ^= 1; }
+      else dsp.writePixels(buf, n, true, true);
     }
   }
+  if(pending) spidmaWait();
   dsp.endWrite();
   g_m2Draw = false;
   g_m2Frames++;

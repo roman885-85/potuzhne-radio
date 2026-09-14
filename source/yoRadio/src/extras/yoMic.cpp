@@ -8,6 +8,7 @@
 #include "dsps_wind.h"
 #include "../core/options.h"
 #include "../core/player.h"
+#include "yoI2sLock.h"
 #include "../ES8311/yoES8311.h"
 #include "yoExtras.h"
 #include "yoDsp.h"
@@ -102,7 +103,12 @@ void YoMic::_run(){
     if(!listening()){ vTaskDelay(pdMS_TO_TICKS(200)); n = 0; continue; }
     if(_tsKind) _simChunk(raw);                               /* перевірка: хлопки чи стук через свій динамік */
     size_t got = 0;
-    if(i2s_read(I2S_NUM_0, raw, RAW, &got, pdMS_TO_TICKS(100)) != ESP_OK || got < 4){
+    esp_err_t rr = ESP_FAIL;
+    {
+      YoI2sGuard lk(pdMS_TO_TICKS(100));
+      if(lk.ok) rr = i2s_read(I2S_NUM_0, raw, RAW, &got, pdMS_TO_TICKS(60));
+    }
+    if(rr != ESP_OK || got < 4){
       /*  драйвер саме перенастроюють (зміна частоти, зупинка) — не крутимось
           упусту: ядро 0 без простою будить сторожовий таймер  */
       vTaskDelay(pdMS_TO_TICKS(10));
@@ -682,7 +688,7 @@ void YoMic::_sweep(int16_t* raw){
       }
       size_t w = 0, got = 0;
       i2s_write(I2S_NUM_0, out, k * 4, &w, pdMS_TO_TICKS(300));
-      i2s_read(I2S_NUM_0, raw, k * 4, &got, pdMS_TO_TICKS(300));
+      { YoI2sGuard lk; i2s_read(I2S_NUM_0, raw, k * 4, &got, pdMS_TO_TICKS(300)); }
       for(size_t j = 0; j < got / 4; j++){
         size_t t = done + j;
         if(dst && t >= from && t < from + capN){
@@ -699,7 +705,7 @@ void YoMic::_sweep(int16_t* raw){
   /*  старі записи з буферів приймання — геть  */
   for(int i = 0; i < 16; i++){
     size_t got = 0;
-    i2s_read(I2S_NUM_0, raw, FR * 4, &got, 0);
+    { YoI2sGuard lk; i2s_read(I2S_NUM_0, raw, FR * 4, &got, 0); }
     if(!got) break;
   }
   if(MUTE_PIN != 255) digitalWrite(MUTE_PIN, _swAmp ? !MUTE_VAL : MUTE_VAL);  /* підсилювач */

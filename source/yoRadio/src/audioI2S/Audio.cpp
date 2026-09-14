@@ -17,6 +17,7 @@
 #include "../core/config.h"
 #include "../extras/yoMic.h"
 #include "../extras/yoDsp.h"
+#include "../extras/yoI2sLock.h"
 #include "../extras/yoSfx.h"
 #include "../extras/yoSpectrum.h"
 
@@ -274,10 +275,12 @@ void Audio::initInBuff() {
 esp_err_t Audio::I2Sstart(uint8_t i2s_num) {
     // It is not necessary to call this function after i2s_driver_install() (it is started automatically),
     // however it is necessary to call it after i2s_stop()
+    YoI2sGuard lk;
     return i2s_start((i2s_port_t) i2s_num);
 }
 
 esp_err_t Audio::I2Sstop(uint8_t i2s_num) {
+    YoI2sGuard lk;
     return i2s_stop((i2s_port_t) i2s_num);
 }
 //---------------------------------------------------------------------------------------------------------------------
@@ -4762,6 +4765,7 @@ bool Audio::audioFileSeek(const float speed) {
     if((speed > 1.5f) || (speed < 0.25f)) return false;
 
     uint32_t srate = getSampleRate() * speed;
+    YoI2sGuard lk;
     i2s_set_sample_rates((i2s_port_t)m_i2s_num, srate);
     return true;
 }
@@ -4770,6 +4774,7 @@ __attribute__((weak)) void audio_samplerate_changed(uint32_t sampRate) { (void)s
 
 bool Audio::setSampleRate(uint32_t sampRate) {
     if(!sampRate) sampRate = 16000; // fuse, if there is no value -> set default #209
+    YoI2sGuard lk;                       // мікрофон не читає, поки драйвер перенастроюється (extras/yoI2sLock.h)
     i2s_set_sample_rates((i2s_port_t)m_i2s_num, sampRate);
     m_sampleRate = sampRate;
     audio_samplerate_changed(sampRate);  // external codecs (ES8311) must follow the clock
@@ -4838,6 +4843,7 @@ void Audio::setI2SCommFMT_LSB(bool commFMT) {
 
     }
     AUDIO_INFO("commFMT = %i", m_i2s_config.communication_format);
+    YoI2sGuard lk;
     i2s_driver_uninstall((i2s_port_t)m_i2s_num);
     i2s_driver_install  ((i2s_port_t)m_i2s_num, &m_i2s_config, 0, NULL);
 }
