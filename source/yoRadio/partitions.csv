@@ -1,5 +1,6 @@
 # ES3C28P: 16 MB flash. Two 3 MB app slots (OTA update from the web page),
 # 2 MB SPIFFS for the web interface, playlists and settings.
+# assets: the rest of the 16 MB chip (7.9 MB, LittleFS) — event sounds, splash, media.
 # Name,     Type, SubType,  Offset,   Size,     Flags
 nvs,        data, nvs,      0x9000,   0x5000,
 otadata,    data, ota,      0xe000,   0x2000,
@@ -7,3 +8,4 @@ app0,       app,  ota_0,    0x10000,  0x300000,
 app1,       app,  ota_1,    0x310000, 0x300000,
 spiffs,     data, spiffs,   0x610000, 0x200000,
 coredump,   data, coredump, 0x810000, 0x10000,
+assets,     data, spiffs,   0x820000, 0x7E0000,

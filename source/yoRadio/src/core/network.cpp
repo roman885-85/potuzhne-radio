@@ -10,6 +10,7 @@
 #include "netserver.h"
 #include "player.h"
 #include "../extras/yoVersion.h"
+#include "../extras/yoSfx.h"
 #include "timekeeper.h"
 #include "../pluginsManager/pluginsManager.h"
 
@@ -47,6 +48,7 @@ void MyNetwork::WiFiReconnected(WiFiEvent_t event, WiFiEventInfo_t info){
   /*  «Грало до обриву» — одноразове: раніше прапорець так і лишався, і
       кожна наступна подія «адресу отримано» (роутер оновлює її сам, через
       години) знову вмикала станцію, хоч її давно зупинили.  */
+  if(millis() > 15000) sfx.play(SFX_CONNECT);     /* на старті мережа — не подія: там свій звук */
   bool resume = network.lostPlaying;
   network.lostPlaying = false;
   if(config.getMode()==PM_SDCARD) {
@@ -92,6 +94,7 @@ void MyNetwork::WiFiLostConnection(WiFiEvent_t event, WiFiEventInfo_t info){
                   WiFi.disconnectReasonName((wifi_err_reason_t)r));
   }
   if(!network.beginReconnect && network.status != SOFT_AP){
+    sfx.play(SFX_ERROR);
     Serial.printf("Lost connection, reconnecting to %s...\n", config.store.lastSSID ? config.ssids[config.store.lastSSID-1].ssid : "?");
     if(config.getMode()==PM_SDCARD) {
       network.status=SDREADY;

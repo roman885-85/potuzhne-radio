@@ -10,6 +10,7 @@
 #include "player.h"
 #include "network.h"
 #include "../menu/yoMenu.h"
+#include "../extras/yoSfx.h"
 #include "../extras/yoExtras.h"
 #include "../extras/yoSermons.h"
 
@@ -199,6 +200,7 @@ void TouchScreen::loop(){
       куди влучила. Кожен інший дотик продовжує денну яскравість уночі.  */
   static bool wakeOnly = false;
   if(istouched && !wastouched && extras.touchWake()) wakeOnly = true;
+  if(istouched && !wastouched && !wakeOnly) sfx.play(SFX_CLICK);     /* клацання — лише коли ввімкнули */
   if(wakeOnly){
     if(!istouched) wakeOnly = false;
     wastouched = istouched;

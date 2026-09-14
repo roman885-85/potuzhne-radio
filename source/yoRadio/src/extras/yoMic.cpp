@@ -11,6 +11,7 @@
 #include "../ES8311/yoES8311.h"
 #include "yoExtras.h"
 #include "yoDsp.h"
+#include "yoSfx.h"
 #include "../core/network.h"
 #include "../core/config.h"
 #include "../menu/yoMenu.h"          /* він і вмикає USE_YOMENU */
@@ -317,7 +318,9 @@ void YoMic::_block(int16_t* x, int16_t* ref, bool playing){
       миттєвостей не рахуємо. Інакше хлопки, що ввімкнули радіо, ловили
       його ж перший такт як новий удар.  */
   if(playing != _wasPlaying){ _wasPlaying = playing; _edgeBt = bt + (playing ? 1200 : 400); }
-  _quietEdge = bt < _edgeBt;
+  /*  …і поки звучить (та ще 0,4 с) власний звук події радіо: чотири ноти
+      звуку ввімкнення інакше складались у «2 хлопки».  */
+  _quietEdge = bt < _edgeBt || sfx.recent();
   _onset(x, own ? ref : nullptr, bt);
   _pattern(bt);
 }
@@ -770,6 +773,7 @@ void YoMic::loop(){
     }
   }
   if(g != MG_NONE){
+    sfx.play(SFX_GESTURE);                     /* чути, що жест прийнято */
     uint8_t a = actionFor(g);
     /*  Без мережі станцію не ввімкнеш — а спроба на секунди займає радіо.  */
     bool needNet = a == MA_TOGGLE || a == MA_NEXT || a == MA_PREV || a == MA_FAV1;

@@ -15,6 +15,7 @@
 #include "menu/yoMenu.h"
 #include "extras/yoMic.h"
 #include "extras/yoDsp.h"
+#include "extras/yoSfx.h"
 #ifdef USE_NEXTION
 #include "displays/nextion.h"
 #endif
@@ -84,6 +85,8 @@ void setup() {
   extras.begin();           /* таймер сну, будильник, ніч, батарея, світлодіод */
   Serial.printf("##[BOOT]#\tостаннє перезавантаження: %s\n", YoExtras::resetReason());
   mic.begin();              /* вбудований мікрофон: задача слухає, лише коли його ввімкнули */
+  sfx.begin();              /* звуки подій: розділ ресурсів і своя задача виводу */
+  sfx.play(SFX_START);
   network.begin();
   if (network.status != CONNECTED && network.status!=SDREADY) {
     netserver.begin();

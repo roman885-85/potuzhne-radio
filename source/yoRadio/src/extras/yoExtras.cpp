@@ -1,4 +1,5 @@
 #include "yoExtras.h"
+#include "yoSfx.h"
 #include <Preferences.h>
 #include <SPIFFS.h>
 #include "yoRecorder.h"
@@ -66,6 +67,11 @@ void YoExtras::_load(){
   if(s.dac > 3) s.dac = 0;
   /*  Звук: при першому запуску цієї версії — захист динаміка ввімкнено, а
       три повзунки yoRadio переносяться в десять смуг.  */
+  if(!s.sfxInit){
+    s.sfxInit = 1; s.sfxOn = 1; s.sfxVol = 60;
+    s.sfxMask = (1 << 0) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6);   /* усе, крім дотику (YoSfx::DEFAULT_MASK) */
+  }
+  if(s.sfxVol > 100) s.sfxVol = 60;
   if(!s.eqInit){
     s.eqInit = 1; s.eqOn = 1; s.eqGuard = 1; s.eqLoud = 0; s.vbass = 0; s.eqPreset = 0;
     int8_t b = config.store.bass, m = config.store.middle, t = config.store.trebble;
@@ -422,6 +428,7 @@ void YoExtras::_sleepLoop(uint32_t now){
     _sleepFading = false;
     player.volOverride = -1;
     if(player.status() == PLAYING) player.sendCommand({PR_STOP, 0});
+    sfx.play(SFX_TIMER);
     _dark = true;
     return;
   }
@@ -452,6 +459,7 @@ void YoExtras::_alarmStart(){
   if(config.getMode() == PM_SDCARD) config.changeMode(PM_WEB);
   rampBase = config.store.volume;
   _rampTo = rampBase < ALARM_MIN_VOL ? ALARM_MIN_VOL : rampBase;
+  sfx.play(SFX_ALARM);                   /* дзвіночок одразу, станція наростає за ним */
   player.volOverride = 0;
   player.applyVol(0);
   player.sendCommand({PR_PLAY, config.lastStation()});

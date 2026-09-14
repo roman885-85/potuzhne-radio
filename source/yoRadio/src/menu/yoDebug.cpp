@@ -20,6 +20,7 @@
 #include "../extras/yoRecorder.h"
 #include "../extras/yoSermons.h"
 #include "../extras/yoMic.h"
+#include "../extras/yoSfx.h"
 #include "../extras/yoDsp.h"
 
 extern DspCore dsp;
@@ -460,6 +461,18 @@ void yodbgLoop(){
       if(f) f.close();
     }
     else if(!strcmp(buf,"wstate")) network.dump();
+    else if(!strncmp(buf,"sfx ",4)){
+      /*  sfx <подія або номер> — програти (навіть вимкнену)  */
+      int e = YoSfx::find(buf + 4);
+      if(e >= 0){ sfx.test((SfxEvent)e); Serial.printf("SFX %s (%u мс)\n", YoSfx::id((SfxEvent)e), (unsigned)sfx.clipMs((SfxEvent)e)); }
+      else Serial.println("SFX невідома подія");
+    }
+    else if(!strcmp(buf,"sfxls")){
+      Serial.printf("SFX розділ: %s, %u з %u байт\n", sfx.fsOk() ? "є" : "немає", (unsigned)sfx.fsUsed(), (unsigned)sfx.fsTotal());
+      for(uint8_t i = 0; i < SFX_N; i++)
+        Serial.printf("SFX %u %-8s %s %u мс%s\n", i, YoSfx::id((SfxEvent)i), (extras.s.sfxMask >> i) & 1 ? "увімк" : "вимк ",
+                      (unsigned)sfx.clipMs((SfxEvent)i), (sfx.userMask() >> i) & 1 ? " (свій)" : "");
+    }
     else if(!strcmp(buf,"wnonet")){
       Serial.println("WNONET перезавантажуюсь, наче мережі поруч немає");
       MyNetwork::skipBootWifi();

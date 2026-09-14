@@ -77,6 +77,7 @@ const P = {
   headph: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="7" rx="1.5"/><rect x="17" y="14" width="4" height="7" rx="1.5"/>',
   shuffle: '<path d="M3 7h3.5c2 0 3.2 1 4.5 3l2 4c1.3 2 2.5 3 4.5 3H21M3 17h3.5c1.6 0 2.7-.6 3.7-1.8M14 8.8c1-1.2 2.1-1.8 3.5-1.8H21M18 4l3 3-3 3M18 14l3 3-3 3"/>',
   file: '<path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/>',
+  bell: '<path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z"/><path d="M10 21h4"/>',
   speak: '<path d="M4 5h16v11H9.5L5 19.5V16H4z"/><path d="M9 9.5v2M12 8v5M15 9.5v2"/>',
 };
 function ic(name, cls) {
@@ -404,6 +405,7 @@ const PAGES = [
   { id: 'alarm', t: 'Будильник і сон', d: 'розбудити й приспати', i: 'alarm' },
   { id: 'screen', t: 'Екран', d: 'яскравість, ніч, економія, світлодіод', i: 'screen' },
   { id: 'sound', t: 'Звук', d: 'еквалайзер на 10 смуг, обробка, під кімнату', i: 'eq' },
+  { id: 'sounds', t: 'Звуки подій', d: 'сигнали увімкнення, жестів, мережі, будильника; свої звуки', i: 'bell' },
   { id: 'mic', t: 'Мікрофон', d: 'хлопки й стук, таймер сну, присутність', i: 'mic' },
   { id: 'wifi', t: 'Wi-Fi', d: 'мережі, пошук, підключення', i: 'wifi' },
   { id: 'time', t: 'Час і погода', d: 'часовий пояс, сервери, погода', i: 'clock' },
@@ -1710,6 +1712,106 @@ VIEWS.about = page => {
     ];
     kv.textContent = '';
     rows.forEach(([a, b]) => kv.append(h('dt', null, a), h('dd', null, b)));
+  });
+};
+
+/* ---------------------------------------------------------------- звуки подій
+   Файли живуть на радіо в розділі ресурсів. Свій звук сторінка готує сама:
+   будь-який файл, який уміє браузер, → моно 22 кГц, до 5 с, вирівняна
+   гучність → WAV. Радіо не мусить уміти MP3 чи OGG для таких дрібниць.  */
+const SFX_SUB = {
+  start: 'коли радіо вмикається', click: 'клацання під пальцем; типово вимкнено', gesture: 'хлопки чи стук розпізнано',
+  connect: 'радіо повернулось у мережу', error: 'зв\'язок із мережею зник', timer: 'таймер сну спрацював', alarm: 'на початку будильника, перед станцією',
+};
+
+async function sfxToWav(file, maxSec) {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  const OCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!Ctx || !OCtx) throw new Error('цей браузер не вміє перетворювати звук');
+  const raw = await file.arrayBuffer();
+  const ctx = new Ctx();
+  let audio;
+  try {
+    audio = await new Promise((res, rej) => { const p = ctx.decodeAudioData(raw, res, rej); if (p && p.then) p.then(res, rej); });
+  } catch (e) { throw new Error('файл не схожий на звук'); }
+  finally { try { ctx.close(); } catch (e) {} }
+  const RATE = 22050;
+  const secs = Math.min(audio.duration, maxSec);
+  const len = Math.max(1, Math.floor(secs * RATE));
+  const off = new OCtx(1, len, RATE);
+  const src = off.createBufferSource(); src.buffer = audio; src.connect(off.destination); src.start(0);
+  const out = await off.startRendering();
+  const d = out.getChannelData(0);
+  let pk = 0; for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > pk) pk = a; }
+  const g = pk > 0 ? Math.min(0.708 / pk, 8) : 1;               /* пік −3 дБ, тихе підсилити не більше ніж у 8 разів */
+  const fade = Math.min(len, Math.floor(RATE * 0.01));
+  const ab = new ArrayBuffer(44 + len * 2), v = new DataView(ab);
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + len * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, RATE, true);
+  v.setUint32(28, RATE * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, len * 2, true);
+  for (let i = 0; i < len; i++) {
+    let x = d[i] * g;
+    if (i >= len - fade) x *= (len - i) / fade;
+    v.setInt16(44 + i * 2, Math.max(-32768, Math.min(32767, Math.round(x * 32767))), true);
+  }
+  return { blob: new Blob([ab], { type: 'audio/wav' }), secs, cut: audio.duration > maxSec + 0.05 };
+}
+
+VIEWS.sounds = page => {
+  const on = sw(false, v => setx({ sfxOn: v ? 1 : 0 }));
+  const volVal = h('span', { class: 'note', style: { margin: 0, minWidth: '44px', textAlign: 'right' } }, '');
+  let volT = 0;
+  const vol = range(0, 100, 60, v => { volVal.textContent = v + '%'; clearTimeout(volT); volT = setTimeout(() => setx({ sfxVol: v }), 250); });
+  const noFs = h('p', { class: 'note bad', hidden: true },
+    'На радіо ще немає розділу для звуків. Його додає прошивка через USB (flash.sh --app-only --assets); станції, мережі й налаштування при цьому лишаються.');
+  const rows = h('div');
+  const space = h('p', { class: 'note' }, '');
+  page.append(
+    card('Звуки подій', row('Звуки', 'короткі сигнали радіо: увімкнення, жест прийнято, мережа, таймер сну, будильник', on),
+      row('Гучність', 'своя — не залежить від гучності станції; під час звуку станція ненадовго стишується', h('div', { class: 'bar', style: { minWidth: '220px', gap: '10px', flex: '1', maxWidth: '360px' } }, vol, volVal)), noFs),
+    card('Події', rows, space),
+    card('Свій звук', h('p', { class: 'note', style: { margin: 0 } },
+      'Підійде будь-який звуковий файл (MP3, WAV, OGG, M4A…) — сторінка сама переведе його у формат радіо: моно 22 кГц, до 5 секунд, гучність вирівняно. Стандартний звук не зникає: кнопка «Стандартний» повертає його.')));
+  let mask = -1, user = -1, list = null;
+  function draw() {
+    if (!list) return;
+    rows.textContent = '';
+    list.ev.forEach((e, i) => {
+      const bit = 1 << i, isOn = !!(mask & bit), mine = !!(user & bit);
+      const s1 = sw(isOn, v => setx({ sfxMask: v ? (mask | bit) : (mask & ~bit) }));
+      const pick = h('input', { type: 'file', accept: 'audio/*,.wav,.mp3,.ogg,.m4a,.aac,.flac', hidden: true });
+      pick.addEventListener('change', async () => {
+        const f = pick.files[0]; if (!f) return;
+        try {
+          toast('Готую звук…');
+          const w = await sfxToWav(f, 5);
+          const fd = new FormData(); fd.append('file', w.blob, e.id + '.wav');
+          await api('/api/sfx?e=' + e.id, { method: 'POST', body: fd });
+          toast(`«${e.t}»: свій звук, ${w.secs.toFixed(1)} с${w.cut ? ' (обрізано до 5 с)' : ''}`);
+          setTimeout(() => { setx({ sfxPlay: e.id }); reload(); }, 400);
+        } catch (err) { toast('Не вдалося: ' + err.message, true); }
+        pick.value = '';
+      });
+      const ctl = h('div', { class: 'bar', style: { gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
+        btn('', 'play', () => setx({ sfxPlay: e.id }), 'sm ico'),
+        btn('Свій', 'upload', () => pick.click(), 'sm'),
+        mine ? btn('Стандартний', 'refresh', () => { setx({ sfxReset: e.id }); setTimeout(reload, 600); }, 'sm ghost') : null,
+        s1, pick);
+      ctl.firstChild.title = 'Прослухати';
+      rows.append(row(e.t, `${SFX_SUB[e.id] || ''} · ${mine ? 'свій звук' : 'стандартний'}${e.ms ? ', ' + (e.ms < 1000 ? e.ms + ' мс' : (e.ms / 1000).toFixed(1) + ' с') : ''}`, ctl));
+    });
+    space.textContent = list.fs ? `Розділ ресурсів: зайнято ${size(list.used)} з ${size(list.total)}.` : '';
+  }
+  async function reload() { try { list = await api('/api/sfx'); draw(); } catch (e) {} }
+  reload();
+  live(() => {
+    if (!S || !S.sfx) return;
+    const x = S.sfx;
+    on.firstChild.checked = !!x.on;
+    if (document.activeElement !== vol) { vol.value = x.vol; fillRange(vol); volVal.textContent = x.vol + '%'; }
+    noFs.hidden = !!x.fs;
+    if (x.mask !== mask || x.user !== user) { const again = user !== -1 && x.user !== user; mask = x.mask; user = x.user; again ? reload() : draw(); }
   });
 };
 

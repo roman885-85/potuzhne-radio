@@ -61,6 +61,10 @@ echo ">>> образ файлової системи"
 MKSPIFFS=$(ls -d "$HOME"/Library/Arduino15/packages/esp32/tools/mkspiffs/*/mkspiffs | head -1)
 "$MKSPIFFS" -c "$SKETCH/data" -b 4096 -p 256 -s 0x200000 "$B/out/yoRadio.spiffs.bin"
 
+echo ">>> образ ресурсів (звуки подій, заставка) — LittleFS у вільних 7,9 МБ"
+MKLFS=$(ls -d "$HOME"/Library/Arduino15/packages/esp32/tools/mklittlefs/*/mklittlefs | sort -V | tail -1)
+"$MKLFS" -c "$SKETCH/assets" -b 4096 -p 256 -s 0x7E0000 "$B/out/yoRadio.assets.bin" > /dev/null
+
 echo ">>> склейка одного образу"
 ESPTOOL=$(ls -d "$HOME"/Library/Arduino15/packages/esp32/tools/esptool_py/*/esptool | sort -V | tail -1)
 cp "$HOME"/Library/Arduino15/packages/esp32/hardware/esp32/3.3.3/tools/partitions/boot_app0.bin "$B/out/"
@@ -71,7 +75,8 @@ cd "$B/out"
   0x8000   yoRadio.ino.partitions.bin \
   0xe000   boot_app0.bin \
   0x10000  yoRadio.ino.bin \
-  0x610000 yoRadio.spiffs.bin
+  0x610000 yoRadio.spiffs.bin \
+  0x820000 yoRadio.assets.bin
 
 #  Імена — нашого проєкту: те, що бачить власник, не має нагадувати yoRadio.
 cp PotuzhneRadio-ES3C28P-full.bin                  "$HERE/PotuzhneRadio-ES3C28P-full.bin"
@@ -79,7 +84,8 @@ cp yoRadio.ino.bin                                 "$HERE/PotuzhneRadio-ES3C28P-
 cp yoRadio.ino.bootloader.bin                      "$HERE/PotuzhneRadio-ES3C28P-bootloader.bin"
 cp yoRadio.ino.partitions.bin                      "$HERE/PotuzhneRadio-ES3C28P-partitions.bin"
 cp yoRadio.spiffs.bin                              "$HERE/PotuzhneRadio-ES3C28P-files.bin"
+cp yoRadio.assets.bin                              "$HERE/PotuzhneRadio-ES3C28P-assets.bin"
 cp boot_app0.bin                                   "$HERE/boot_app0.bin"
-rm -f "$HERE"/yoRadio.ino.bin "$HERE"/yoRadio.ino.bootloader.bin "$HERE"/yoRadio.ino.partitions.bin "$HERE"/yoRadio.spiffs.bin
+rm -f "$HERE"/yoRadio.ino.bin "$HERE"/yoRadio.ino.bootloader.bin "$HERE"/yoRadio.ino.partitions.bin "$HERE"/yoRadio.spiffs.bin "$HERE"/yoRadio.assets.bin
 mkdir -p "$HERE/web" && cp "$SKETCH"/data/www/app.*.gz "$HERE/web/" 2>/dev/null || true   # файли сторінки — поруч із прошивкою
 echo ">>> готово: версія $VER від $BUILD, образи в $HERE"

@@ -17,6 +17,7 @@
 #include "../core/config.h"
 #include "../extras/yoMic.h"
 #include "../extras/yoDsp.h"
+#include "../extras/yoSfx.h"
 
 void yoRecTap(const uint8_t* p, size_t n);   /* extras/yoRecorder.cpp */
 
@@ -4843,6 +4844,8 @@ bool Audio::playSample(int16_t sample[2]) {
     /*  еквалайзер, захист динаміка, гучність, обмежувач — src/extras/yoDsp  */
     uint32_t s32 = yoDsp.process(sample);
     _computeVUlevel(sample);
+    /*  звук події — після гучності станції: у нього своя (extras/yoSfx)  */
+    if(__builtin_expect(sfx.mixing(), 0)) s32 = sfx.mix(s32, getSampleRate());
 
     if(m_f_internalDAC) {
         s32 += 0x80008000;

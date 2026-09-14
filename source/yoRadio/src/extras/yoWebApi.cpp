@@ -16,6 +16,8 @@
 #include "yoRecorder.h"
 #include "yoSermons.h"
 #include "yoLogos.h"
+#include "yoSfx.h"
+#include <LittleFS.h>
 #include "yoVersion.h"
 
 /*  ---------- JSON у готовий буфер ----------
@@ -222,6 +224,10 @@ static void onState(AsyncWebServerRequest* r){
   o.kn("knockOn", s.knockOn); o.kn("knockSens", s.knockSens);
   o.kn("knock2", YoMic::actionFor(MG_KNOCK2)); o.kn("knock3", YoMic::actionFor(MG_KNOCK3));
   o.kn("ear", s.sleepEar); o.kn("earMin", s.sleepEarMin ? s.sleepEarMin : 10); o.kn("wake", s.presWake); o.kn("off", s.presOff);
+  o.put('}');
+  /*  звуки подій  */
+  o.k("sfx"); o.put('{');
+  o.kn("on", s.sfxOn); o.kn("vol", s.sfxVol); o.kn("mask", s.sfxMask); o.kn("fs", sfx.fsOk()); o.kn("user", sfx.userMask());
   o.put('}');
   o.ks("msg", _msg);
   o.put('}');
@@ -449,6 +455,63 @@ static void onLogoUpload(AsyncWebServerRequest* r, String filename, size_t index
     }else{ SPIFFS.remove("/logo/up.tmp"); _lgCrc[0] = 0; }
   }
 }
+/*  ---------- звуки подій: список і свої файли ---------- */
+static void onSfxList(AsyncWebServerRequest* r){
+  JOut o(_bigBuf, BIG_CAP);
+  o.put('{');
+  o.kn("fs", sfx.fsOk()); o.kn("total", (long long)sfx.fsTotal()); o.kn("used", (long long)sfx.fsUsed());
+  o.arr("ev");
+  for(uint8_t i = 0; i < SFX_N; i++){
+    o.sep(); o.obj();
+    o.ks("id", YoSfx::id((SfxEvent)i)); o.ks("t", YoSfx::title((SfxEvent)i));
+    o.kn("user", (sfx.userMask() >> i) & 1); o.kn("ms", sfx.clipMs((SfxEvent)i));
+    o.put('}');
+  }
+  o.put(']');
+  o.put('}');
+  sendJson(r, o.b, o.n);
+}
+
+static File _sfFile;
+static int  _sfEvent = -1;
+static size_t _sfLen = 0;
+static const char* _sfErr = nullptr;
+static const size_t SFX_MAX_BYTES = 512 * 1024;   /* 5 с моно 48 кГц — з запасом */
+
+static void onSfxUpload(AsyncWebServerRequest* r, String filename, size_t index, uint8_t* data, size_t len, bool final){
+  if(!index){
+    _sfErr = nullptr; _sfLen = 0;
+    _sfEvent = r->hasParam("e") ? YoSfx::find(r->getParam("e")->value().c_str()) : -1;
+    if(_sfEvent < 0){ _sfErr = "невідома подія"; return; }
+    if(!sfx.fsOk()){ _sfErr = "немає розділу ресурсів — прошийте радіо через USB"; return; }
+    _sfFile = LittleFS.open("/snd/user/up.tmp", "w");
+    if(!_sfFile){ _sfErr = "не вдалося записати файл"; return; }
+  }
+  if(_sfErr) return;
+  if(_sfLen + len > SFX_MAX_BYTES){ _sfErr = "файл завеликий (до 500 КБ)"; _sfFile.close(); LittleFS.remove("/snd/user/up.tmp"); return; }
+  if(_sfFile && len) _sfLen += _sfFile.write(data, len);
+  if(final && _sfFile){
+    _sfFile.close();
+    /*  перевіряємо заголовок: WAV, PCM 16 біт  */
+    File f = LittleFS.open("/snd/user/up.tmp", "r");
+    uint8_t h[44] = {0};
+    size_t n = f ? f.read(h, sizeof(h)) : 0;
+    if(f) f.close();
+    bool ok = n >= 44 && !memcmp(h, "RIFF", 4) && !memcmp(h + 8, "WAVE", 4) && !memcmp(h + 12, "fmt ", 4)
+              && h[20] == 1 && h[21] == 0 && h[34] == 16;
+    if(!ok){ _sfErr = "потрібен WAV, PCM 16 біт"; LittleFS.remove("/snd/user/up.tmp"); return; }
+    char p[40]; snprintf(p, sizeof(p), "/snd/user/%s.wav", YoSfx::id((SfxEvent)_sfEvent));
+    LittleFS.remove(p);
+    LittleFS.rename("/snd/user/up.tmp", p);
+    sfx.reload((SfxEvent)_sfEvent);
+    sfx.refreshUser();
+  }
+}
+static void onSfxDone(AsyncWebServerRequest* r){
+  if(_sfErr){ char b[120]; snprintf(b, sizeof(b), "{\"err\":\"%s\"}", _sfErr); r->send(400, "application/json", b); }
+  else r->send(200, "application/json", "{\"ok\":1}");
+}
+
 static void onLogoDone(AsyncWebServerRequest* r){
   if(_lgCrc[0]) r->send(200, "application/json", "{\"ok\":1}");
   else r->send(400, "application/json", "{\"err\":\"потрібен файл 45x45\"}");
@@ -489,6 +552,8 @@ void yoWebApiBegin(AsyncWebServer& s){
   s.on("/api/stations", HTTP_POST, onStationsPost, nullptr, onStationsBody);
   s.on("/api/logos",    HTTP_GET,  onLogos);
   s.on("/api/logo",     HTTP_POST, onLogoDone, onLogoUpload);
+  s.on("/api/sfx",      HTTP_GET,  onSfxList);
+  s.on("/api/sfx",      HTTP_POST, onSfxDone, onSfxUpload);
   /*  логотипи — прямо з SPIFFS; сторінка додає ?v=<версія>, тож кеш на добу безпечний  */
   s.serveStatic("/logo/", SPIFFS, "/logo/").setCacheControl("max-age=86400");
 }
@@ -502,6 +567,23 @@ static void apply(const WebCmd& c){
   bool ext = true;                       /* поле налаштувань — записати згодом */
   if(!strcmp(k, "sleep"))           { extras.setSleep(clampi(v, 0, 600)); ext = false; }
   else if(!strcmp(k, "alarmOn"))    s.alarmOn = clampi(v, 0, 1);
+  else if(!strcmp(k, "sfxOn"))      s.sfxOn = clampi(v, 0, 1);
+  else if(!strcmp(k, "sfxVol"))     s.sfxVol = clampi(v, 0, 100);
+  else if(!strcmp(k, "sfxMask"))    s.sfxMask = clampi(v, 0, 0xFFFF);
+  else if(!strcmp(k, "sfxPlay"))    { int e = YoSfx::find(v); if(e >= 0) sfx.test((SfxEvent)e); ext = false; }
+  else if(!strcmp(k, "sfxReset")){
+    /*  свій звук прибрати — знову стандартний  */
+    int e = YoSfx::find(v);
+    if(e >= 0 && sfx.fsOk()){
+      char p[40]; snprintf(p, sizeof(p), "/snd/user/%s.wav", YoSfx::id((SfxEvent)e));
+      /*  файл могли саме читати (перша перевірка тривалості) — пробуємо кілька разів  */
+      bool gone = false;
+      for(uint8_t t = 0; t < 5 && !(gone = !LittleFS.exists(p) || LittleFS.remove(p)); t++) delay(40);
+      if(!gone) Serial.printf("##SFX#\tне вдалося прибрати %s\n", p);
+      sfx.reload((SfxEvent)e); sfx.refreshUser();
+    }
+    ext = false;
+  }
   else if(!strcmp(k, "alarmH"))     s.alarmH = clampi(v, 0, 23);
   else if(!strcmp(k, "alarmM"))     s.alarmM = clampi(v, 0, 59);
   else if(!strcmp(k, "alarmDays"))  s.alarmDays = clampi(v, 0, 1);

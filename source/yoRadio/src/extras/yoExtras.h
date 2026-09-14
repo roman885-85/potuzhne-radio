@@ -52,6 +52,11 @@ struct ExtStore {
   uint8_t  eqRoomOn;
   uint8_t  vbass;                                /* віртуальний бас: 0 вимк, 1..3 сила */
   uint8_t  eqInit;                               /* 1 — типові значення звуку вже виставлено */
+  /*  Звуки подій (extras/yoSfx).  */
+  uint8_t  sfxInit;                              /* 1 — типові значення вже виставлено */
+  uint8_t  sfxOn;                                /* головний вимикач */
+  uint8_t  sfxVol;                               /* 0..100 */
+  uint16_t sfxMask;                              /* які події озвучувати: біт на подію SfxEvent */
 };
 /*  Зовнішній ЦАП I2S — на вільні виводи роз'єму розширення  */
 #define DAC_BCLK  14

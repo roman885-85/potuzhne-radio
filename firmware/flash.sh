@@ -15,15 +15,20 @@
 #     ./flash.sh /dev/cu.usbmodem1101
 #     ./flash.sh --app-only      — обновить только программу, настройки и
 #                                  список станций в SPIFFS не трогать
+#     ./flash.sh --app-only --assets — то же и раздел ресурсов (звуки,
+#                                  заставка) вместе с таблицей разделов;
+#                                  станции, сети и настройки не трогаются
 # ---------------------------------------------------------------------------
 set -e
 cd "$(dirname "$0")"
 
 APP_ONLY=0
+ASSETS=0
 PORT=""
 for a in "$@"; do
   case "$a" in
     --app-only) APP_ONLY=1 ;;
+    --assets)   ASSETS=1 ;;
     *)          PORT="$a" ;;
   esac
 done
@@ -50,11 +55,15 @@ echo
 #  через сторінку радіо вантажиться з другого розділу (app1), і нова програма
 #  в app0 без цього так і лежала б невживана.
 if [ "$APP_ONLY" = "1" ]; then
+  EXTRA=()
+  #  Таблиця розділів і ресурси пишуться лише в нові місця: 0x8000 і 0x820000.
+  #  Розділи зі станціями (0x610000) і налаштуваннями (nvs) лишаються як були.
+  [ "$ASSETS" = "1" ] && EXTRA=(0x8000 PotuzhneRadio-ES3C28P-partitions.bin 0x820000 PotuzhneRadio-ES3C28P-assets.bin)
   "$ESPTOOL" --chip esp32s3 --port "$PORT" --baud 921600 \
     --before default-reset --after hard-reset write-flash -z \
     --flash-mode dio --flash-freq 80m --flash-size 16MB \
     0xe000  boot_app0.bin \
-    0x10000 PotuzhneRadio-ES3C28P-update.bin
+    0x10000 PotuzhneRadio-ES3C28P-update.bin "${EXTRA[@]}"
 else
   "$ESPTOOL" --chip esp32s3 --port "$PORT" --baud 921600 \
     --before default-reset --after hard-reset write-flash -z \
