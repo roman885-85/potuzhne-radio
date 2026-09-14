@@ -588,7 +588,8 @@ static void apply(const WebCmd& c){
   else if(!strcmp(k, "splashOff"))  s.splashOff = clampi(v, 0, 1);
   else if(!strcmp(k, "splashVol"))  s.splashVol = clampi(v, 0, 100);
   else if(!strcmp(k, "splashDemo")) { display.splashDemo(clampi(v, 2000, 20000)); ext = false; }
-  else if(!strcmp(k, "otaCheck"))   { ota.check(clampi(v, 0, 1)); ext = false; }
+  else if(!strcmp(k, "otaCheck"))   { ota.check(clampi(v, 0, 1) || extras.s.otaBeta); ext = false; }
+  else if(!strcmp(k, "otaBeta"))    { extras.s.otaBeta = clampi(v, 0, 1); ota.check(extras.s.otaBeta); }
   else if(!strcmp(k, "otaInstall")) { ota.install(); ext = false; }
   else if(!strcmp(k, "sfxVol"))     s.sfxVol = clampi(v, 0, 100);
   else if(!strcmp(k, "sfxMask"))    s.sfxMask = clampi(v, 0, 0xFFFF);

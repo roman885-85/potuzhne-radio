@@ -1,4 +1,5 @@
 #include "yoOta.h"
+#include "yoExtras.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
@@ -65,7 +66,7 @@ void YoOta::loop(){
   uint32_t now = millis();
   if(now >= _nextCheck){
     _nextCheck = now + 12UL * 3600UL * 1000UL;       /* двічі на добу */
-    check(false);
+    check(extras.s.otaBeta);
   }
 }
 

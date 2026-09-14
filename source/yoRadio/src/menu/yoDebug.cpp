@@ -591,6 +591,7 @@ void yodbgLoop(){
       Serial.printf("SPECSET шкала=%.1f запас=%.1f спад=%.1f усередн=%.2f\n", yoSpec.range, yoSpec.head, yoSpec.decay, yoSpec.avgK);
     }
     else if(!strcmp(buf,"fade")){ Serial.printf("FADE %.3f\n", yoDsp.fadeLevel()); }
+    else if(!strncmp(buf,"alarmtest ",10)){ int sec = atoi(buf + 10); if(sec >= 30 && sec <= 3600) extras.alarmTestOff((uint16_t)sec); else Serial.println("alarmtest <30..3600 с>"); }
     else if(!strcmp(buf,"coredump")){
       /*  Дамп останнього падіння з флеш — без esptool і перезавантаження.
           Адреси розшифровувати addr2line з ELF тієї ж збірки (firmware/elf/).  */

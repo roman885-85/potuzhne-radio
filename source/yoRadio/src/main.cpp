@@ -88,7 +88,7 @@ void setup() {
   Serial.printf("##[BOOT]#\tостаннє перезавантаження: %s\n", YoExtras::resetReason());
   mic.begin();              /* вбудований мікрофон: задача слухає, лише коли його ввімкнули */
   sfx.begin();              /* звуки подій: розділ ресурсів і своя задача виводу */
-  sfx.play(SFX_START);
+  if(!YoExtras::wokeForAlarm()) sfx.play(SFX_START);   /* перед будильником — тихо */
   network.begin();
   if (network.status != CONNECTED && network.status!=SDREADY) {
     netserver.begin();
@@ -115,7 +115,7 @@ void setup() {
   #endif
   if (config.getMode()==PM_SDCARD) player.initHeaders(config.station.url);
   player.lockOutput=false;
-  if (config.store.smartstart == 1) {
+  if (config.store.smartstart == 1 && !YoExtras::wokeForAlarm()) {     /* будильник сам увімкне станцію */
     player.sendCommand({PR_PLAY, config.lastStation()});
   }
   pm.on_end_setup();

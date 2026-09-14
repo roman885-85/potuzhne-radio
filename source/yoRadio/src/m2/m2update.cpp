@@ -49,9 +49,14 @@ static Item s_updItems[] = {
   iInfo("У радіо", [](){ return prVersion(); }),
   iInfo("На GitHub", vGh),
   iNote(vUpdNote, 36),
-  iButton("Перевірити зараз", IC_REFRESH, [](){ ota.check(false); }),
+  iButton("Перевірити зараз", IC_REFRESH, [](){ ota.check(extras.s.otaBeta); }),
   iButton("Встановити", IC_DOWN, [](){ ota.install(); M.closeNow(); }),
   iNote([](){ return "станції, мережі, обране й налаштування лишаються;\nпід час оновлення радіо не вимикати"; }, 36),
+  iSection("КАНАЛ"),
+  iSwitch("Пробні версії", IC_CODE, C_ORANGE, [](){ return (int32_t)extras.s.otaBeta; },
+          [](int32_t v){ extras.s.otaBeta = v ? 1 : 0; extras.changed(); ota.check(extras.s.otaBeta); }),
+  iNote([](){ return extras.s.otaBeta ? "пропонувати й попередні випуски — ще не перевірені для всіх"
+                                      : "лише випуски для всіх; увімкніть, щоб ставити пробні"; }, 36),
 };
 
 class UpdatePage : public ListPage {
@@ -62,7 +67,7 @@ class UpdatePage : public ListPage {
       s_updItems[5].show = [](){ return ota.available() && !ota.installing(); };
       s_updItems[5].text = vInstall;
       ListPage::enter();
-      if(!ota.busy() && (!ota.checkedAt() || millis() - ota.checkedAt() > 600000UL)) ota.check(false);
+      if(!ota.busy() && (!ota.checkedAt() || millis() - ota.checkedAt() > 600000UL)) ota.check(extras.s.otaBeta);
     }
 };
 static UpdatePage s_update;

@@ -88,7 +88,9 @@ static bool spidmaFinish(){
   while(!hw->dma_int_raw.trans_done){
     const int64_t el = esp_timer_get_time() - s_t0;
     if(el > 300000){ done = false; break; }
-    if(need - el > 2500) vTaskDelay(pdMS_TO_TICKS(need - el > 4000 ? (need - el) / 1000 - 1 : 1));
+    /*  спимо навіть коротко: порожнє очікування по кілька мілісекунд на смугу
+        забирало ядро 0 цілком, і задача простою не діставала часу  */
+    if(need - el > 1200) vTaskDelay(pdMS_TO_TICKS(need - el > 3000 ? (need - el) / 1000 - 1 : 1));
   }
   if(!done){
     Serial.printf("##DSP#\tDMA: передача %u байт не завершилась (usr=%u raw=0x%08x) — далі без DMA\n",

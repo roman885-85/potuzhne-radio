@@ -25,6 +25,7 @@ class Player {
     bool shown() const { return _shown; }
     void render();                       /* задача дисплея, щооберта, поки плеєр на екрані */
     void invalAll(){ _mark(0, 0, SW, SH); }
+    int16_t _cardH() const;              /* висота картки: з обкладинкою проповіді — більша */
     /*  головний цикл  */
     void onPress(int16_t x, int16_t y);
     void onDrag(int16_t x, int16_t y);

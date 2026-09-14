@@ -16,6 +16,7 @@
 #include <HWCDC.h>
 #include <Wire.h>
 #include "esp_sleep.h"
+#include "esp_sntp.h"
 #include "esp_heap_caps.h"
 #include "mbedtls/platform.h"
 #include "driver/rtc_io.h"
@@ -249,6 +250,7 @@ void YoExtras::loop(){
   uint32_t now = millis();
   _sleepLoop(now);
   _alarmLoop(now);
+  _alarmWakeLoop(now);
   _screenLoop(now);
   _batLoop(now);
   _ledLoop(now);
@@ -328,12 +330,91 @@ void YoExtras::_powerOff(){
   rtc_gpio_pullup_en((gpio_num_t)TS_INT);
   rtc_gpio_pulldown_dis((gpio_num_t)TS_INT);
   esp_sleep_enable_ext0_wakeup((gpio_num_t)TS_INT, 0);
+  _armAlarmWake();
   Serial.flush();
   esp_deep_sleep_start();
 }
 
+/*  ---------- будильник, коли радіо «вимкнене» ----------
+    Годинник у сні йде від внутрішнього RC-генератора: за ніч він помиляється
+    на відсотки (хвилини). Тож прокидаємось із запасом (1,5 хв + 3 % від сну),
+    тихо стартуємо, беремо точний час із мережі й вирішуємо: ще далеко — знову
+    спати (новий відрізок коротший, помилка менша), близько — чекати в темряві
+    й дзвонити, як завжди.  */
+RTC_DATA_ATTR static uint8_t s_alarmWakeArmed = 0;
+RTC_DATA_ATTR static int64_t s_alarmTestAt = 0;   /* перевірка (команда alarmtest): «будильник» на цю мить, переживає сон */
 static bool s_wokeTouch = false;
+static bool s_wokeAlarm = false;
+static bool s_alarmQuiet = false;
 bool YoExtras::wokeByTouch(){ return s_wokeTouch; }
+bool YoExtras::wokeForAlarm(){ return s_wokeAlarm; }
+
+void YoExtras::_armAlarmWake(){
+  s_alarmWakeArmed = 0;
+  const int64_t secs = _alarmSecs();
+  if(secs <= 0) return;
+  int64_t margin = 90 + secs * 3 / 100;
+  int64_t sl = secs - margin;
+  if(sl < 5) sl = 5;
+  esp_sleep_enable_timer_wakeup((uint64_t)sl * 1000000ULL);
+  s_alarmWakeArmed = 1;
+  Serial.printf("##ALARM#\tбудильник через %lld с — прокинусь через %lld с\n", (long long)secs, (long long)sl);
+}
+
+int64_t YoExtras::_alarmSecs() const {
+  if(s_alarmTestAt){ const int64_t d = s_alarmTestAt - (int64_t)time(nullptr); return d > 0 ? d : -1; }
+  if(!s.alarmOn) return -1;
+  time_t now = time(nullptr);
+  if(now < 1600000000) return -1;                 /* годинник ще не звірений */
+  struct tm t; localtime_r(&now, &t);
+  const int32_t cur = t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec;
+  const int32_t at = s.alarmH * 3600 + s.alarmM * 60;
+  for(int d = 0; d < 8; d++){
+    const int w = (t.tm_wday + d) % 7;
+    if(s.alarmDays == 1 && (w == 0 || w == 6)) continue;
+    const int64_t x = (int64_t)d * 86400 + at - cur;
+    if(x > 0) return x;
+  }
+  return -1;
+}
+
+int32_t YoExtras::_alarmPassedSecs() const {
+  if(s_alarmTestAt){ const int64_t d = (int64_t)time(nullptr) - s_alarmTestAt; return d >= 0 ? (int32_t)d : -1; }
+  if(!s.alarmOn) return -1;
+  time_t now = time(nullptr);
+  if(now < 1600000000) return -1;
+  struct tm t; localtime_r(&now, &t);
+  if(s.alarmDays == 1 && (t.tm_wday == 0 || t.tm_wday == 6)) return -1;
+  const int32_t d = t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec - (s.alarmH * 3600 + s.alarmM * 60);
+  return d >= 0 ? d : -1;
+}
+
+void YoExtras::_alarmWakeLoop(uint32_t now){
+  if(!s_alarmQuiet || _pwrMode) return;
+  static uint32_t t = 0;
+  if(now - t < 1000) return;
+  t = now;
+  /*  точний час: чекаємо синхронізації з мережею, але не довше 2 хвилин  */
+  const bool synced = sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED;
+  if(!synced && now < 120000UL) return;
+  const int32_t passed = _alarmPassedSecs();
+  if(passed >= 0 && passed < 600 && (s_alarmTestAt || _lastAlarmKey != s.alarmH * 60 + s.alarmM)){
+    /*  прокинулись пізніше, ніж треба (годинник у сні відстав) — дзвонимо одразу  */
+    Serial.println("##ALARM#\tпрокинувся після часу будильника — дзвоню");
+    if(!s_alarmTestAt) _lastAlarmKey = s.alarmH * 60 + s.alarmM;
+    s_alarmTestAt = 0;
+    s_alarmQuiet = false;
+    _alarmStart();
+    return;
+  }
+  const int64_t secs = _alarmSecs();
+  if(secs < 0 || secs > 300){
+    Serial.printf("##ALARM#\tдо будильника %lld с — знову сплю\n", (long long)secs);
+    _powerOff();                                   /* сам поставить наступне пробудження (або сон до дотику) */
+    return;
+  }
+  /*  лишилось до 5 хвилин — чекаємо в темряві, _alarmLoop подзвонить  */
+}
 
 /*  Пам'ять для TLS — у PSRAM. У цій збірці ядра mbedTLS бере лише
     внутрішню RAM (CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC), а кожне з'єднання
@@ -349,6 +430,9 @@ static void tlsFree(void* p){ heap_caps_free(p); }
 void YoExtras::earlyBoot(){
   mbedtls_platform_set_calloc_free(tlsCalloc, tlsFree);
   s_wokeTouch = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0;
+  s_wokeAlarm = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER && s_alarmWakeArmed;
+  s_alarmWakeArmed = 0;
+  s_alarmQuiet = s_wokeAlarm;
   /*  фіксацію, поставлену перед сном, знімаємо — інакше виводи так і лишились би
       «замороженими»: підсвітка не світила б, підсилювач мовчав  */
   gpio_deep_sleep_hold_dis();
@@ -452,8 +536,16 @@ static uint8_t  rampBase = 0;            /* гучність у налаштув
 
 void YoExtras::alarmNow(){ _alarmStart(); }
 
+void YoExtras::alarmTestOff(uint16_t sec){
+  s_alarmTestAt = (int64_t)time(nullptr) + sec;
+  Serial.printf("##ALARM#\tперевірка: вимикаюсь, «будильник» через %u с\n", (unsigned)sec);
+  requestPower(2);
+}
+
 void YoExtras::_alarmStart(){
   uint32_t now = millis();
+  s_alarmQuiet = false;
+  s_alarmTestAt = 0;
   _dark = false;
   _wakeUntil = now + 60000UL;            /* хвилину екран світить і вночі */
   if(_sleepEnd) setSleep(0);
@@ -526,7 +618,7 @@ void YoExtras::_alarmLoop(uint32_t now){
 
 uint16_t YoExtras::pwmTarget(){
 #if BRIGHTNESS_PIN!=255
-  if(!config.store.dspon || _dark || _blank) return 0;
+  if(!config.store.dspon || _dark || _blank || s_alarmQuiet) return 0;
 #ifdef USE_YOMENU
   if(_presDark && !yomenu.active()) return 0;        /* мікрофон: у кімнаті давно нікого не чути */
 #else
@@ -568,7 +660,8 @@ uint16_t YoExtras::pwmNow(){ uint16_t v = pwmTarget(); pwmSet(v); return v; }
 bool YoExtras::touchWake(){
   /*  Пригашений для економії екран теж спершу лише будимо: людина ще не
       бачить, куди тисне.  */
-  bool wasDark = _dark || _saver || _presDark || (_pwmCur == 0 && config.store.dspon && !_blank);
+  bool wasDark = _dark || _saver || _presDark || s_alarmQuiet || (_pwmCur == 0 && config.store.dspon && !_blank);
+  s_alarmQuiet = false;                      /* прокинулись до будильника й торкнулись — радіо просто ввімкнене */
   _dark = false;
   _presDark = false;
   _saver = false;

@@ -43,7 +43,10 @@ void YoMic::gainTemp(uint8_t step){ if(!extras.s.dac) es8311_mic(step > 7 ? 7 : 
 void YoMic::begin(){
   if(_task) return;
   apply();
-  xTaskCreatePinnedToCore(_taskFn, "mic", 8192, this, 1, &_task, 0);
+  /*  Пріоритет 0 — як у задачі простою: коли віднімання луни забирає все ядро,
+      FreeRTOS ділить час між ними по черзі, і сторож задач не спрацьовує
+      (дамп 1.4.5: сторож, у задачі mic). Решта роботи ядра 0 її й так випереджає.  */
+  xTaskCreatePinnedToCore(_taskFn, "mic", 8192, this, 0, &_task, 0);
 }
 
 void YoMic::_taskFn(void* p){ ((YoMic*)p)->_run(); }

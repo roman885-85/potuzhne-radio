@@ -808,7 +808,10 @@ void PowerPage::draw(Gfx& g){
     }
     icon(g, i ? IC_POWER : IC_RESTART, cx, cy, col, C_SURF2);
     g.text(r.x + 76, r.y + 34, _go == (int8_t)i ? (i ? "Вимикаюсь…" : "Перезавантажую…") : T1[i], F_ROWB, C_TXT, AL_L, r.w - 90);
-    g.text(r.x + 76, r.y + 54, arm ? "тримайте, поки коло не замкнеться" : T2[i], F_SM, arm ? col : C_TXT2, AL_L, r.w - 90);
+    const char* sub = T2[i];
+    char ab[64];
+    if(i == 1 && extras.s.alarmOn){ snprintf(ab, sizeof(ab), "дотиком або будильником о %02u:%02u", extras.s.alarmH, extras.s.alarmM); sub = ab; }
+    g.text(r.x + 76, r.y + 54, arm ? "тримайте, поки коло не замкнеться" : sub, F_SM, arm ? col : C_TXT2, AL_L, r.w - 90);
   }
   g.text(SW / 2, 186, "утримайте кнопку ~1 секунду", F_SM, C_TXT2, AL_C);
 }

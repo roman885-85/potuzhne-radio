@@ -330,6 +330,7 @@ static uint8_t wrapText(Gfx& g, int16_t x, int16_t y, int16_t w, int16_t lh, uin
 }
 
 static const int16_t SM_H = 111;          /* проповідь: висота картки з великою обкладинкою */
+int16_t Player::_cardH() const { return sermonOn() ? SM_H : CARD_H; }
 
 void Player::_drawCard(Gfx& g, uint32_t now){
   if(sermonOn() && sermons.at(sermons.playing())){
@@ -344,11 +345,14 @@ void Player::_drawCard(Gfx& g, uint32_t now){
       g.circle(cx + COVERB_W / 2, cy + COVERB_H / 2, 20, C_ACC);
       icon(g, IC_PLAY, cx + COVERB_W / 2 + 1, cy + COVERB_H / 2, C_ACCTXT, C_ACC);
     }
+    /*  Назва — до 4 рядків, під нею проповідник і дата по рядку (з «…»):
+        раніше проповідник міг зайняти два рядки й наповзав на дату.  */
     const int16_t tx = cx + COVERB_W + 9, tw = MX + CWID - 8 - tx;
-    uint8_t n = wrapText(g, tx, CARD_Y + 20, tw, 15, 4, sm->title, F_ROWB, C_TXT);
-    int16_t y = CARD_Y + 20 + n * 15 + 4;
-    wrapText(g, tx, y, tw, 13, 2, sm->preacher, F_SM, C_TXT2);
-    g.text(tx, CARD_Y + SM_H - 9, sm->date, F_SM, C_TXT2, AL_L, tw);
+    uint8_t n = wrapText(g, tx, CARD_Y + 19, tw, 15, 4, sm->title, F_ROWB, C_TXT);
+    int16_t yp = CARD_Y + 19 + (n ? n : 1) * 15 + 2;
+    if(yp > CARD_Y + SM_H - 24) yp = CARD_Y + SM_H - 24;
+    g.text(tx, yp, sm->preacher, F_SM, C_TXT2, AL_L, tw);
+    g.text(tx, yp + 14, sm->date, F_SM, C_TXT3, AL_L, tw);
     return;
   }
   if(!g.visible(MX, CARD_Y, CWID, CARD_H)) return;
@@ -525,13 +529,13 @@ void Player::_ripple(Gfx& g){
   if(!_rf.on) return;
   const int32_t age = (int32_t)(_frameT - _rf.t0);
   float k = age <= 0 ? 0 : age / 280.0f; if(k > 1) k = 1;
-  const float rad = 10 + 180 * (1 - (1 - k) * (1 - k) * (1 - k));
+  const float rad = 10 + 320 * (1 - (1 - k) * (1 - k) * (1 - k));   /* до найдальшого кута картки */
   float a = 50;
   if(_rf.rel){
     const uint32_t from = _rf.up > _rf.t0 + 200 ? _rf.up : _rf.t0 + 200;
     if(_frameT > from){ const float f = (_frameT - from) / 260.0f; a = f >= 1 ? 0 : 50 * (1 - f); }
   }
-  if(a >= 1) g.lighten(Rect(MX, CARD_Y, CWID, CARD_H), 16, _rf.x, _rf.y, rad, (uint8_t)a);
+  if(a >= 1) g.lighten(Rect(MX, CARD_Y, CWID, _cardH()), 16, _rf.x, _rf.y, rad, (uint8_t)a);
 }
 
 void Player::_drawPopup(Gfx& g){
@@ -638,7 +642,8 @@ void Player::_flush(){
   if(pending) spidmaWait();
   dsp.endWrite();
   g_m2Draw = false;
-  g_m2Frames++;
+  /*  g_m2Frames не рахуємо: головний екран оновлюється постійно (спектр), і задача
+      дисплея без 10-мс сну не пускала задачу простою. Швидкий темп — лише для меню.  */
 }
 
 void Player::render(){
@@ -711,14 +716,16 @@ void Player::render(){
     }
     if(moved && _mode() == 0) _mark(0, ROW_Y, SW, ROW_H);
   }
-  if(now - _barT >= 90){
-    _barT = now;
-    /*  риски в картці — ті самі смуги спектра, зведені в п'ять (низи … верхи)  */
+  /*  риски в картці — ті самі смуги спектра, зведені в п'ять (низи … верхи);
+      щойно спектр оновився (раз на 30 мс), а не раз на 90 мс — інакше риски
+      відставали від звуку й сіпались  */
+  if(_barT != _specT){
+    _barT = _specT;
     bool ch = false;
     for(uint8_t k = 0; k < 5; k++){
       float m = 0;
       for(uint8_t j = k * 6; j < k * 6 + 6 && j < 32; j++) if(_spec[j] > m) m = _spec[j];
-      if(fabsf(m - _bars[k]) > 0.02f) ch = true;
+      if(fabsf(m - _bars[k]) > 0.01f) ch = true;
       _bars[k] = m;
     }
     if(ch && !sermonOn()) _mark(MX + CWID - 44, CARD_Y + 10, 40, CARD_H - 20);
@@ -736,10 +743,10 @@ void Player::render(){
       const uint32_t from = _ripUpT > _ripT0 + 200 ? _ripUpT : _ripT0 + 200;
       if(millis() > from + 270) _ripOn = false;
     }
-    _mark(MX, CARD_Y, CWID, CARD_H);
+    _mark(MX, CARD_Y, CWID, _cardH());
   }
   static bool wasRip = false;
-  if(wasRip && !_ripOn) _mark(MX, CARD_Y, CWID, CARD_H);
+  if(wasRip && !_ripOn) _mark(MX, CARD_Y, CWID, _cardH());
   wasRip = _ripOn;
   _flush();
 }
@@ -768,11 +775,11 @@ void Player::onPress(int16_t x, int16_t y){
     else if(near(300, 19)) _zone = 2;
     else _zone = 1;
   }
-  else if(y >= CARD_Y + 14 && y < CARD_Y + CARD_H){
+  else if(y >= CARD_Y + 14 && y < CARD_Y + _cardH()){
     _zone = 3;
     _ripX = x; _ripY = y; _ripT0 = _pt; _ripUpT = 0; _ripRel = false; _ripOn = true;
   }
-  else if(y < CARD_Y + CARD_H) _zone = 6;
+  else if(y < CARD_Y + _cardH()) _zone = 6;
   else if(specRow && y >= ROW_Y - 6) _zone = 5;
   else if(y >= VOL_Y - 5) _zone = 5;
   else if(y >= ROW_Y - 6) _zone = 4;
@@ -862,7 +869,7 @@ void Player::onRelease(int16_t x, int16_t y){
     case 0: if(!extras.s.noSd) config.changeMode(); break;
     case 1: display.putRequest(NEWMODE, STATIONS); break;
     case 2: yomenu.openHome(); break;
-    case 3: player.toggle(); _mark(MX, CARD_Y, CWID, CARD_H); break;
+    case 3: player.toggle(); _mark(MX, CARD_Y, CWID, _cardH()); break;
     case 4:
       if(_mode() == 1){
         /*  найближчий кружок по горизонталі (центри через 52 пікселі від 30)  */

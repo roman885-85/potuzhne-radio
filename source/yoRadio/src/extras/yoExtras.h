@@ -61,6 +61,7 @@ struct ExtStore {
   uint8_t  splashVol;                            /* гучність звуку заставки 0..100 (0 — без звуку) */
   uint8_t  splashInit;                           /* 1 — типові значення заставки виставлено */
   uint8_t  menuClassic;                          /* 1 — класичне меню (0 — нове, src/m2) */
+  uint8_t  otaBeta;                              /* 1 — пропонувати й пробні (попередні) випуски з GitHub */
 };
 /*  Зовнішній ЦАП I2S — на вільні виводи роз'єму розширення  */
 #define DAC_BCLK  14
@@ -96,6 +97,7 @@ class YoExtras {
 
     /*  будильник  */
     void     alarmNow();               /* спрацювати негайно (перевірка) */
+    void     alarmTestOff(uint16_t sec);  /* перевірка: «вимкнути» й прокинутись будильником через sec секунд */
     bool     alarmRinging() const { return _rampT0 != 0; }
     int32_t  alarmInMin() const;       /* хвилин до найближчого, -1 якщо вимкнено */
 
@@ -135,6 +137,9 @@ class YoExtras {
     void     requestPower(uint8_t mode) { _pwrAt = millis() + 300; _pwrMode = mode; }
     static void earlyBoot();             /* найпершим у setup(): зняти фіксацію виводів після сну */
     static bool wokeByTouch();
+    /*  Прокинулось таймером перед будильником (з «вимкнено»): тихий старт —
+        без заставки, звуку, підсвітки й автостарту; далі або знову сон, або дзвінок.  */
+    static bool wokeForAlarm();
 
     /*  світлодіод  */
     void     ledTest(uint8_t r, uint8_t g, uint8_t b, uint16_t ms);
@@ -160,6 +165,9 @@ class YoExtras {
     uint8_t  _rampTo = 0;
     int16_t  _lastAlarmKey = -1;       /* хвилина доби, коли вже дзвонили */
     void     _alarmLoop(uint32_t now);
+    void     _alarmWakeLoop(uint32_t now);
+    int64_t  _alarmSecs() const;       /* секунд до найближчого будильника за годинником системи; -1 — нема */
+    int32_t  _alarmPassedSecs() const; /* скільки секунд тому був сьогоднішній будильник (якщо сьогодні день будильника), -1 */
     void     _alarmStart();
 
     bool     _night = false;
@@ -194,6 +202,7 @@ class YoExtras {
     volatile uint8_t _pwrMode = 0;
     uint32_t _pwrAt = 0;
     void     _powerOff();
+    void     _armAlarmWake();          /* перед сном: пробудження таймером до будильника */
     uint32_t _ledTick = 0;
     uint32_t _ledTestUntil = 0;
     uint8_t  _ledR = 1, _ledG = 1, _ledB = 1;   /* свідомо не нуль: перший запис відбудеться */

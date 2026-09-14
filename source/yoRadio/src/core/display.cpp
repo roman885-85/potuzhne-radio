@@ -216,7 +216,7 @@ void Display::_bootScreen(){
   _pager->addPage(_boot);
   _pager->setPage(_boot, true);
   /*  анімована заставка з розділу ресурсів; немає — старий логотип  */
-  if(!(extras.s.splashOff == 0 && splash.begin())) dsp.drawLogo(bootLogoTop);
+  if(!(extras.s.splashOff == 0 && !YoExtras::wokeForAlarm() && splash.begin())) dsp.drawLogo(bootLogoTop);
   _bootStep = 1;
 }
 
