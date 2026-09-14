@@ -58,7 +58,7 @@ class YoMenu {
     enum page_e { PG_OFF=-1, PG_INFO=0, PG_EQ=1, PG_WIFI=2, PG_TIME=3, PG_SYS=4,
                   PG_SLEEP=5, PG_NIGHT=6, PG_KBD=7, PG_FAV=8, PG_SERM=9, PG_HOME=10, PG_SETUP=11,
                   PG_DEV=12, PG_DAC=13, PG_DACINFO=14, PG_POWER=15, PG_WSAVED=16, PG_WPICK=17, PG_WCONN=18,
-                  PG_SND=19, PG_ROOM=20, PG_MIC=21, PG_MGEST=22, PG_MPRES=23, PG_N };   /* PG_N — завжди останній: розмір масиву сторінок */
+                  PG_SND=19, PG_ROOM=20, PG_MIC=21, PG_MGEST=22, PG_MPRES=23, PG_DEVSND=24, PG_N };   /* PG_N — завжди останній: розмір масиву сторінок */
     static const uint8_t NSIDE = 7;   /* значків у лівій колонці */
 
     int8_t _cur = PG_OFF;
@@ -71,6 +71,9 @@ class YoMenu {
     Page*     _pg[PG_N] = {nullptr};
     /*  «розробник»: що показувати й куди йде звук  */
     UiCheck   _chkBat, _chkIp, _chkSdEn;
+    UiCheck   _chkSplash, _chkSfx;          /* розробник → звуки й заставка */
+    UiSlider  _sldSplash, _sldSfx;
+    void _drawDevSnd();
     int8_t    _dacSel = 0;
     bool      _dacAlt = false;          /* VS1053: вид «де підпаятись» */
     void _drawDevBtn();

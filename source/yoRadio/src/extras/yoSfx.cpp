@@ -63,13 +63,21 @@ bool YoSfx::userFile(SfxEvent e){
   return LittleFS.exists(p);
 }
 
+/*  Звук увімкнення — частина заставки: його вмикає й гучність задає «звук заставки»
+    (розробник), а не вимикач звуків подій.  */
+static bool enabledFor(SfxEvent e){
+  const ExtStore& s = extras.s;
+  if(e == SFX_START) return s.splashVol > 0;
+  return s.sfxOn && s.sfxVol && (s.sfxMask & (1U << e));
+}
+
 bool YoSfx::willPlay(SfxEvent e) const {
-  return _q && _fsOk && e < SFX_N && extras.s.sfxOn && extras.s.sfxVol && (extras.s.sfxMask & (1U << e));
+  return _q && _fsOk && e < SFX_N && enabledFor(e);
 }
 
 void YoSfx::play(SfxEvent e){
   if(!_q || e >= SFX_N) return;
-  if(!extras.s.sfxOn || !(extras.s.sfxMask & (1U << e))) return;
+  if(!enabledFor(e)) return;
   uint8_t m = e;
   xQueueSend(_q, &m, 0);                  /* черга повна — цей звук пропускаємо */
 }
@@ -92,8 +100,9 @@ uint32_t YoSfx::clipMs(SfxEvent e){
 }
 
 /*  Гучність звуків — своя, від 0 до 100, квадратом: на слух рівніше.  */
-int32_t YoSfx::_gainQ15(){
-  uint32_t v = extras.s.sfxVol > 100 ? 100 : extras.s.sfxVol;
+int32_t YoSfx::_gainQ15(SfxEvent e){
+  uint32_t v = e == SFX_START ? extras.s.splashVol : extras.s.sfxVol;
+  if(v > 100) v = 100;
   return (int32_t)(32767UL * v * v / 10000UL);
 }
 
@@ -186,7 +195,7 @@ void YoSfx::_run(){
     }
     const Clip* c = _get(e);
     if(!c) continue;
-    int32_t g = _gainQ15();
+    int32_t g = _gainQ15(e);
     if(!g) continue;
     if(player.isRunning()){
       /*  станція грає — домішує задача звуку  */

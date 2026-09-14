@@ -75,7 +75,7 @@ class YoSfx {
     const Clip* _get(SfxEvent e);
     bool _load(SfxEvent e);
     void _out(const Clip& c, int32_t gainQ15, uint64_t startPos = 0, SfxEvent ev = SFX_N);
-    static int32_t _gainQ15();
+    static int32_t _gainQ15(SfxEvent e);
 };
 
 extern YoSfx sfx;

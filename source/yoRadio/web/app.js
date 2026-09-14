@@ -405,12 +405,11 @@ const PAGES = [
   { id: 'alarm', t: 'Будильник і сон', d: 'розбудити й приспати', i: 'alarm' },
   { id: 'screen', t: 'Екран', d: 'яскравість, ніч, економія, світлодіод', i: 'screen' },
   { id: 'sound', t: 'Звук', d: 'еквалайзер на 10 смуг, обробка, під кімнату', i: 'eq' },
-  { id: 'sounds', t: 'Звуки подій', d: 'сигнали увімкнення, жестів, мережі, будильника; свої звуки', i: 'bell' },
   { id: 'mic', t: 'Мікрофон', d: 'хлопки й стук, таймер сну, присутність', i: 'mic' },
   { id: 'wifi', t: 'Wi-Fi', d: 'мережі, пошук, підключення', i: 'wifi' },
   { id: 'time', t: 'Час і погода', d: 'часовий пояс, сервери, погода', i: 'clock' },
   { id: 'system', t: 'Система', d: 'поведінка радіо, перезавантаження', i: 'gear' },
-  { id: 'dev', t: 'Розробник', d: 'батарея, IP, картка, аудіовихід, логотипи', i: 'code' },
+  { id: 'dev', t: 'Розробник', d: 'батарея, IP, картка, аудіовихід, заставка, звуки подій', i: 'code' },
   { id: 'update', t: 'Оновлення', d: 'прошивка й файли сторінки', i: 'upload' },
   { id: 'about', t: 'Про пристрій', d: 'версія, пам\'ять, мережа, батарея', i: 'info' },
 ];
@@ -440,6 +439,7 @@ function shell() {
 function route() {
   let id = (location.hash.match(/^#\/(\w+)/) || [])[1];
   if (!id) id = location.pathname.includes('update') ? 'update' : location.pathname.includes('settings') ? 'wifi' : 'player';
+  if (id === 'sounds') id = 'dev';                 /* звуки й заставка тепер у розробнику */
   const p = PAGES.find(x => x.id === id) || PAGES[0];
   curPage = p.id;
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.id === p.id));
@@ -1526,11 +1526,13 @@ const DACS = [
 ];
 VIEWS.dev = page => {
   const tg = h('div'), dac = h('div'), lg = h('div');
-  page.append(h('p', { class: 'lead' }, 'Для тих, хто перебудовує радіо: що показувати на екрані і куди йде звук.'),
-    card('На екрані', tg), card('Аудіовихід', dac), card('Логотипи станцій', lg));
+  const snd = sfxSection();
+  page.append(h('p', { class: 'lead' }, 'Для тих, хто перебудовує радіо: що показувати на екрані, заставка, звуки подій і куди йде звук.'),
+    card('На екрані', tg), ...snd.els, card('Аудіовихід', dac), card('Логотипи станцій', lg));
   let sel = null, s1 = '', s2 = '';
   live(() => {
     if (!S) return;
+    snd.upd();
     const d = S.dev;
     const sig1 = [d.noBat, d.noIp, d.noSd].join('|');
     if (sig1 !== s1) {
@@ -1758,62 +1760,81 @@ async function sfxToWav(file, maxSec) {
   return { blob: new Blob([ab], { type: 'audio/wav' }), secs, cut: audio.duration > maxSec + 0.05 };
 }
 
-VIEWS.sounds = page => {
-  const on = sw(false, v => setx({ sfxOn: v ? 1 : 0 }));
-  const volVal = h('span', { class: 'note', style: { margin: 0, minWidth: '44px', textAlign: 'right' } }, '');
-  let volT = 0;
-  const vol = range(0, 100, 60, v => { volVal.textContent = v + '%'; clearTimeout(volT); volT = setTimeout(() => setx({ sfxVol: v }), 250); });
+/*  Заставка й звуки подій — у розділі «Розробник» (так попросив власник).
+    Повертає картки й функцію оновлення з S.  */
+function sfxSection() {
+  let list = null, user = -1, mask = -1;
+  const rowsSplash = h('div'), rowsEv = h('div'), space = h('p', { class: 'note' }, '');
   const noFs = h('p', { class: 'note bad', hidden: true },
-    'На радіо ще немає розділу для звуків. Його додає прошивка через USB (flash.sh --app-only --assets); станції, мережі й налаштування при цьому лишаються.');
-  const rows = h('div');
-  const space = h('p', { class: 'note' }, '');
-  page.append(
-    card('Звуки подій', row('Звуки', 'короткі сигнали радіо: увімкнення, жест прийнято, мережа, таймер сну, будильник', on),
-      row('Гучність', 'своя — не залежить від гучності станції; під час звуку станція ненадовго стишується', h('div', { class: 'bar', style: { minWidth: '220px', gap: '10px', flex: '1', maxWidth: '360px' } }, vol, volVal)), noFs),
-    card('Події', rows, space),
-    card('Свій звук', h('p', { class: 'note', style: { margin: 0 } },
-      'Підійде будь-який звуковий файл (MP3, WAV, OGG, M4A…) — сторінка сама переведе його у формат радіо: моно 22 кГц, до 5 секунд, гучність вирівняно. Стандартний звук не зникає: кнопка «Стандартний» повертає його.')));
-  let mask = -1, user = -1, list = null;
+    'На радіо ще немає розділу ресурсів (заставка, звуки). Його додає прошивка через USB (flash.sh --app-only --assets); станції, мережі й налаштування при цьому лишаються.');
+  const volBox = (onSet) => {
+    const val = h('span', { class: 'note', style: { margin: 0, minWidth: '44px', textAlign: 'right' } }, '');
+    let tm = 0;
+    const r = range(0, 100, 60, v => { val.textContent = v ? v + '%' : 'вимк.'; clearTimeout(tm); tm = setTimeout(() => onSet(v), 250); });
+    const el = h('div', { class: 'bar', style: { minWidth: '220px', gap: '10px', flex: '1', maxWidth: '360px' } }, r, val);
+    el.set = v => { if (document.activeElement !== r) { r.value = v; fillRange(r); val.textContent = v ? v + '%' : 'вимк.'; } };
+    return el;
+  };
+  const splashSw = sw(false, v => setx({ splashOff: v ? 0 : 1 }));
+  const splashVol = volBox(v => setx({ splashVol: v }));
+  const sfxSw = sw(false, v => setx({ sfxOn: v ? 1 : 0 }));
+  const sfxVol = volBox(v => setx({ sfxVol: v }));
+
+  function uploadBtn(e) {
+    const pick = h('input', { type: 'file', accept: 'audio/*,.wav,.mp3,.ogg,.m4a,.aac,.flac', hidden: true });
+    pick.addEventListener('change', async () => {
+      const f = pick.files[0]; if (!f) return;
+      try {
+        toast('Готую звук…');
+        const w = await sfxToWav(f, 5);
+        const fd = new FormData(); fd.append('file', w.blob, e.id + '.wav');
+        await api('/api/sfx?e=' + e.id, { method: 'POST', body: fd });
+        toast(`«${e.t}»: свій звук, ${w.secs.toFixed(1)} с${w.cut ? ' (обрізано до 5 с)' : ''}`);
+        setTimeout(() => { setx({ sfxPlay: e.id }); reload(); }, 400);
+      } catch (err) { toast('Не вдалося: ' + err.message, true); }
+      pick.value = '';
+    });
+    return [btn('Свій', 'upload', () => pick.click(), 'sm'), pick];
+  }
+  const durTxt = e => e.ms ? (e.ms < 1000 ? e.ms + ' мс' : (e.ms / 1000).toFixed(1) + ' с') : '';
   function draw() {
     if (!list) return;
-    rows.textContent = '';
+    rowsSplash.textContent = ''; rowsEv.textContent = '';
     list.ev.forEach((e, i) => {
-      const bit = 1 << i, isOn = !!(mask & bit), mine = !!(user & bit);
-      const s1 = sw(isOn, v => setx({ sfxMask: v ? (mask | bit) : (mask & ~bit) }));
-      const pick = h('input', { type: 'file', accept: 'audio/*,.wav,.mp3,.ogg,.m4a,.aac,.flac', hidden: true });
-      pick.addEventListener('change', async () => {
-        const f = pick.files[0]; if (!f) return;
-        try {
-          toast('Готую звук…');
-          const w = await sfxToWav(f, 5);
-          const fd = new FormData(); fd.append('file', w.blob, e.id + '.wav');
-          await api('/api/sfx?e=' + e.id, { method: 'POST', body: fd });
-          toast(`«${e.t}»: свій звук, ${w.secs.toFixed(1)} с${w.cut ? ' (обрізано до 5 с)' : ''}`);
-          setTimeout(() => { setx({ sfxPlay: e.id }); reload(); }, 400);
-        } catch (err) { toast('Не вдалося: ' + err.message, true); }
-        pick.value = '';
-      });
-      const ctl = h('div', { class: 'bar', style: { gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
-        btn('', 'play', () => setx({ sfxPlay: e.id }), 'sm ico'),
-        btn('Свій', 'upload', () => pick.click(), 'sm'),
-        mine ? btn('Стандартний', 'refresh', () => { setx({ sfxReset: e.id }); setTimeout(reload, 600); }, 'sm ghost') : null,
-        s1, pick);
-      ctl.firstChild.title = 'Прослухати';
-      rows.append(row(e.t, `${SFX_SUB[e.id] || ''} · ${mine ? 'свій звук' : 'стандартний'}${e.ms ? ', ' + (e.ms < 1000 ? e.ms + ' мс' : (e.ms / 1000).toFixed(1) + ' с') : ''}`, ctl));
+      const bit = 1 << i, mine = !!(user & bit);
+      const tail = h('div', { class: 'bar', style: { gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
+        btn('', 'play', () => setx({ sfxPlay: e.id }), 'sm ico'), ...uploadBtn(e),
+        mine ? btn('Стандартний', 'refresh', () => { setx({ sfxReset: e.id }); setTimeout(reload, 600); }, 'sm ghost') : null);
+      tail.firstChild.title = 'Прослухати';
+      const sub = `${mine ? 'свій звук' : 'стандартний'}${durTxt(e) ? ', ' + durTxt(e) : ''}`;
+      if (e.id === 'start') {
+        rowsSplash.append(row('Звук заставки', 'грає разом з анімацією · ' + sub, tail));
+      } else {
+        tail.append(sw(!!(mask & bit), v => setx({ sfxMask: v ? (mask | bit) : (mask & ~bit) })));
+        rowsEv.append(row(e.t, `${SFX_SUB[e.id] || ''} · ${sub}`, tail));
+      }
     });
-    space.textContent = list.fs ? `Розділ ресурсів: зайнято ${size(list.used)} з ${size(list.total)}.` : '';
+    space.textContent = list.fs ? `Розділ ресурсів: зайнято ${size(list.used)} з ${size(list.total)}. Свій звук — будь-який звуковий файл: сторінка сама переведе його у формат радіо (моно 22 кГц, до 5 с, вирівняна гучність).` : '';
   }
   async function reload() { try { list = await api('/api/sfx'); draw(); } catch (e) {} }
   reload();
-  live(() => {
+  const els = [
+    card('Заставка', row('Анімована заставка', 'при увімкненні, поки радіо шукає мережу', splashSw),
+      row('Гучність звуку заставки', '0 — заставка без звуку', splashVol), rowsSplash,
+      h('div', { class: 'bar', style: { marginTop: '10px' } }, btn('Показати на радіо', 'play', () => { setx({ splashDemo: 7000 }); toast('Дивіться на екран радіо'); }, 'sm'))),
+    card('Звуки подій', row('Звуки подій', 'короткі сигнали: жест прийнято, мережа, таймер сну, будильник', sfxSw),
+      row('Гучність', 'своя — не залежить від гучності станції; під час звуку станція ненадовго стишується', sfxVol), rowsEv, space, noFs),
+  ];
+  const upd = () => {
     if (!S || !S.sfx) return;
     const x = S.sfx;
-    on.firstChild.checked = !!x.on;
-    if (document.activeElement !== vol) { vol.value = x.vol; fillRange(vol); volVal.textContent = x.vol + '%'; }
+    splashSw.firstChild.checked = !x.splashOff; splashVol.set(x.splashVol);
+    sfxSw.firstChild.checked = !!x.on; sfxVol.set(x.vol);
     noFs.hidden = !!x.fs;
     if (x.mask !== mask || x.user !== user) { const again = user !== -1 && x.user !== user; mask = x.mask; user = x.user; again ? reload() : draw(); }
-  });
-};
+  };
+  return { els, upd };
+}
 
 /* ---------------------------------------------------------------- голосові команди: інструкція
    Що казати — з того самого розбору, що виконує команди (voiceParse), тож

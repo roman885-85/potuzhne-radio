@@ -228,6 +228,7 @@ static void onState(AsyncWebServerRequest* r){
   /*  звуки подій  */
   o.k("sfx"); o.put('{');
   o.kn("on", s.sfxOn); o.kn("vol", s.sfxVol); o.kn("mask", s.sfxMask); o.kn("fs", sfx.fsOk()); o.kn("user", sfx.userMask());
+  o.kn("splashOff", s.splashOff); o.kn("splashVol", s.splashVol);
   o.put('}');
   o.ks("msg", _msg);
   o.put('}');
@@ -568,6 +569,9 @@ static void apply(const WebCmd& c){
   if(!strcmp(k, "sleep"))           { extras.setSleep(clampi(v, 0, 600)); ext = false; }
   else if(!strcmp(k, "alarmOn"))    s.alarmOn = clampi(v, 0, 1);
   else if(!strcmp(k, "sfxOn"))      s.sfxOn = clampi(v, 0, 1);
+  else if(!strcmp(k, "splashOff"))  s.splashOff = clampi(v, 0, 1);
+  else if(!strcmp(k, "splashVol"))  s.splashVol = clampi(v, 0, 100);
+  else if(!strcmp(k, "splashDemo")) { display.splashDemo(clampi(v, 2000, 20000)); ext = false; }
   else if(!strcmp(k, "sfxVol"))     s.sfxVol = clampi(v, 0, 100);
   else if(!strcmp(k, "sfxMask"))    s.sfxMask = clampi(v, 0, 0xFFFF);
   else if(!strcmp(k, "sfxPlay"))    { int e = YoSfx::find(v); if(e >= 0) sfx.test((SfxEvent)e); ext = false; }

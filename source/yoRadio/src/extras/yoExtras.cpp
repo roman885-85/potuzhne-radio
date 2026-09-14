@@ -72,6 +72,8 @@ void YoExtras::_load(){
     s.sfxMask = (1 << 0) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6);   /* усе, крім дотику (YoSfx::DEFAULT_MASK) */
   }
   if(s.sfxVol > 100) s.sfxVol = 60;
+  if(!s.splashInit){ s.splashInit = 1; s.splashVol = 70; }
+  if(s.splashVol > 100) s.splashVol = 70;
   if(!s.eqInit){
     s.eqInit = 1; s.eqOn = 1; s.eqGuard = 1; s.eqLoud = 0; s.vbass = 0; s.eqPreset = 0;
     int8_t b = config.store.bass, m = config.store.middle, t = config.store.trebble;

@@ -13,6 +13,7 @@
 #include "../displays/fonts/yoUI9.h"
 #include "../displays/fonts/yoUI9b.h"
 #include "../displays/fonts/yoUI12b.h"
+#include "../extras/yoSfx.h"
 #include "../extras/yoExtras.h"
 #include "../extras/yoSermons.h"
 #include "../extras/yoRecorder.h"
@@ -189,9 +190,18 @@ void YoMenu::_build(){
   _pg[PG_SYS]->addWidget(&_ledSeg);
 
   /*  РОЗРОБНИК: що показувати на екрані й чи працює картка  */
-  _chkBat .init(wc(CX, 40),  &yoUI9, CW, C_TXT, C_BG, C_ACC); _chkBat .setLabel("батарея");
-  _chkIp  .init(wc(CX, 70),  &yoUI9, CW, C_TXT, C_BG, C_ACC); _chkIp  .setLabel("IP-адреса на екрані");
-  _chkSdEn.init(wc(CX, 100), &yoUI9, CW, C_TXT, C_BG, C_ACC); _chkSdEn.setLabel("картка пам'яті");
+  _chkBat .init(wc(CX, 38),  &yoUI9, CW, C_TXT, C_BG, C_ACC); _chkBat .setLabel("батарея");
+  _chkIp  .init(wc(CX, 64),  &yoUI9, CW, C_TXT, C_BG, C_ACC); _chkIp  .setLabel("IP-адреса на екрані");
+  _chkSdEn.init(wc(CX, 90),  &yoUI9, CW, C_TXT, C_BG, C_ACC); _chkSdEn.setLabel("картка пам'яті");
+  /*  РОЗРОБНИК → ЗВУКИ Й ЗАСТАВКА  */
+  _chkSplash.init(wc(CX, 40),  &yoUI9, CW, C_TXT, C_BG, C_ACC); _chkSplash.setLabel("анімована заставка");
+  _sldSplash.init(wc(CX, 64),  &yoUI9, CW, 0, 100, C_TXT, C_BG, C_ACC); _sldSplash.setLabel("звук заставки");
+  _chkSfx   .init(wc(CX, 108), &yoUI9, CW, C_TXT, C_BG, C_ACC); _chkSfx.setLabel("звуки подій");
+  _sldSfx   .init(wc(CX, 132), &yoUI9, CW, 0, 100, C_TXT, C_BG, C_ACC); _sldSfx.setLabel("гучність звуків подій");
+  _pg[PG_DEVSND]->addWidget(&_chkSplash);
+  _pg[PG_DEVSND]->addWidget(&_sldSplash);
+  _pg[PG_DEVSND]->addWidget(&_chkSfx);
+  _pg[PG_DEVSND]->addWidget(&_sldSfx);
   _pg[PG_DEV]->addWidget(&_chkBat);
   _pg[PG_DEV]->addWidget(&_chkIp);
   _pg[PG_DEV]->addWidget(&_chkSdEn);
@@ -334,6 +344,7 @@ void YoMenu::_fade(){
         /*  «Станції» з меню: список малюємо ще в темряві, тож перехід один,
             а не два поспіль (меню → плеєр → список).  */
         if(_afterClose == 1) display.openStationsNow();
+        if(_afterClose == 2) display.splashDemo(7000);
         _afterClose = 0;
       }else _paint();
     }
@@ -395,6 +406,13 @@ void YoMenu::_paint(){
     _chkIp.setValue(!extras.s.noIp);
     _chkSdEn.setValue(!extras.s.noSd);
     _drawDevBtn();
+  }else if(p == PG_DEVSND){
+    _chrome("звуки", 0);
+    _chkSplash.setValue(!extras.s.splashOff);
+    _sldSplash.setValue(extras.s.splashVol);
+    _chkSfx.setValue(extras.s.sfxOn);
+    _sldSfx.setValue(extras.s.sfxVol);
+    _drawDevSnd();
   }else if(p == PG_DAC){
     _chrome("аудіовихід", 0);
     _drawDacList();
@@ -812,7 +830,7 @@ void YoMenu::_infoLive(){
     решта — у головне меню.  */
 int8_t YoMenu::_parent(int8_t p) const {
   if(p == PG_INFO || p == PG_WIFI || p == PG_TIME || p == PG_SYS || p == PG_DEV) return PG_SETUP;
-  if(p == PG_DAC) return PG_DEV;
+  if(p == PG_DAC || p == PG_DEVSND) return PG_DEV;
   if(p == PG_DACINFO) return PG_DAC;
   if(p == PG_POWER) return PG_SETUP;
   if(p == PG_WSAVED || p == PG_WPICK || p == PG_WCONN) return PG_WIFI;
@@ -998,22 +1016,43 @@ void YoMenu::_drawDevBtn(){
   char t[64];
   /*  логотипи станцій: знайдені плата шукає й сама; кнопка — шукати знову
       для тих, де минулого разу не знайшлось  */
-  dsp.fillRect(CX, 128, CW, 30, C_PAN2);
+  dsp.fillRect(CX, 114, CW, 30, C_PAN2);
   dsp.setFont(&yoUI9); dsp.setTextSize(1); dsp.setTextColor(C_TXT);
   snprintf(t, sizeof(t), "%s", utf8Rus(_msg[0] ? _msg : "оновити логотипи станцій", false));
   fitText(t, CW - 16);
-  dsp.setCursor(CX + (CW - (int16_t)textW(t)) / 2, 148); dsp.print(t);
-  dsp.setFont(&yoUI9); dsp.setTextColor(C_DIM);
-  snprintf(t, sizeof(t), "%s", utf8Rus("аудіовихід", false));
-  dsp.setCursor(CX, 178); dsp.print(t);
+  dsp.setCursor(CX + (CW - (int16_t)textW(t)) / 2, 134); dsp.print(t);
+  /*  звуки подій і заставка — окремою сторінкою (власник: усе це — у розробнику)  */
+  dsp.fillRect(CX, 148, CW, 32, C_PAN2);
+  dsp.setTextColor(C_TXT);
+  snprintf(t, sizeof(t), "%s", utf8Rus("звуки й заставка", false));
+  dsp.setCursor(CX + 10, 169); dsp.print(t);
+  dsp.fillTriangle(CX + CW - 16, 156, CX + CW - 16, 172, CX + CW - 8, 164, C_ACC);   /* › */
   dsp.fillRect(CX, 184, CW, 44, C_PAN2);
+  dsp.setFont(&yoUI8); dsp.setTextColor(C_DIM);
+  snprintf(t, sizeof(t), "%s", utf8Rus("аудіовихід", false));
+  dsp.setCursor(CX + 10, 197); dsp.print(t);
   dsp.setFont(&yoUI11); dsp.setTextColor(C_TXT);
-  dsp.setCursor(CX + 10, 212); dsp.print(DAC_NAME[extras.s.dac]);
+  dsp.setCursor(CX + 10, 219); dsp.print(DAC_NAME[extras.s.dac]);
   dsp.setFont(&yoUI8); dsp.setTextColor(C_DIM);
   snprintf(t, sizeof(t), "%s", utf8Rus(DAC_KIND[extras.s.dac], false));
   fitText(t, CW - 130);
-  dsp.setCursor(CX + 120, 211); dsp.print(t);
+  dsp.setCursor(CX + 120, 218); dsp.print(t);
   dsp.fillTriangle(CX + CW - 16, 198, CX + CW - 16, 214, CX + CW - 8, 206, C_ACC);   /* › */
+  dsp.setFont();
+}
+
+/*  Сторінка «звуки й заставка»: вимикачі й повзунки — віджети; кнопка показу
+    й підказка — тут.  */
+void YoMenu::_drawDevSnd(){
+  char t[64];
+  dsp.fillRect(CX, 172, CW, 32, C_PAN2);
+  dsp.setFont(&yoUI9); dsp.setTextSize(1); dsp.setTextColor(C_TXT);
+  snprintf(t, sizeof(t), "%s", utf8Rus("показати заставку", false));
+  dsp.setCursor(CX + (CW - (int16_t)textW(t)) / 2, 193); dsp.print(t);
+  dsp.setFont(&yoUI8); dsp.setTextColor(C_DIM);
+  snprintf(t, sizeof(t), "%s", utf8Rus("свої звуки - зі сторінки радіо", false));
+  fitText(t, CW);
+  dsp.setCursor(CX, 224); dsp.print(t);
   dsp.setFont();
 }
 
@@ -2484,19 +2523,32 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
     }
     case PG_DEV: {
       ExtStore& s = extras.s;
-      if(y >= 34 && y < 64){ s.noBat = !s.noBat; _chkBat.setValue(!s.noBat); extras.changed(); }
-      else if(y >= 64 && y < 94){ s.noIp = !s.noIp; _chkIp.setValue(!s.noIp); extras.changed(); }
-      else if(y >= 94 && y < 124){
+      if(y >= 32 && y < 60){ s.noBat = !s.noBat; _chkBat.setValue(!s.noBat); extras.changed(); }
+      else if(y >= 60 && y < 86){ s.noIp = !s.noIp; _chkIp.setValue(!s.noIp); extras.changed(); }
+      else if(y >= 86 && y < 112){
         s.noSd = !s.noSd; _chkSdEn.setValue(!s.noSd); extras.changed();
         if(s.noSd){ recorder.stop(); if(config.getMode() == PM_SDCARD) config.changeMode(PM_WEB); }
       }
-      else if(y >= 124 && y < 162){
+      else if(y >= 112 && y < 146){
         uint16_t n = logos.forget();
         char m[48]; snprintf(m, sizeof(m), "шукатиму знову: %u", n);
         _setMsg(m); _favDirty = true;
         display.forceLogo();
       }
-      else if(y >= 180) _show(PG_DAC);
+      else if(y >= 146 && y < 182) _show(PG_DEVSND);
+      else if(y >= 182) _show(PG_DAC);
+      break;
+    }
+    case PG_DEVSND: {
+      ExtStore& s = extras.s;
+      if(y >= 34 && y < 62){ s.splashOff = !s.splashOff; _chkSplash.setValue(!s.splashOff); extras.changed(); }
+      else if(y >= 62 && y < 100){ int v = _sldSplash.valueAt(x); _sldSplash.setValue(v); s.splashVol = v; extras.changed(); }
+      else if(y >= 102 && y < 128){ s.sfxOn = !s.sfxOn; _chkSfx.setValue(s.sfxOn); extras.changed(); }
+      else if(y >= 128 && y < 166){
+        int v = _sldSfx.valueAt(x); _sldSfx.setValue(v); s.sfxVol = v; extras.changed();
+        sfx.test(SFX_GESTURE);                        /* почути нову гучність */
+      }
+      else if(y >= 168 && y < 208){ _afterClose = 2; close(); }   /* заставка — коли меню вже закрилось */
       break;
     }
     case PG_DAC: {
