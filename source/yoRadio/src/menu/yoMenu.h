@@ -25,20 +25,24 @@
 #include <Arduino.h>
 
 class Page;
+namespace m2 { struct WB; int8_t bridgeRssi(); }
 
 #define YOM_SSIDS     5
 #define YOM_SSID_LEN  30
 #define YOM_PASS_LEN  40
 
 class YoMenu {
+    /*  нове меню (src/m2) бере в старого роботу з мережами  */
+    friend struct m2::WB;
+    friend int8_t m2::bridgeRssi();
   public:
-    bool active() const { return _cur != PG_OFF; }
+    bool active() const;                        /* відкрите старе чи нове меню */
     int8_t page() const { return _cur; }        /* для службової консолі */
     const char* rowName(int idx);               /* рядок списку — для plGenericDraw */
     void wifiTick();                            /* з головного циклу: пошук мереж */
     bool scanning() const { return _scanning; }
     uint8_t scanCount() const { return _scanN; }
-    bool fading() const { return _fadeStep >= 0; }   /* триває плавна зміна */
+    bool fading() const;                        /* триває плавна зміна */
     void open();                 /* шестерня у шапці плеєра */
     void openWifi(bool lock = true);   /* одразу Wi-Fi; lock — без виходу (точка доступу) */
     void openFav();              /* обране */
@@ -150,6 +154,9 @@ class YoMenu {
         а таких питань на кожен кадр десяток.  */
     char     _curSsid[33] = {0};
     bool     _staUp = false;
+    int8_t   _rssi = 0;                /* для нового меню: сигнал і адреса — теж із головного циклу */
+    char     _ipStr[16] = {0};
+    bool     _m2Wifi = false;          /* нове меню показує сторінку мереж — пошук потрібен */
     uint8_t  _scanFails = 0;
     /*  Списки проповідей і мереж — однакові: повноекранний список станцій
         з «лупою», кнопками ▲▼▶↶, прокруткою пальцем і накатом.  */

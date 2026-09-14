@@ -31,6 +31,15 @@ SET = [
     ("aaUI15",  "Roboto-Regular.ttf", 20, 36),
     ("aaUI6",   "RobotoCondensed-Regular.ttf", 7, 12),   # дрібні підписи еквалайзера (колонка 28 px)
     ("aaUI26b", "Roboto-Bold.ttf",    24, 40),           # збільшена клавіша над пальцем
+    # нове меню (src/m2): заголовки й великі числа — Montserrat Bold (як напис заставки), текст — Roboto
+    ("m2Title", "Montserrat-Bold.otf", 12, 22),
+    ("m2Big",   "Montserrat-Bold.otf", 22, 36),
+    ("m2Mid",   "Montserrat-Bold.otf", 15, 26),
+    ("m2Row",   "Roboto-Regular.ttf",  10, 18),
+    ("m2RowB",  "Roboto-Bold.ttf",     10, 18),
+    ("m2Sm",    "Roboto-Regular.ttf",   8, 15),
+    ("m2SmB",   "Roboto-Bold.ttf",      8, 15),
+    ("m2Key",   "Roboto-Regular.ttf",  12, 20),
 ]
 GAMMA = 0.85          # трохи густіші краї: дрібний світлий текст на темному інакше «худне»
 

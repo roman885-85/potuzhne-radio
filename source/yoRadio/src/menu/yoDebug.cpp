@@ -16,6 +16,7 @@
 #include "../ES8311/yoES8311.h"
 #include "yoMenu.h"
 #include "uicanvas.h"
+#include "../m2/m2pages.h"
 #include "../core/touchscreen.h"
 #include "../extras/yoExtras.h"
 #include "../extras/yoRecorder.h"
@@ -552,6 +553,22 @@ void yodbgLoop(){
     else if(!strncmp(buf,"tmove ",6)){ int x=0,y=0; if(sscanf(buf+6,"%d %d",&x,&y)==2){ touchscreen.injectMove(x,y); touchscreen.loop(); Serial.println("TMOVE"); } }
     else if(!strcmp(buf,"tup"))    { touchscreen.injectEnd(); touchscreen.loop(); Serial.println("TUP"); }
     else if(!strncmp(buf,"mpage ",6)) yomenu.openPage((int8_t)atoi(buf+6));
+    else if(!strncmp(buf,"menuclassic ",12)){ extras.s.menuClassic = atoi(buf+12) ? 1 : 0; extras.changed(); Serial.printf("меню: %s\n", extras.s.menuClassic ? "класичне" : "нове"); }
+    else if(!strncmp(buf,"m2 ",3)){
+      /*  нове меню одразу на сторінці: m2 <номер> (0 меню, 1 параметри, 2 екран, 3 будильник, 4 обране, 5 проповіді,
+          6 про радіо, 7 живлення, 8 пояс, 9 еквалайзер, 10 обробка, 11 кімната, 12 мікрофон, 13 жести, 14 присутність,
+          15 wi-fi, 16 відомі, 17 розробник, 18 заставка й звуки, 19 аудіовихід, 20 ніч з)  */
+      static m2::Page* const P[] = { &m2::pgPult, &m2::pgSettings, &m2::pgScreen, &m2::pgAlarm, &m2::pgFav, &m2::pgSermons,
+        &m2::pgInfo, &m2::pgPower, &m2::pgTz, &m2::pgEq, &m2::pgSound, &m2::pgRoom, &m2::pgMic, &m2::pgGest, &m2::pgPres,
+        &m2::pgWifi, &m2::pgSaved, &m2::pgDev, &m2::pgDevSnd, &m2::pgDac, &m2::pgNightFrom };
+      int n = atoi(buf + 3);
+      if(n >= 0 && n < (int)(sizeof(P) / sizeof(P[0]))){
+        if(!m2::M.active()) m2::M.open(n == 0 ? P[0] : &m2::pgPult);
+        if(n) m2::M.push(P[n]);
+        Serial.printf("M2 сторінка %d\n", n);
+      }
+    }
+    else if(!strcmp(buf,"m2close")) m2::M.closeNow();
     else if(!strncmp(buf,"tap ",4)){
       /*  Імітація дотику: дозволяє перевірити меню без людини біля екрана. */
       char* sp = strchr(buf+4,' ');

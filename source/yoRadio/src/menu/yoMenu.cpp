@@ -20,6 +20,7 @@
 #include "../extras/yoLogos.h"
 #include "../extras/yoDsp.h"
 #include "../extras/yoMic.h"
+#include "../m2/m2pages.h"          /* нове меню */
 #include "../displays/fonts/yoUI11.h"
 #include "../displays/fonts/yoUI8.h"
 #include <WiFi.h>
@@ -326,6 +327,8 @@ void YoMenu::_sidebar(){
 }
 
 static void fitText(char* t, uint16_t w);      /* оголошення: сама вона нижче */
+static uint16_t textW(const char* t);
+static bool newMenu(){ return !extras.s.menuClassic; }
 
 void YoMenu::_chrome(const char* title, uint8_t icon){
   /*  Шапка — темна: жовтий значок і назва, біла стрілка повернення, під
@@ -557,6 +560,11 @@ void YoMenu::_paint(){
     if(p == PG_SYS){
       dsp.setFont(&yoUI9); dsp.setTextSize(1); dsp.setTextColor(C_DIM);
       dsp.setCursor(CX, SY_LED_Y-6); dsp.print(utf8Rus("світлодіод", false));
+      /*  назад до нового меню (src/m2)  */
+      dsp.box(CX, 204, CW, 32, R_BTN, C_ACC, C_BG);
+      dsp.setFont(&yoUI9b); dsp.setTextColor(C_BG);
+      { char t[40]; snprintf(t, sizeof(t), "%s", utf8Rus("перейти на нове меню", false));
+        dsp.setCursor(CX + (CW - (int16_t)textW(t)) / 2, 225); dsp.print(t); }
       dsp.setFont();
     }
   }
@@ -1353,7 +1361,8 @@ void YoMenu::_wifiScan(){
 }
 
 void YoMenu::wifiTick(){
-  if(_cur == PG_OFF) return;
+  m2::M.loop();                                  /* дії нового меню — тут, у головному циклі */
+  if(_cur == PG_OFF && !m2::M.active()) return;
   /*  Раз на 200 мс запам'ятовуємо, у якій ми мережі: далі малювання бере
       готове, а не смикає радіомодуль по десять разів на кадр.  */
   static uint32_t ask = 0;
@@ -1361,10 +1370,14 @@ void YoMenu::wifiTick(){
     ask = millis();
     bool up = (WiFi.status() == WL_CONNECTED);
     char now[33] = {0};
-    if(up) strlcpy(now, WiFi.SSID().c_str(), sizeof(now));
+    if(up){
+      strlcpy(now, WiFi.SSID().c_str(), sizeof(now));
+      _rssi = (int8_t)WiFi.RSSI();
+      strlcpy(_ipStr, WiFi.localIP().toString().c_str(), sizeof(_ipStr));
+    }
     if(up != _staUp || strcmp(now, _curSsid)){ _staUp = up; strlcpy(_curSsid, now, sizeof(_curSsid)); _wlDirty = true; }
   }
-  if(_cur != PG_WIFI && !_scanning && !_scanReq) return;
+  if(_cur != PG_WIFI && !_m2Wifi && !_scanning && !_scanReq) return;
   if(_scanReq){
     _scanReq = false;
     if(WiFi.getMode() != WIFI_STA) WiFi.mode(WIFI_STA);   /* точки доступу в нас немає */
@@ -1721,14 +1734,16 @@ void YoMenu::_wifiSaveCurrent(){
 /*  ---------- життєвий цикл ---------- */
 
 void YoMenu::open(){
-  if(_cur != PG_OFF) return;
+  if(_cur != PG_OFF || m2::M.active()) return;
+  if(newMenu()){ _apLock = false; _loadWifi(); m2::M.open(&m2::pgPult); return; }
   _build(); _apLock=false; _loadWifi(); _syncSys();
   _show(PG_INFO);
 }
 
 /*  Кнопка «☰» у шапці плеєра: усе, що раніше було окремими значками.  */
 void YoMenu::openHome(){
-  if(_cur != PG_OFF) return;
+  if(_cur != PG_OFF || m2::M.active()) return;
+  if(newMenu()){ _apLock = false; _loadWifi(); m2::M.open(&m2::pgPult); return; }
   _build(); _apLock = false; _loadWifi(); _syncSys();
   _show(PG_HOME);
 }
@@ -1740,7 +1755,8 @@ void YoMenu::openPage(int8_t p){
 }
 
 void YoMenu::openFav(){
-  if(_cur != PG_OFF) return;
+  if(_cur != PG_OFF || m2::M.active()) return;
+  if(newMenu()){ _apLock = false; m2::M.open(&m2::pgFav); return; }
   _build(); _apLock = false;
   _show(PG_FAV);
 }
@@ -1749,7 +1765,8 @@ void YoMenu::openFav(){
     Коли зв'язок просто зник (мережа ще збережена), виходу не замикаємо:
     мережа може повернутися сама, і людина має змогу піти на плеєр.  */
 void YoMenu::openWifi(bool lock){
-  if(_cur != PG_OFF) return;
+  if(_cur != PG_OFF || m2::M.active()) return;
+  if(newMenu()){ _apLock = lock; _loadWifi(); m2::M.open(&m2::pgWifi); return; }
   _build(); _apLock = lock; _loadWifi();
   _show(PG_WIFI);
 }
@@ -1757,6 +1774,7 @@ void YoMenu::openWifi(bool lock){
 /*  Закриття теж іде через затемнення, і саму перемальовку робить задача
     дисплея: раніше вона виконувалась просто в потоці дотику.  */
 void YoMenu::close(){
+  if(_cur == PG_OFF && m2::M.active()){ if(!_apLock) m2::M.close(); return; }
   if(_cur == PG_OFF || _fadeStep >= 0) return;
   if(_apLock){ return; }
   _closeReq = true;
@@ -1768,7 +1786,11 @@ void YoMenu::tick(){ if(_cur==PG_INFO || _cur==PG_TIME || _cur==PG_SLEEP || _cur
 
 /*  Жодних перемальовок «про всяк випадок»: сетери мовчать, якщо значення
     не змінилось, тому цей виклик здебільшого не чіпає екран узагалі.  */
+bool YoMenu::active() const { return _cur != PG_OFF || m2::M.active(); }
+bool YoMenu::fading() const { return _fadeStep >= 0 || m2::M.fading(); }
+
 void YoMenu::render(){
+  if(_cur == PG_OFF && _fadeStep < 0 && (m2::M.active() || m2::M.fading())){ m2::M.render(); return; }
   if(_cur == PG_OFF && _fadeStep < 0) return;
   if(_fadeStep >= 0){ _fade(); return; }   /* поки триває зміна — тільки вона */
   if(_cur == PG_OFF) return;
@@ -2218,6 +2240,7 @@ void YoMenu::_openKbd(char* target, size_t max, bool isPass, const char* title){
 /*  ---------- дотики ---------- */
 
 void YoMenu::onRelease(uint16_t x, uint16_t y, uint32_t held){
+  if(_cur == PG_OFF && m2::M.active()){ m2::M.onRelease(x, y); return; }
   if(_fadeStep >= 0) return;               /* сторінка ще набігає */
   _held = held;
   _lastAct = millis();
@@ -2252,6 +2275,7 @@ void YoMenu::onRelease(uint16_t x, uint16_t y, uint32_t held){
 }
 
 void YoMenu::onPress(uint16_t x, uint16_t y){
+  if(_cur == PG_OFF && m2::M.active()){ m2::M.onPress(x, y); return; }
   _lastAct = millis();
   /*  Відгук під пальцем — хвиля світла по кнопці. Клавіатура підсвічує клавішу
       сама, списки й смуги еквалайзера ведуться пальцем — там хвилі не треба.  */
@@ -2288,6 +2312,7 @@ void YoMenu::onPress(uint16_t x, uint16_t y){
 }
 
 void YoMenu::onDrag(uint16_t x, uint16_t y){
+  if(_cur == PG_OFF && m2::M.active()){ m2::M.onDrag(x, y); return; }
   (void)x;
   if(_cur == PG_EQ && _eqBand >= 0){ _eqTouch(y); return; }
   if(_cur == PG_KBD && _kbDown){
@@ -2508,6 +2533,7 @@ void YoMenu::_hit(uint16_t x, uint16_t y){
       break;
     }
     case PG_SYS: {
+      if(y >= 200){ extras.s.menuClassic = 0; extras.changed(); close(); return; }
       if(y >= SY_LED_Y-4 && y < SY_LED_Y+34){
         int8_t i = _ledSeg.indexAt(x);
         if(i < 0) return;
