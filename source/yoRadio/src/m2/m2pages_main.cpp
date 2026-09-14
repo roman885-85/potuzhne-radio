@@ -249,7 +249,7 @@ void PultPage::tap(int16_t id, int16_t x, int16_t y){
       M.close();
       break;
     case 10: value(10, briAt(x)); break;
-    case 20: afterClose = 1; M.close(); break;
+    case 20: M.push(&pgStations); break;
     case 21: M.push(&pgFav); break;
     case 22:
       if(!sermons.loading() && sermons.count() == 0) sermons.fetch();

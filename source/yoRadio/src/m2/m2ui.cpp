@@ -1,8 +1,10 @@
 #include "m2ui.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "../core/options.h"
 #include "../displays/dspcore.h"
 #include "../displays/tools/spidma.h"
+#include "m2pages.h"
 
 extern DspCore dsp;
 
@@ -478,6 +480,7 @@ void Menu::onRelease(uint16_t x, uint16_t y){
 
 /*  =================== головний цикл =================== */
 void Menu::loop(){
+  stationsPoll();
   /*  меню закрилось (задача дисплея вже погасила й намалювала плеєр) — прибираємо сторінки  */
   if(s_ld && !_open && !_openReq){
     while(s_ld) s_lst[--s_ld]->leave();
@@ -545,6 +548,21 @@ void Menu::toast(const char* msg){
 int16_t Menu::_maxScroll(Page* p){
   int16_t m = p->height() - CH;
   return m > 0 ? m : 0;
+}
+
+void Menu::_startSnap(Page* p, uint32_t now){
+  const int16_t st = p ? p->snapStep() : 0;
+  if(st <= 0) return;
+  const int16_t mx = _maxScroll(p);
+  int16_t cur = p->scroll < 0 ? 0 : (p->scroll > mx ? mx : p->scroll);
+  const float k = cur / (float)st;
+  /*  ще їхав — до рядка в напрямку руху; стояв — до найближчого  */
+  int32_t kk = _vel > 30 ? (int32_t)ceilf(k - 0.2f) : (_vel < -30 ? (int32_t)floorf(k + 0.2f) : (int32_t)lroundf(k));
+  int32_t to = kk * st;
+  if(to < 0) to = 0;
+  if(to > mx) to = mx;
+  if(to == p->scroll) return;
+  _spring = true; _spFrom = p->scroll; _spTo = (float)to; _spT0 = now;
 }
 
 void Menu::_startTransition(Page* from, int8_t dir){
@@ -631,8 +649,8 @@ void Menu::_processTouch(){
       _px0 = _plx = t.x; _py0 = _ply = t.y; _pressT = t.t; _held = false; _pressId = -1;
       _lastMoveT = t.t; _vel = 0;
       if(_tDir){ _tm = TM_DEAD; continue; }
-      bool caught = _fling;
-      _fling = false;
+      bool caught = _fling || _spring;
+      _fling = false; _spring = false;
       /*  «назад» притягує дотик: трохи нижче шапки й правіше самої кнопки теж  */
       if(t.y < HDR + 8 && t.x < 64 && p->canBack()) t.y = 0;
       if(t.y < HDR){
@@ -693,6 +711,8 @@ void Menu::_processTouch(){
         _fling = true; _scrollF = p->scroll;
       }else if(_tm == TM_GRAB){
         p->drag(_pressId, _plx, t.y - HDR + p->scroll, true);
+        _vel = 0; _scrollF = p->scroll;
+        _startSnap(p, t.t);
       }else if(_tm == TM_UNDECIDED){
         if(_pressId >= 0 && !_held) _post(A_TAP, p, _pressId, _ripX, _ripY, 0);
       }else if(_tm == TM_BACK){
@@ -743,12 +763,28 @@ void Menu::render(){
     if(_scrollF > mx){ _scrollF += (mx - _scrollF) * (dt * 14); _vel *= 0.7f; }
     int16_t s = (int16_t)lroundf(_scrollF);
     if(s != p->scroll){ p->scroll = s; invalScreen(0, HDR - 1, SW, CH + 1); }
-    if(fabsf(_vel) < 15 && _scrollF >= -0.5f && _scrollF <= mx + 0.5f){
+    /*  сторінка з кроком доводиться до рядка раніше, ніж накат зовсім згасне  */
+    const float stopV = p->snapStep() > 0 ? 70.0f : 15.0f;
+    if(fabsf(_vel) < stopV && _scrollF >= -0.5f && _scrollF <= mx + 0.5f){
       _fling = false; ft = 0;
       if(p->scroll < 0) p->scroll = 0;
       if(p->scroll > mx) p->scroll = mx;
+      _startSnap(p, now);
+      _vel = 0;
       invalScreen(0, HDR - 1, SW, CH + 1);
     }
+  }
+  /*  пружина до рядка: трохи перелітає (на 3–4 пікселі) і м'яко повертається, менше пів секунди  */
+  if(_spring && _tm != TM_SCROLL){
+    const float ts = (now - _spT0) / 1000.0f;
+    int16_t s;
+    if(ts >= 0.45f){ _spring = false; s = (int16_t)_spTo; }
+    else{
+      const float zw = 11.0f, wd = 16.7f;
+      const float e = 1.0f - expf(-zw * ts) * (cosf(wd * ts) + (zw / wd) * sinf(wd * ts));
+      s = (int16_t)lroundf(_spFrom + (_spTo - _spFrom) * e);
+    }
+    if(s != p->scroll){ p->scroll = s; _scrollF = s; invalScreen(0, HDR - 1, SW, CH + 1); }
   }
   /*  хвиля  */
   if(_ripOn){
@@ -765,7 +801,7 @@ void Menu::render(){
   }
   /*  годинник у шапці  */
   { char b[8]; uint8_t mn = 255; if(bridgeClock(b, sizeof(b), mn) && mn != _hdrMin){ _hdrMin = mn; _markRaw(SW - 110, 0, 110, HDR - 1); } }
-  p->tick(now);
+  { int64_t t0 = esp_timer_get_time(); p->tick(now); pfTickUs += (uint32_t)(esp_timer_get_time() - t0); }
   _flush();
 }
 
@@ -782,6 +818,7 @@ void Menu::_flush(){
   if(!buf) return;
   bool dma = spidmaOk() || spidmaBegin();
   Gfx g;
+  const int64_t f0 = esp_timer_get_time();
   _frameT = millis();                        /* одна мить на весь кадр — хвиля й повідомлення не рвуться між смугами */
   g_m2Draw = true;
   dsp.startWrite();
@@ -798,15 +835,20 @@ void Menu::_flush(){
       for(int rr = r + 1; rr < 15 && (rows[rr] & run) == run && (int32_t)w * (h + 16) <= STRIP_PX; rr++){ rows[rr] &= ~run; h += 16; }
       if(y0 + h > SH) h = SH - y0;
       g.target(buf, x0, y0, w, h);
+      int64_t u0 = esp_timer_get_time();
       _drawScene(g);
+      int64_t u1 = esp_timer_get_time();
       const uint32_t n = (uint32_t)w * h;
       for(uint32_t i = 0; i < n; i++){ uint16_t v = buf[i]; buf[i] = (uint16_t)((v >> 8) | (v << 8)); }
       dsp.setAddrWindow(x0, y0, w, h);
       if(!(dma && spidmaWrite(buf, n * 2))) dsp.writePixels(buf, n, true, true);
+      pfDrawUs += (uint32_t)(u1 - u0); pfXferUs += (uint32_t)(esp_timer_get_time() - u1); pfStrips++;
     }
   }
   dsp.endWrite();
   g_m2Draw = false;
+  { uint32_t us = (uint32_t)(esp_timer_get_time() - f0); if(us > pfMaxUs) pfMaxUs = us; }
+  pfFrames++;
 }
 
 void Menu::_drawHeader(Gfx& g, Page* p){

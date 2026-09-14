@@ -26,6 +26,7 @@
 #include "../extras/yoMic.h"
 #include "../extras/yoSfx.h"
 #include "../extras/yoDsp.h"
+#include "../extras/yoSpectrum.h"
 
 extern DspCore dsp;
 
@@ -582,6 +583,22 @@ void yodbgLoop(){
         (unsigned)ota.done(), (unsigned)ota.total(), (unsigned)ota.speed(), ota.error());
     }
     else if(!strncmp(buf,"dspwatch ",9)){ extern volatile bool g_dspWatch; g_dspWatch = atoi(buf+9) != 0; Serial.printf("DSPWATCH %d\n", (int)g_dspWatch); }
+    else if(!strncmp(buf,"specset",7)){
+      float a = 0, b = 0, c = 0, e = 0;
+      if(sscanf(buf + 7, "%f %f %f %f", &a, &b, &c, &e) == 4){ yoSpec.range = a; yoSpec.head = b; yoSpec.decay = c; yoSpec.avgK = e; }
+      Serial.printf("SPECSET шкала=%.1f запас=%.1f спад=%.1f усередн=%.2f\n", yoSpec.range, yoSpec.head, yoSpec.decay, yoSpec.avgK);
+    }
+    else if(!strcmp(buf,"fade")){ Serial.printf("FADE %.3f\n", yoDsp.fadeLevel()); }
+    else if(!strcmp(buf,"m2perf")){
+      /*  нове меню: скільки кадрів і куди йде час (з минулого виклику)  */
+      static uint32_t t0 = 0;
+      uint32_t now = millis(), dt = now - t0; t0 = now;
+      m2::Menu& m = m2::M;
+      Serial.printf("M2PERF за %u мс: кадрів %u, смуг %u, малювання %u мс, передача %u мс, tick %u мс, найдовший кадр %u мс\n",
+                    (unsigned)dt, (unsigned)m.pfFrames, (unsigned)m.pfStrips, (unsigned)(m.pfDrawUs / 1000), (unsigned)(m.pfXferUs / 1000),
+                    (unsigned)(m.pfTickUs / 1000), (unsigned)(m.pfMaxUs / 1000));
+      m.pfFrames = m.pfStrips = m.pfDrawUs = m.pfXferUs = m.pfTickUs = m.pfMaxUs = 0;
+    }
     else if(!strcmp(buf,"spec")){
       extern float m2SpecDbg[32];
       Serial.print("SPEC");

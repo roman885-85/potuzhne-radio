@@ -397,13 +397,18 @@ int16_t Gfx::text(int16_t x, int16_t baseline, const char* s, const GFXfont* f, 
   uint8_t cp[160];
   uint16_t n = toCp1251(s, cp, sizeof(cp) - 2);
   int16_t w = cpWidth(cp, n, f);
+  /*  рядок цілком поза смугою (сторінка малюється смугами, і більшість викликів
+      сюди не влучає) — ширину вже знаємо, решту не рахуємо  */
+  const int16_t sb = baseline + _oy;
+  if(sb - (int16_t)f->yAdvance > _cy1 || sb + (int16_t)f->yAdvance / 2 < _cy0) return maxw > 0 && w > maxw ? maxw : w;
   if(maxw > 0 && w > maxw){
-    /*  обрізаємо по місцю й ставимо «…»  */
+    /*  обрізаємо по місцю й ставимо «…» (ширину віднімаємо по літері, а не рахуємо щоразу наново)  */
     const int16_t ell = cpWidth((const uint8_t*)"\x85", 1, f);
-    while(n > 0 && w + ell > maxw){ n--; w = cpWidth(cp, n, f); }
-    while(n > 0 && cp[n - 1] == ' '){ n--; }
+    auto adv = [&](uint8_t ch) -> int16_t { return (ch < f->first || ch > f->last) ? 0 : f->glyph[ch - f->first].xAdvance; };
+    while(n > 0 && w + ell > maxw){ n--; w -= adv(cp[n]); }
+    while(n > 0 && cp[n - 1] == ' '){ n--; w -= adv(cp[n]); }
     cp[n++] = 0x85; cp[n] = 0;
-    w = cpWidth(cp, n, f);
+    w += ell;
   }
   int16_t xx = align == AL_C ? x - w / 2 : align == AL_R ? x - w : x;
   _glyphs(xx, baseline, cp, n, f, c);

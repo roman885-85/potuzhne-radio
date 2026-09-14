@@ -51,6 +51,7 @@ class YoDsp {
     void fadeOut(uint16_t ms) { _fadeTo = 0.0f; _fadeMs = ms; }
     bool faded() const { return _fade <= 0.001f; }
     void fadeReset() { _fade = 1.0f; _fadeTo = 1.0f; }
+    float fadeLevel() const { return _fade; }
 
     void applyPreset(uint8_t p);                 /* 0 — «свій», нічого не міняє */
     void setBand(uint8_t band, int8_t db);       /* повзунок: пресет стає «свій» */

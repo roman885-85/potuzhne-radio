@@ -50,6 +50,8 @@ class Page {
     virtual void back();                              /* типово — на сторінку вище */
     virtual bool keepOpen(){ return false; }          /* не закривати меню за хвилину без дотиків */
     virtual bool scrollable(){ return true; }
+    /*  прокрутка зупиняється рівно на рядку, з пружиною (як у старому списку): крок у пікселях, 0 — де зупинилась  */
+    virtual int16_t snapStep(){ return 0; }
     int16_t scroll = 0;
 };
 
@@ -165,6 +167,9 @@ class Menu {
     void postValue(int16_t id, int32_t v, bool final);
     uint32_t lastTouch() const { return _lastTouch; }
 
+    /*  заміри кадру (команда m2perf): кадри, смуги, мікросекунди малювання й передачі  */
+    uint32_t pfFrames = 0, pfStrips = 0, pfDrawUs = 0, pfXferUs = 0, pfMaxUs = 0, pfTickUs = 0;
+
   private:
     static const uint8_t MAXD = 10;
     Page* _stack[MAXD] = { nullptr };
@@ -199,6 +204,9 @@ class Menu {
     int16_t _scroll0 = 0;
     float _vel = 0, _scrollF = 0;
     bool _fling = false;
+    bool _spring = false;                 /* доводка до рядка */
+    float _spFrom = 0, _spTo = 0;
+    uint32_t _spT0 = 0;
     uint32_t _lastMoveT = 0;
     /*  хвиля  */
     Rect _rip; uint8_t _ripR = 0; int16_t _ripX = 0, _ripY = 0; uint32_t _ripT0 = 0; bool _ripOn = false, _ripUp = false, _ripHdr = false; uint32_t _ripUpT = 0;
@@ -227,6 +235,7 @@ class Menu {
     void _post(uint8_t kind, Page* p, int16_t id, int16_t x, int16_t y, int32_t v);
     void _cmdPush(uint8_t op, Page* p);
     int16_t _maxScroll(Page* p);
+    void _startSnap(Page* p, uint32_t now);
     void _fadeRun();
     void _finishClose();
 };

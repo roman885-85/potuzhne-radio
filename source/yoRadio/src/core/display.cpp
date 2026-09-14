@@ -19,6 +19,7 @@
 #include "../menu/uicanvas.h"
 #include "../m2/m2player.h"
 #include "../m2/m2update.h"
+#include "../m2/m2pages.h"
 #include "../extras/yoExtras.h"
 #include "../extras/yoRecorder.h"
 #include "../extras/yoSplash.h"
@@ -1306,6 +1307,10 @@ void Display::_drawNextStationNum(uint16_t num) {
 
 void Display::putRequest(displayRequestType_e type, int payload){
   if(displayQueue==NULL) return;
+#if DSP_MODEL==DSP_ILI9341
+  /*  новий вигляд: список станцій — сторінка нового меню (m2/m2stations.cpp)  */
+  if(type == NEWMODE && payload == STATIONS && m2::P.on()){ m2::stationsRequest(); return; }
+#endif
   requestParams_t request;
   request.type = type;
   request.payload = payload;

@@ -233,8 +233,11 @@ void Player::_drawTop(Gfx& g, uint32_t now){
   if(extras.batMv() >= 2800 && !extras.s.noBat){
     x -= 26;
     int8_t pct = extras.batPct(); if(pct < 0) pct = 0;
-    bool low = extras.lowBattery(), chg = extras.charging();
-    uint16_t c = low ? C_RED : (chg ? C_GREEN : C_TXT2);
+    /*  Колір — завжди за станом, а не лише поки заряджається: інакше, щойно
+        батарея дозарядилась (живлення є, «заряджено»), значок сірів.
+        Від зарядника — зелений; від батареї — за рівнем.  */
+    bool low = extras.lowBattery();
+    uint16_t c = extras.onPower() ? C_GREEN : (low || pct < 10 ? C_RED : (pct < 30 ? C_ORANGE : C_GREEN));
     g.frame(x, 13, 19, 12, 3, c, 1);
     g.box(x + 19, 16, 2, 6, 1, c);
     int16_t fw = (int16_t)(15 * pct / 100); if(fw < 1) fw = 1;
@@ -623,7 +626,7 @@ void Player::render(){
     /*  шапка  */
     uint32_t s = mixs(2166136261UL, config.station.name);
     s = s * 31 + (player.remoteStationName ? 2 : 0) + config.getMode();
-    s = s * 31 + (extras.batMv() >= 2800 && !extras.s.noBat ? extras.batPct() + 1 : 0) + (extras.charging() ? 500 : 0) + (extras.lowBattery() ? 1000 : 0);
+    s = s * 31 + (extras.batMv() >= 2800 && !extras.s.noBat ? extras.batPct() + 1 : 0) + (extras.onPower() ? 500 : 0) + (extras.lowBattery() ? 1000 : 0);
     s = s * 31 + (mic.listening() ? 1 : 0) + extras.s.alarmOn * 2 + extras.sleepLeft() * 4;
     s = s * 31 + (recorder.active() ? recorder.seconds() / 60 + 1 : 0);
     int rs = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127;

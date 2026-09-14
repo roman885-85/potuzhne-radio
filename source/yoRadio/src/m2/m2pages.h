@@ -32,6 +32,11 @@ extern Page& pgDacInfo;
 extern Page& pgNightFrom;
 extern Page& pgNightTo;
 extern Page& pgUpdate;
+extern Page& pgStations;  /* список станцій / треків картки */
+
+/*  попросити список станцій (будь-яка задача); відкриває головний цикл — stationsPoll() у Menu::loop()  */
+void stationsRequest();
+void stationsPoll();
 
 /*  клавіатура: куди писати, заголовок, що робити після «OK» (головний цикл)  */
 void kbdOpen(char* target, size_t max, bool password, const char* title, void (*done)(bool ok));
