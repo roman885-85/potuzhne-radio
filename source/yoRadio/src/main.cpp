@@ -80,6 +80,7 @@ void setup() {
   if (yoradio_on_setup) yoradio_on_setup();
   pm.on_setup();
   config.init();
+  YoSfx::mount();           /* розділ ресурсів: заставка потрібна вже екрану завантаження */
   display.init();
   player.init();
   extras.begin();           /* таймер сну, будильник, ніч, батарея, світлодіод */

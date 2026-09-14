@@ -22,10 +22,15 @@ class YoSfx {
   public:
     static const uint16_t DEFAULT_MASK;   /* типово озвучені події (без дотику) */
 
+    static bool mount();                  /* розділ ресурсів — якомога раніше: з нього ж і заставка */
+    static bool mounted();
     void begin();                         /* після player.init(): розділ ресурсів і задача виводу */
     void play(SfxEvent e);                /* з будь-якої задачі, не чекає; вимкнене — мовчить */
     void test(SfxEvent e);                /* перевірка зі сторінки: навіть коли подію вимкнено */
     void reload(SfxEvent e);              /* файл змінився — перечитати перед наступним разом */
+    bool ready() const { return _q != nullptr; }
+    bool willPlay(SfxEvent e) const;      /* подію ввімкнено й звуки є */
+    uint32_t audibleMs(SfxEvent e) const { return e < SFX_N ? _audible[e] : 0; }   /* коли звук справді пішов у динамік */
 
     bool     fsOk() const { return _fsOk; }
     size_t   fsTotal();
@@ -62,13 +67,14 @@ class YoSfx {
     uint64_t _mixPos = 0;                  /* позиція в Q16 */
     int32_t  _mixGain = 0;                 /* Q15 */
     volatile bool _outBusy = false;
+    volatile uint32_t _audible[SFX_N] = {};
     volatile uint32_t _lastEndMs = 0;
 
     static void _taskFn(void* p);
     void _run();
     const Clip* _get(SfxEvent e);
     bool _load(SfxEvent e);
-    void _out(const Clip& c, int32_t gainQ15, uint64_t startPos = 0);
+    void _out(const Clip& c, int32_t gainQ15, uint64_t startPos = 0, SfxEvent ev = SFX_N);
     static int32_t _gainQ15();
 };
 

@@ -467,6 +467,7 @@ void yodbgLoop(){
       if(e >= 0){ sfx.test((SfxEvent)e); Serial.printf("SFX %s (%u мс)\n", YoSfx::id((SfxEvent)e), (unsigned)sfx.clipMs((SfxEvent)e)); }
       else Serial.println("SFX невідома подія");
     }
+    else if(!strncmp(buf,"splashdemo",10)){ uint32_t ms = buf[10] == ' ' ? atoi(buf + 11) : 8000; display.splashDemo(ms); Serial.printf("SPLASH %u мс\n", (unsigned)ms); }
     else if(!strcmp(buf,"sfxls")){
       Serial.printf("SFX розділ: %s, %u з %u байт\n", sfx.fsOk() ? "є" : "немає", (unsigned)sfx.fsUsed(), (unsigned)sfx.fsTotal());
       for(uint8_t i = 0; i < SFX_N; i++)

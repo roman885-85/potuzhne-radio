@@ -57,6 +57,7 @@ struct ExtStore {
   uint8_t  sfxOn;                                /* головний вимикач */
   uint8_t  sfxVol;                               /* 0..100 */
   uint16_t sfxMask;                              /* які події озвучувати: біт на подію SfxEvent */
+  uint8_t  splashOff;                            /* 1 — без анімованої заставки (0 — показувати) */
 };
 /*  Зовнішній ЦАП I2S — на вільні виводи роз'єму розширення  */
 #define DAC_BCLK  14

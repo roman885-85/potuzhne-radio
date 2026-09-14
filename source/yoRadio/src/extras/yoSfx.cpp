@@ -26,12 +26,21 @@ int YoSfx::find(const char* s){
 
 enum : uint8_t { Q_TEST = 0x80, Q_RELOAD = 0x40 };
 
+static bool s_mounted = false, s_mountTried = false;
+bool YoSfx::mounted(){ return s_mounted; }
+bool YoSfx::mount(){
+  if(s_mountTried) return s_mounted;
+  s_mountTried = true;
+  /*  Розділ «assets» є лише після прошивки з новою таблицею розділів. Немає
+      його (оновлювали через сторінку) — просто без звуків і заставки.  */
+  s_mounted = LittleFS.begin(false, "/assets", 6, "assets");
+  if(!s_mounted) s_mounted = LittleFS.begin(true, "/assets", 6, "assets");
+  return s_mounted;
+}
+
 void YoSfx::begin(){
   if(_q) return;
-  /*  Розділ «assets» є лише після прошивки з новою таблицею розділів. Немає
-      його (оновлювали через сторінку) — просто без звуків.  */
-  _fsOk = LittleFS.begin(false, "/assets", 6, "assets");
-  if(!_fsOk) _fsOk = LittleFS.begin(true, "/assets", 6, "assets");
+  _fsOk = mount();
   if(_fsOk){ LittleFS.mkdir("/snd"); LittleFS.mkdir("/snd/user"); refreshUser(); }
   Serial.printf("##[BOOT]#\tзвуки подій: %s\n", _fsOk ? "розділ ресурсів є" : "розділу ресурсів немає");
   _lock = xSemaphoreCreateMutex();
@@ -52,6 +61,10 @@ bool YoSfx::userFile(SfxEvent e){
   if(!_fsOk || e >= SFX_N) return false;
   char p[40]; snprintf(p, sizeof(p), "/snd/user/%s.wav", IDS[e]);
   return LittleFS.exists(p);
+}
+
+bool YoSfx::willPlay(SfxEvent e) const {
+  return _q && _fsOk && e < SFX_N && extras.s.sfxOn && extras.s.sfxVol && (extras.s.sfxMask & (1U << e));
 }
 
 void YoSfx::play(SfxEvent e){
@@ -180,6 +193,7 @@ void YoSfx::_run(){
       _mixPcm = nullptr;
       _mixPos = 0; _mixRate = c->rate; _stepFor = 0; _mixGain = g; _mixLen = c->len;
       _mixPcm = c->pcm;
+      _audible[e] = millis() | 1;
       /*  чекаємо кінця: наступний звук у черзі — після цього  */
       uint32_t t0 = millis(), dur = (uint32_t)((uint64_t)c->len * 1000 / c->rate) + 300;
       while(_mixPcm && millis() - t0 < dur){
@@ -188,20 +202,20 @@ void YoSfx::_run(){
           /*  станцію зупинили посеред звуку (хлопки «пауза») — доіграємо самі  */
           uint64_t at = _mixPos;
           _mixPcm = nullptr;
-          if((at >> 16) + 1 < c->len) _out(*c, g, at);
+          if((at >> 16) + 1 < c->len) _out(*c, g, at, e);
           break;
         }
       }
       _mixPcm = nullptr;
     }else{
-      _out(*c, g);
+      _out(*c, g, 0, e);
     }
   }
 }
 
 /*  Радіо мовчить: самі пишемо в I2S. Підсилювач після вимкнення прокидається
     ~0,4 с — спершу тиша, інакше початок звуку губиться (як у перевірці жестів).  */
-void YoSfx::_out(const Clip& c, int32_t g, uint64_t startPos){
+void YoSfx::_out(const Clip& c, int32_t g, uint64_t startPos, SfxEvent ev){
   _outBusy = true;
   bool wasMuted = MUTE_PIN != 255 && digitalRead(MUTE_PIN) == MUTE_VAL;
   if(MUTE_PIN != 255) digitalWrite(MUTE_PIN, !MUTE_VAL);
@@ -220,6 +234,7 @@ void YoSfx::_out(const Clip& c, int32_t g, uint64_t startPos){
   uint32_t step = (uint32_t)(((uint64_t)c.rate << 16) / rate);
   uint64_t pos = startPos;
   bool handed = false;
+  if(ev < SFX_N && !startPos) _audible[ev] = millis() | 1;   /* підсилювач прокинувся — звук іде зараз */
   for(;;){
     if(player.isRunning()){
       /*  посеред звуку заграла станція — решту домішає задача звуку  */

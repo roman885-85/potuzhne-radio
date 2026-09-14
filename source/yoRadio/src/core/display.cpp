@@ -18,6 +18,8 @@
 #include "../menu/yoMenu.h"
 #include "../extras/yoExtras.h"
 #include "../extras/yoRecorder.h"
+#include "../extras/yoSplash.h"
+#include "../extras/yoSfx.h"
 #include "../extras/yoSermons.h"
 #include "../extras/yoLogos.h"
 #include <SPIFFS.h>
@@ -190,7 +192,8 @@ void Display::_bootScreen(){
   _bootstring = (TextWidget*) &_boot->addWidget(new TextWidget(bootstrConf, 50, true, BOOT_TXT_COLOR, 0));
   _pager->addPage(_boot);
   _pager->setPage(_boot, true);
-  dsp.drawLogo(bootLogoTop);
+  /*  анімована заставка з розділу ресурсів; немає — старий логотип  */
+  if(!(extras.s.splashOff == 0 && splash.begin())) dsp.drawLogo(bootLogoTop);
   _bootStep = 1;
 }
 
@@ -1079,6 +1082,7 @@ void Display::forceRedraw(){
 }
 
 void Display::_start() {
+  splash.stop();
   if(_boot) _pager->removePage(_boot);
   #ifdef USE_NEXTION
     nextion.wake();
@@ -1299,6 +1303,19 @@ void Display::loop() {
     return;
   }
   if(displayQueue==NULL || _locked) return;
+  if(_splashDemoMs){
+    _splashDemoUntil = millis() + _splashDemoMs; _splashDemoMs = 0;
+    dsp.fillScreen(0);
+    bool ok = splash.begin(true);
+    Serial.printf("##DSP#\tзаставка: %s\n", ok ? "почато" : "файл не відкрився");
+    if(!ok) _splashDemoUntil = 0;
+    else sfx.test(SFX_START);
+  }
+  if(_splashDemoUntil){
+    if(millis() < _splashDemoUntil && splash.active()){ splash.tick(); return; }
+    _splashDemoUntil = 0; splash.stop(); forceRedraw();
+    return;
+  }
   if(!_playerBuilt) _ensurePlayer();
   /*  Такт плавної зміни — до всіх дострокових виходів: якщо піти раніше,
       зміна застрягне на погашеній підсвітці.  */
@@ -1358,6 +1375,7 @@ void Display::loop() {
 #endif
   /*  веб змінив те, що видно на плеєрі (IP, батарея, картка), — перемалювати  */
   if(_redrawReq && _mode == PLAYER && !fading()){ _redrawReq = false; forceRedraw(); }
+  if(_bootStep == 1 && splash.active()) splash.tick();     /* заставка, поки радіо шукає мережу */
 #ifdef YO_DEBUG
   DSTEP(_pager->loop());
   DSTEP(_statusBar());

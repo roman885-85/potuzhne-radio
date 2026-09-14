@@ -41,6 +41,7 @@ class Display {
     void init();
     void loop();
     void _start();
+    void splashDemo(uint32_t ms){ _splashDemoMs = ms ? ms : 1; }   /* відладка: заставка поверх плеєра */
     bool ready() { return _bootStep==2; }
     void resetQueue();
     void putRequest(displayRequestType_e type, int payload=0);
@@ -134,6 +135,8 @@ class Display {
     uint8_t _bootStep;
     bool    _lostPending = false;   /* зв'язок зник ще на заставці — показати, щойно плеєр готовий */
     bool    _playerBuilt = false;   /* сторінки й віджети плеєра створено */
+    volatile uint32_t _splashDemoMs = 0; /* відладка: показати заставку стільки мс */
+    uint32_t _splashDemoUntil = 0;
     bool    _ensurePlayer();        /* стартували без мережі, а вона з'явилась — добудувати плеєр */
     void    _finishStart(bool draw);
     void _time(bool redraw = false);

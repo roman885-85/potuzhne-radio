@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Стандартні звуки подій ПОТУЖНОГО РАДІО.
+"""Стандартні звуки подій ПОТУЖНОГО РАДІО: басові, синтетичні, м'які.
 
-Синтезуються тут, а не беруться звідкись: жодних чужих ліцензій, і будь-який
-звук можна переробити правкою кількох чисел. Тембр — «маримба з дзвіночком»:
-основний тон і негармонічні обертони (2,76 і 5,4 основного), що гаснуть
-швидше, — так звучать дерев'яні й металеві пластини. Маленький динамік радіо
-низу не відтворює, тому всі ноти вище 500 Гц.
+Жодних дзвіночків, клацань і тріску — низькі синуси й теплі пилки крізь
+м'який фільтр, як «увімкнення потужності». Синтезуються тут: жодних чужих
+ліцензій, будь-який звук переробляється правкою чисел.
+
+Маленький динамік справжнього низу не відтворює, тож «бас» тут подвійний:
+основний тон і його гармоніки 150–600 Гц — за ними вухо саме добудовує низ
+(той самий прийом, що й «віртуальний бас» у звуковій обробці радіо). Усе,
+що нижче 80 Гц, зрізається: там динамік лише хрипів би.
 
   python3 tools/make_sounds.py   →   source/yoRadio/assets/snd/default/*.wav
 """
@@ -13,47 +16,123 @@ import math, os, random, struct, wave
 
 RATE = 22050
 OUT = os.path.join(os.path.dirname(__file__), "..", "source", "yoRadio", "assets", "snd", "default")
-
-NOTE = {"C5": 523.25, "D5": 587.33, "E5": 659.26, "G5": 783.99, "A5": 880.0,
-        "C6": 1046.5, "D6": 1174.66, "E6": 1318.51, "G6": 1567.98, "A6": 1760.0,
-        "B6": 1975.53, "C7": 2093.0, "E7": 2637.02}
+TAU = 2 * math.pi
 
 
-def pluck(buf, start, f, dur, amp=1.0, decay=5.0, bright=1.0):
-    """Одна нота: миттєвий напад 3 мс, експоненційне згасання."""
-    n0 = int(start * RATE)
-    n = int(dur * RATE)
+def hz(note):
+    names = {"C": -9, "C#": -8, "D": -7, "D#": -6, "E": -5, "F": -4, "F#": -3, "G": -2, "G#": -1, "A": 0, "A#": 1, "B": 2}
+    n, o = note[:-1], int(note[-1])
+    return 440.0 * 2 ** ((names[n] + (o - 4) * 12) / 12)
+
+
+def put(buf, i, v):
+    if 0 <= i < len(buf):
+        buf[i] += v
+
+
+def boom(buf, start, dur, f0, f1, amp=1.0, attack=0.008, decay=4.0, harm=((2, 0.55), (3, 0.3), (4, 0.15))):
+    """Низький удар: синус, що падає з f0 до f1, з гармоніками для «баса» на малому динаміку."""
+    n0, n = int(start * RATE), int(dur * RATE)
+    ph = 0.0
     for i in range(n):
-        if n0 + i >= len(buf):
-            break
         t = i / RATE
-        att = min(1.0, t / 0.003)
-        v = math.sin(2 * math.pi * f * t) * math.exp(-t * decay)
-        v += 0.30 * bright * math.sin(2 * math.pi * 2.76 * f * t) * math.exp(-t * decay * 3.2)
-        v += 0.12 * bright * math.sin(2 * math.pi * 5.40 * f * t) * math.exp(-t * decay * 7.0)
-        buf[n0 + i] += amp * att * v
+        f = f1 + (f0 - f1) * math.exp(-t * 18)
+        ph += TAU * f / RATE
+        v = math.sin(ph)
+        for k, g in harm:
+            v += g * math.sin(k * ph) * math.exp(-t * decay * 0.6 * k)
+        e = min(1.0, t / attack) * math.exp(-t * decay)
+        put(buf, n0 + i, amp * e * v)
 
 
-def click(buf, start, amp=0.5):
-    """Клацання дотику: 2 мс шуму й коротке «тік» на 2,6 кГц."""
-    rnd = random.Random(7)
-    n0 = int(start * RATE)
-    for i in range(int(0.03 * RATE)):
+def glide(buf, start, dur, f0, f1, amp=0.5, attack=0.05, release=0.2, harm=((2, 0.5), (3, 0.25)), curve=1.0):
+    """Протяжний тон, що ковзає з f0 до f1 (підйом «набору потужності» чи спад)."""
+    n0, n = int(start * RATE), int(dur * RATE)
+    ph = 0.0
+    for i in range(n):
+        x = i / n
+        f = f0 * (f1 / f0) ** (x ** curve)
+        ph += TAU * f / RATE
+        v = math.sin(ph)
+        for k, g in harm:
+            v += g * math.sin(k * ph)
         t = i / RATE
-        v = math.sin(2 * math.pi * 2600 * t) * math.exp(-t * 180)
-        if t < 0.002:
-            v += (rnd.random() * 2 - 1) * 0.6 * (1 - t / 0.002)
-        buf[n0 + i] += amp * v
+        e = min(1.0, t / attack) * min(1.0, (dur - t) / release)
+        put(buf, n0 + i, amp * e * v)
 
 
-def render(name, length, notes, peak_db=-3.0):
-    buf = [0.0] * int(length * RATE)
-    for fn in notes:
-        fn(buf)
-    # плавний кінець і нормування піку
+def pad(buf, start, dur, notes, amp=0.5, a=0.08, r=0.8, cut0=300, cut1=1600, cut_t=0.6, cut_end=None, detune=8.0, maxf=2400):
+    """Теплий акорд: розстроєні пилки (гармоніки до maxf) крізь м'який фільтр 12 дБ/окт,
+    що плавно відкривається; без резонансу — нічого не дзвенить."""
+    n0, n = int(start * RATE), int(dur * RATE)
+    voices = []
+    for nt in notes:
+        f = hz(nt) if isinstance(nt, str) else nt
+        for c in (-detune, 0.0, detune):
+            ks = [k for k in range(1, 60) if k * f < maxf]
+            voices.append([f * 2 ** (c / 1200), random.random() * TAU, ks])
+    norm = 0.5 / max(1, len(voices)) ** 0.5
+    s1 = s2 = 0.0
+    for i in range(n):
+        t = i / RATE
+        x = 0.0
+        for vo in voices:
+            vo[1] += TAU * vo[0] / RATE
+            for k in vo[2]:
+                x += math.sin(k * vo[1]) / k
+        x *= norm
+        if t < cut_t:
+            fc = cut0 * (cut1 / cut0) ** (t / cut_t)
+        elif cut_end:
+            fc = cut1 * (cut_end / cut1) ** min(1.0, (t - cut_t) / max(0.001, dur - cut_t))
+        else:
+            fc = cut1
+        g = 1 - math.exp(-TAU * fc / RATE)          # два однополюсні — м'який спад
+        s1 += g * (x - s1)
+        s2 += g * (s1 - s2)
+        e = min(1.0, t / a) * min(1.0, max(0.0, (dur - t) / r))
+        put(buf, n0 + i, amp * e * s2)
+
+
+def rumble(buf, start, dur, amp=0.3, fc0=200, fc1=1200, seed=5):
+    """М'який гул, що наростає: шум крізь фільтр нижніх частот, що відкривається."""
+    rnd = random.Random(seed)
+    n0, n = int(start * RATE), int(dur * RATE)
+    s1 = s2 = 0.0
+    for i in range(n):
+        x = i / n
+        fc = fc0 * (fc1 / fc0) ** x
+        g = 1 - math.exp(-TAU * fc / RATE)
+        s1 += g * ((rnd.random() * 2 - 1) - s1)
+        s2 += g * (s1 - s2)
+        e = (x ** 1.8) * min(1.0, (n - i) / (0.04 * RATE))
+        put(buf, n0 + i, amp * e * s2 * 4.0)
+
+
+def finish(buf):
+    """Зріз нижче 80 Гц, тепле насичення, м'який кінець."""
+    # високочастотний однополюсний на 80 Гц (двічі)
+    for _ in range(2):
+        a = math.exp(-TAU * 80 / RATE)
+        y = xp = 0.0
+        for i, x in enumerate(buf):
+            y = a * (y + x - xp)
+            xp = x
+            buf[i] = y
+    pk = max(abs(x) for x in buf) or 1.0
+    out = [math.tanh(1.8 * x / pk) / math.tanh(1.8) for x in buf]
     fade = int(0.02 * RATE)
     for i in range(fade):
-        buf[-1 - i] *= i / fade
+        out[-1 - i] *= i / fade
+    return out
+
+
+def render(name, length, parts, peak_db=-3.0):
+    random.seed(sum(map(ord, name)))
+    buf = [0.0] * int(length * RATE)
+    for fn in parts:
+        fn(buf)
+    buf = finish(buf)
     pk = max(abs(x) for x in buf) or 1.0
     gain = (10 ** (peak_db / 20)) / pk
     os.makedirs(OUT, exist_ok=True)
@@ -66,17 +145,42 @@ def render(name, length, notes, peak_db=-3.0):
     print(f"{path}: {len(buf) / RATE:.2f} с, {os.path.getsize(path)} байт")
 
 
-def seq(*items):
-    """(час, нота, тривалість, гучність, згасання, яскравість)"""
-    return [lambda b, it=it: pluck(b, it[0], NOTE[it[1]], it[2], *it[3:]) for it in items]
-
-
-render("start", 1.6, seq((0.00, "C6", 1.2, 0.8, 4.0), (0.12, "E6", 1.2, 0.7, 4.0),
-                         (0.24, "G6", 1.3, 0.7, 3.5), (0.40, "C7", 1.2, 0.45, 3.0, 0.6)), -3.0)
-render("click", 0.04, [lambda b: click(b, 0.0)], -10.0)
-render("gesture", 0.5, seq((0.00, "A6", 0.45, 0.8, 9.0), (0.09, "E7", 0.40, 0.6, 9.0, 0.7)), -5.0)
-render("connect", 0.7, seq((0.00, "G5", 0.6, 0.7, 6.0), (0.07, "D6", 0.6, 0.7, 6.0), (0.14, "G6", 0.55, 0.6, 6.0, 0.7)), -5.0)
-render("error", 0.7, seq((0.00, "E5", 0.5, 0.8, 7.0, 0.5), (0.18, "C5", 0.5, 0.8, 6.0, 0.5)), -5.0)
-render("timer", 1.4, seq((0.00, "G6", 1.0, 0.6, 4.5, 0.6), (0.16, "E6", 1.0, 0.6, 4.5, 0.6), (0.32, "C6", 1.1, 0.7, 3.5, 0.6)), -6.0)
-render("alarm", 1.8, seq((0.00, "C6", 0.4, 0.8, 7.0), (0.15, "E6", 0.4, 0.8, 7.0), (0.30, "G6", 0.4, 0.8, 7.0), (0.45, "C7", 0.5, 0.8, 6.0),
-                         (0.90, "C6", 0.4, 0.8, 7.0), (1.05, "E6", 0.4, 0.8, 7.0), (1.20, "G6", 0.4, 0.8, 7.0), (1.35, "C7", 0.5, 0.8, 5.0)), -2.0)
+# Увімкнення — у лад із заставкою (tools/make_splash.py, 25 кадр/с):
+#   0–0,36 с  гул, що наростає, і низький тон угору — набір потужності;
+#   0,35 с    точка засвітилась — глибокий м'який удар;
+#   0,46/0,66 розгортаються хвилі — два низькі імпульси;
+#   0,98 с    з'являється напис — потужний низький акорд, що розкривається фільтром.
+render("start", 2.8, [
+    lambda b: rumble(b, 0.00, 0.37, 0.35, 150, 900),
+    lambda b: glide(b, 0.00, 0.37, 45, 73.4, 0.35, attack=0.25, release=0.03, harm=((2, 0.7), (3, 0.4), (4, 0.2))),
+    lambda b: boom(b, 0.35, 0.9, 150, 55, 1.0, attack=0.006, decay=4.5),
+    lambda b: boom(b, 0.46, 0.35, 190, 146.8, 0.45, attack=0.01, decay=9.0, harm=((2, 0.5), (3, 0.2))),
+    lambda b: boom(b, 0.66, 0.35, 260, 220.0, 0.40, attack=0.01, decay=9.0, harm=((2, 0.45), (3, 0.2))),
+    lambda b: pad(b, 0.98, 1.8, ["D2", "D3", "A3", "D4"], 0.95, a=0.09, r=1.1, cut0=250, cut1=1500, cut_t=0.7, cut_end=700),
+    lambda b: glide(b, 0.98, 1.8, 73.4, 73.4, 0.35, attack=0.12, release=1.2, harm=((2, 0.6), (3, 0.3))),
+], -3.0)
+# Дотик: м'яке низьке «тук»
+render("click", 0.06, [lambda b: boom(b, 0.0, 0.06, 240, 160, 0.9, attack=0.002, decay=55, harm=((2, 0.3),))], -14.0)
+# Жест прийнято: два низькі м'які імпульси вгору
+render("gesture", 0.5, [
+    lambda b: boom(b, 0.00, 0.22, 200, 146.8, 0.9, attack=0.006, decay=12, harm=((2, 0.5), (3, 0.25))),
+    lambda b: boom(b, 0.13, 0.30, 280, 220.0, 0.9, attack=0.006, decay=10, harm=((2, 0.5), (3, 0.25))),
+], -6.0)
+# Мережа з'явилась: низький тон піднімається й розкривається акордом
+render("connect", 1.0, [
+    lambda b: glide(b, 0.00, 0.35, 55, 110, 0.5, attack=0.08, release=0.05, harm=((2, 0.6), (3, 0.3))),
+    lambda b: pad(b, 0.30, 0.7, ["A2", "E3", "A3"], 0.8, a=0.03, r=0.45, cut0=300, cut1=1400, cut_t=0.25, cut_end=600),
+], -6.0)
+# Мережа зникла: потужність падає — тон униз, фільтр закривається
+render("error", 1.0, [
+    lambda b: glide(b, 0.00, 0.9, 220, 55, 0.6, attack=0.02, release=0.35, harm=((2, 0.5), (3, 0.3)), curve=0.7),
+    lambda b: pad(b, 0.00, 0.8, ["A2", "E3"], 0.5, a=0.02, r=0.5, cut0=1200, cut1=1200, cut_t=0.01, cut_end=200),
+], -6.0)
+# Таймер сну: глибокий акорд повільно гасне разом із фільтром — вимкнення
+render("timer", 2.2, [
+    lambda b: pad(b, 0.00, 2.1, ["D2", "A2", "D3", "F#3"], 0.8, a=0.15, r=1.4, cut0=1400, cut1=1400, cut_t=0.01, cut_end=180),
+    lambda b: glide(b, 0.00, 2.1, 73.4, 65.4, 0.3, attack=0.2, release=1.5),
+], -7.0)
+# Будильник: низькі імпульси, що наростають, і довгий акорд
+render("alarm", 4.0, [lambda b, k=k: boom(b, 0.6 * k, 0.5, 220, 146.8, 0.5 + 0.1 * k, attack=0.008, decay=7) for k in range(5)] +
+       [lambda b: pad(b, 3.0, 1.0, ["D3", "A3", "D4"], 0.9, a=0.04, r=0.6, cut0=400, cut1=1800, cut_t=0.3, cut_end=900)], -3.0)
