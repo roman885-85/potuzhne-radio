@@ -99,6 +99,13 @@ static const char* jsonStr(const char* p, const char* end, char* out, size_t cap
   size_t n = 0;
   while(p < end && *p && *p != '"'){
     uint32_t c = (uint8_t)*p++;
+    if(c >= 0x80){
+      /*  GitHub віддає кирилицю як є, байтами UTF-8, — переносимо без змін
+          (раніше кожен байт кодувався наново, і в пропозиції стояли «?????»)  */
+      if(n + 1 >= cap) break;
+      out[n++] = (char)c;
+      continue;
+    }
     if(c == '\\' && p < end){
       char e = *p++;
       if(e == 'n') c = '\n'; else if(e == 'r') c = 0; else if(e == 't') c = ' ';

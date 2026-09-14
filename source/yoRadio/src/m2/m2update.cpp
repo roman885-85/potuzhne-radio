@@ -79,7 +79,7 @@ static void drawOta(Gfx& g){
   g.fill(0, 120, SW, SH - 120, C_BG);
   g.text(SW / 2, 34, "Оновлення радіо", F_TITLE, C_TXT, AL_C);
   char b[96];
-  snprintf(b, sizeof(b), "%s  →  %s", prVersion(), ota.latest());
+  snprintf(b, sizeof(b), "%s  →  %s", prVersion(), ota.latest() + (ota.latest()[0] == 'v' ? 1 : 0));
   g.text(SW / 2, 56, b, F_ROWB, C_ACC, AL_C);
   /*  кільце ходу  */
   const float cx = SW / 2, cy = 120;

@@ -541,7 +541,7 @@ void Player::_drawPopup(Gfx& g){
     g.circle(r.x + 30, r.y + 30, 16, C_ACC);
     icon(g, IC_DOWN, r.x + 30, r.y + 31, C_ACCTXT, C_ACC);
     g.text(r.x + 56, r.y + 26, "Є нова версія", F_TITLE, C_TXT, AL_L, r.w - 70);
-    snprintf(b, sizeof(b), "%s  →  %s", prVersion(), ota.latest());
+    snprintf(b, sizeof(b), "%s  →  %s", prVersion(), ota.latest() + (ota.latest()[0] == 'v' ? 1 : 0));
     g.text(r.x + 56, r.y + 44, b, F_ROWB, C_ACC, AL_L, r.w - 70);
     /*  перший рядок опису випуску  */
     char line[96]; const char* s = ota.notes(); size_t n = 0;
