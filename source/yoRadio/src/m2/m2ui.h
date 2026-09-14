@@ -22,6 +22,10 @@
 #include "m2theme.h"
 #include "m2icons.h"
 
+/*  кадрів виведено (нове меню, головний екран, оновлення): задача дисплея
+    бачить, що йде рух, і не спить свої 10 мс між обертами  */
+extern volatile uint32_t g_m2Frames;
+
 namespace m2 {
 
 class Page {
@@ -204,9 +208,9 @@ class Menu {
     int16_t _scroll0 = 0;
     float _vel = 0, _scrollF = 0;
     bool _fling = false;
-    bool _spring = false;                 /* доводка до рядка */
-    float _spFrom = 0, _spTo = 0;
-    uint32_t _spT0 = 0;
+    bool _spring = false;                 /* доводка до рядка: пружина зі швидкістю наката */
+    float _spX = 0, _spV = 0, _spTo = 0;
+    uint32_t _spLast = 0;
     uint32_t _lastMoveT = 0;
     /*  хвиля  */
     Rect _rip; uint8_t _ripR = 0; int16_t _ripX = 0, _ripY = 0; uint32_t _ripT0 = 0; bool _ripOn = false, _ripUp = false, _ripHdr = false; uint32_t _ripUpT = 0;

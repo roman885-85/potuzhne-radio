@@ -36,3 +36,4 @@ tools/cp1251fontconvert
 
 # Робочий журнал — лише локально
 ЖУРНАЛ.md
+firmware/elf/

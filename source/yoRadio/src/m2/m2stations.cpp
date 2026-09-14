@@ -27,11 +27,14 @@ static const int16_t  RH = 48;          /* рядок: 4 рядки якраз �
 static const int16_t  TOP = 4;          /* поле над карткою */
 static const int16_t  BS = 34;          /* логотип */
 static const int16_t  FW = 16;          /* смуга швидкої прокрутки праворуч */
-static const uint16_t MAXROWS = 9999;
+/*  Координати вмісту сторінки — 16-бітні: 48 × 660 ≈ 31 700 пікселів. Більше
+    рядків список не показує (гра далі/назад по картці працює як і раніше).  */
+static const uint16_t MAXROWS = 660;
 
 struct StRow { char name[88]; char sub[48]; uint32_t crc; };
 
 static volatile bool s_req = false;
+volatile bool m2RowCache = true;          /* кеш готових рядків (команда m2cache) */
 
 class StationsPage : public Page {
   public:
@@ -71,6 +74,14 @@ class StationsPage : public Page {
     bool _step();                       /* одна порція роботи; false — робити нічого */
     void _read(uint16_t from, uint8_t count);
     void _loadLogo(uint16_t i);
+    /*  Намальований рядок (без рисок спектра) — у пам'яті: під час прокрутки кадр
+        лише копіює готові рядки, а не малює наново літери й логотипи.  */
+    struct Slot { int32_t idx = -1; uint32_t sig = 0; uint32_t used = 0; uint16_t* px = nullptr; };
+    static const uint8_t SLOTS = 10;
+    Slot _slot[SLOTS];
+    uint32_t _useN = 0, _gen = 0;
+    void _drawRow(Gfx& g, int32_t i, int16_t y, bool on, bool playing, int16_t cur);
+    const uint16_t* _cached(int32_t i, int16_t y, bool on, bool playing, int16_t cur);
     int16_t _cur() const { int16_t c = (int16_t)config.lastStation() - 1; return c >= 0 && c < (int16_t)_n ? c : -1; }
     bool _playing() const { return player.status() == PLAYING && !player.remoteStationName; }
     int16_t _thumbH(){ int16_t h = height(); int16_t t = (int16_t)((int32_t)CH * CH / h); return t < 28 ? 28 : t; }
@@ -211,7 +222,7 @@ void StationsPage::enter(){
   }
   if(!_cap){ xSemaphoreGive(_lock); return; }
   memset(_st, 0, _cap); memset(_lst, 0, _cap);
-  _seq = 1; _fastOn = false; _sig = 0;
+  _seq = 1; _fastOn = false; _sig = 0; _gen++;
   _n = n;
   int16_t cur = _cur();
   if(cur >= 0){
@@ -287,6 +298,82 @@ void StationsPage::tick(uint32_t now){
   if(_fastOn && now - _fastT > 800){ _fastOn = false; M.inval(Rect(0, sc, SW, CH)); }
 }
 
+void StationsPage::_drawRow(Gfx& g, int32_t i, int16_t y, bool on, bool playing, int16_t cur){
+  const uint16_t n = _n;
+  drawCard(g, MX, y, CWID, RH, i == 0, i == (int32_t)n - 1, on ? Gfx::blend(C_SURF, C_ACC, 30) : C_SURF);
+  if(on) g.box(MX + 8, y + (RH - BS) / 2 - 2, BS + 4, BS + 4, 10, C_ACC);
+  if(i && !on && i - 1 != cur) g.fill(MX + 56, y, CWID - 56, 1, C_LINE);
+  const int16_t bx = MX + 10, by = y + (RH - BS) / 2;
+  if(!_st || !_st[i]){
+    /*  ще не прочитано — заготовка  */
+    g.box(bx, by, BS, BS, 8, C_SURF2);
+    g.box(MX + 56, y + 12, 130, 10, 5, C_SURF2);
+    g.box(MX + 56, y + 30, 70, 7, 3, C_SURF2);
+    return;
+  }
+  const StRow& r = _rows[i];
+  if(_sd){
+    g.box(bx, by, BS, BS, 8, on ? C_ACC : C_SURF2);
+    icon(g, IC_NOTE, bx + BS / 2, by + BS / 2, on ? C_ACCTXT : C_TXT2, on ? C_ACC : C_SURF2);
+  }else if(_lst[i] == 1 && _logo[i]){
+    g.image(bx, by, BS, BS, _logo[i], 8);
+  }else{
+    static const uint16_t PAL[8] = { 0x3A8D, 0x5A4B, 0x2C6A, 0x6A28, 0x2B0F, 0x7A6C, 0x4B09, 0x31CC };
+    g.box(bx, by, BS, BS, 8, PAL[r.crc & 7]);
+    /*  дві перші літери назви (UTF-8)  */
+    char ini[8] = { 0 };
+    const char* s = r.name; uint8_t k = 0, chars = 0;
+    while(*s && chars < 2 && k < 6){
+      uint8_t b = (uint8_t)*s;
+      uint8_t len = b < 0x80 ? 1 : (b & 0xE0) == 0xC0 ? 2 : (b & 0xF0) == 0xE0 ? 3 : 1;
+      if(b == ' ' || b == '"' || b == '\''){ s++; continue; }
+      for(uint8_t j = 0; j < len && s[j]; j++) ini[k++] = s[j];
+      s += len; chars++;
+    }
+    g.text(bx + BS / 2, by + 22, ini, F_ROWB, 0xFFFF, AL_C);
+  }
+  /*  праворуч: риски (грає) і зірка (в обраному)  */
+  int16_t right = MX + CWID - 10;
+  if(on && playing) right -= 28;             /* місце під риски — їх малює draw() поверх */
+  bool fav = false;
+  if(r.crc) for(uint8_t k = 0; k < FAV_N; k++) if(_favCrc[k] == r.crc) fav = true;
+  if(fav){ icon(g, IC_STAR, right - 9, y + RH / 2, on ? C_ACC : C_TXT3, on ? Gfx::blend(C_SURF, C_ACC, 30) : C_SURF); right -= 24; }
+  const int16_t tx = MX + 56, tw = right - tx - 4;
+  g.text(tx, y + 21, r.name, on ? F_ROWB : F_ROW, on ? C_ACC : C_TXT, AL_L, tw);
+  g.text(tx, y + 38, r.sub, F_SM, C_TXT2, AL_L, tw);
+}
+
+const uint16_t* StationsPage::_cached(int32_t i, int16_t y, bool on, bool playing, int16_t cur){
+  const StRow& r = _rows[i];
+  bool fav = false;
+  if(r.crc) for(uint8_t k = 0; k < FAV_N; k++) if(_favCrc[k] == r.crc) fav = true;
+  uint32_t sig = _gen * 2654435761UL ^ r.crc;
+  sig = sig * 31 + (on ? 1 : 0) + (on && playing ? 2 : 0) + (fav ? 4 : 0) + (_lst[i] * 8) + (i - 1 == cur ? 64 : 0) + (_sd ? 128 : 0);
+  Slot* slot = nullptr;
+  for(uint8_t k = 0; k < SLOTS; k++){
+    Slot& sl = _slot[k];
+    if(sl.idx == i && sl.px){
+      if(sl.sig == sig){ sl.used = ++_useN; return sl.px; }
+      slot = &sl; break;                        /* той самий рядок змінився — малюємо на його місці */
+    }
+  }
+  if(!slot){
+    slot = &_slot[0];
+    for(uint8_t k = 0; k < SLOTS; k++){
+      if(!_slot[k].px || _slot[k].idx < 0){ slot = &_slot[k]; break; }
+      if(_slot[k].used < slot->used) slot = &_slot[k];
+    }
+  }
+  if(!slot->px) slot->px = (uint16_t*)heap_caps_malloc((size_t)CWID * RH * 2, MALLOC_CAP_SPIRAM);
+  if(!slot->px) return nullptr;
+  Gfx rg;
+  rg.target(slot->px, 0, 0, CWID, RH);
+  rg.origin(-MX, -y);
+  _drawRow(rg, i, y, on, playing, cur);
+  slot->idx = i; slot->sig = sig; slot->used = ++_useN;
+  return slot->px;
+}
+
 void StationsPage::draw(Gfx& g){
   const uint16_t n = _n;
   if(!n){
@@ -304,54 +391,18 @@ void StationsPage::draw(Gfx& g){
     const int16_t y = TOP + i * RH;
     if(!g.visible(MX, y, CWID, RH)) continue;
     const bool on = i == cur;
-    drawCard(g, MX, y, CWID, RH, i == 0, i == (int32_t)n - 1, on ? Gfx::blend(C_SURF, C_ACC, 30) : C_SURF);
-    if(on) g.box(MX + 8, y + (RH - BS) / 2 - 2, BS + 4, BS + 4, 10, C_ACC);
-    if(i && !on && i - 1 != cur) g.fill(MX + 56, y, CWID - 56, 1, C_LINE);
-    const int16_t bx = MX + 10, by = y + (RH - BS) / 2;
-    if(!_st || !_st[i]){
-      /*  ще не прочитано — заготовка  */
-      g.box(bx, by, BS, BS, 8, C_SURF2);
-      g.box(MX + 56, y + 12, 130, 10, 5, C_SURF2);
-      g.box(MX + 56, y + 30, 70, 7, 3, C_SURF2);
-      continue;
-    }
-    const StRow& r = _rows[i];
-    if(_sd){
-      g.box(bx, by, BS, BS, 8, on ? C_ACC : C_SURF2);
-      icon(g, IC_NOTE, bx + BS / 2, by + BS / 2, on ? C_ACCTXT : C_TXT2, on ? C_ACC : C_SURF2);
-    }else if(_lst[i] == 1 && _logo[i]){
-      g.image(bx, by, BS, BS, _logo[i], 8);
-    }else{
-      static const uint16_t PAL[8] = { 0x3A8D, 0x5A4B, 0x2C6A, 0x6A28, 0x2B0F, 0x7A6C, 0x4B09, 0x31CC };
-      g.box(bx, by, BS, BS, 8, PAL[r.crc & 7]);
-      /*  дві перші літери назви (UTF-8)  */
-      char ini[8] = { 0 };
-      const char* s = r.name; uint8_t k = 0, chars = 0;
-      while(*s && chars < 2 && k < 6){
-        uint8_t b = (uint8_t)*s;
-        uint8_t len = b < 0x80 ? 1 : (b & 0xE0) == 0xC0 ? 2 : (b & 0xF0) == 0xE0 ? 3 : 1;
-        if(b == ' ' || b == '"' || b == '\''){ s++; continue; }
-        for(uint8_t j = 0; j < len && s[j]; j++) ini[k++] = s[j];
-        s += len; chars++;
-      }
-      g.text(bx + BS / 2, by + 22, ini, F_ROWB, 0xFFFF, AL_C);
-    }
-    /*  праворуч: риски (грає) і зірка (в обраному)  */
-    int16_t right = MX + CWID - 10;
-    if(on && playing){
+    /*  крайні рядки мають заокруглені кути над тлом із переходом — їх малюємо щоразу  */
+    const uint16_t* px = (m2RowCache && i > 0 && i < (int32_t)n - 1 && _st && _st[i]) ? _cached(i, y, on, playing, cur) : nullptr;
+    if(px) g.blit(MX, y, CWID, RH, px);
+    else _drawRow(g, i, y, on, playing, cur);
+    if(on && playing && _st && _st[i]){
+      const int16_t right = MX + CWID - 10;
       for(uint8_t k = 0; k < 3; k++){
         const float h = 4 + _bars[k] * 18;
         const float xx = right - 18 + k * 7;
         g.line(xx, y + 33, xx, y + 33 - h, 3.2f, C_ACC);
       }
-      right -= 28;
     }
-    bool fav = false;
-    if(r.crc) for(uint8_t k = 0; k < FAV_N; k++) if(_favCrc[k] == r.crc) fav = true;
-    if(fav){ icon(g, IC_STAR, right - 9, y + RH / 2, on ? C_ACC : C_TXT3, on ? Gfx::blend(C_SURF, C_ACC, 30) : C_SURF); right -= 24; }
-    const int16_t tx = MX + 56, tw = right - tx - 4;
-    g.text(tx, y + 21, r.name, on ? F_ROWB : F_ROW, on ? C_ACC : C_TXT, AL_L, tw);
-    g.text(tx, y + 38, r.sub, F_SM, C_TXT2, AL_L, tw);
   }
   /*  повзунок прокрутки; під час швидкої — номер рядка поруч  */
   const int16_t H = height();

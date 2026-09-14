@@ -393,8 +393,12 @@ void Audio::connectTask(void* pvParams) {
   }
   free((void*)params->hostwoext);
   delete params;
-  self->_connectTaskHandle = nullptr;
-  vTaskDelete(nullptr);
+  /*  Сама себе не видаляє: головний цикл робив vTaskDelete, щойно бачив
+      результат, — інколи саме тоді, коли задача ще звільняла пам'ять або
+      вже видаляла себе. При частих «грати/стоп» це перезавантажувало радіо.
+      Тепер: позначка «готово» — і сон, а видаляє лише власник.  */
+  self->_connectDone = true;
+  vTaskSuspend(nullptr);
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -516,17 +520,20 @@ bool Audio::connecttohost(const char* host, const char* user, const char* pwd) {
       res = _client->connect(hostwoext, port, m_f_ssl ? m_timeout_ms_ssl : m_timeout_ms);
     }else{
       ConnectParams* params = new ConnectParams{ strdup(hostwoext), port, this }; _connectionResult = false;
-      xTaskCreatePinnedToCore(connectTask, "ConnectTask", WATCHDOG_TASK_SIZE, params, WATCHDOG_TASK_PRIORITY, &_connectTaskHandle, WATCHDOG_TASK_CORE_ID);
+      _connectDone = false;
+      TaskHandle_t th = nullptr;
+      xTaskCreatePinnedToCore(connectTask, "ConnectTask", WATCHDOG_TASK_SIZE, params, WATCHDOG_TASK_PRIORITY, &th, WATCHDOG_TASK_CORE_ID);
       for(;;){
-        if(millis()-t>(m_f_ssl ? m_timeout_ms_ssl : m_timeout_ms) || _connectionResult) break;
+        if(millis()-t>(m_f_ssl ? m_timeout_ms_ssl : m_timeout_ms) || _connectDone) break;
         vTaskDelay(10);
       }
-      res = _connectionResult;
-      if (_connectTaskHandle!=nullptr) {
-        vTaskDelete(_connectTaskHandle);
-        _connectTaskHandle = nullptr;
-        AUDIO_INFO("WATCH DOG HAS FINISHED A WORK, BYE!");
+      res = _connectDone && _connectionResult;
+      if(th){
+        /*  готово — задача спить, видалити безпечно; не встигла — як і раніше, обриваємо  */
+        if(!_connectDone) AUDIO_INFO("WATCH DOG HAS FINISHED A WORK, BYE!");
+        vTaskDelete(th);
       }
+      _connectTaskHandle = nullptr;
     }
     if(res){
         uint32_t dt = millis() - t;

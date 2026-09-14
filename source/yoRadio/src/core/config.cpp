@@ -158,6 +158,11 @@ void Config::changeMode(int newmode){
   if(getMode()==PM_SDCARD) {
     sdResumePos = player.getFilePos();
   }
+  /*  Звук — стишити й зупинити одразу, до всього іншого: далі картка
+      монтується, список читається, і головний цикл стоїть сотні мілісекунд.
+      Потік, що лишався «грати» (зупинка йшла чергою), у цей час заїкався й
+      клацав у динаміку.  */
+  if(pir) player.fadeStop();
   if(network.status==SOFT_AP || display.mode()==LOST){
     saveValue(&store.play_mode, static_cast<uint8_t>(PM_SDCARD));
     commitNow();
@@ -169,6 +174,7 @@ void Config::changeMode(int newmode){
       Serial.println("##[ERROR]#\tSD Not Found");
       netserver.requestOnChange(GETPLAYERMODE, 0);
       sdman.stop();
+      if(pir) player.sendCommand({PR_PLAY, lastStation()});     /* картки нема — радіо грає далі */
       return;
     }
   }
@@ -191,7 +197,11 @@ void Config::changeMode(int newmode){
   }
   if(getMode()==PM_WEB) {
     if(network.status==SDREADY) ESP.restart();
-    sdman.stop();
+    /*  Картку не відмонтовуємо: кожне повторне монтування в ESP-IDF лишало
+        зайнятий запис файлової системи, і на третій перехід «на картку» їх
+        не ставало (mount_to_vfs failed 0x101) — радіо на картку вже не
+        переходило. Змонтована картка в режимі радіо нічого не коштує
+        (і запис ефіру все одно її монтує).  */
   }
   if(!_bootDone) return;
   initPlaylistMode();

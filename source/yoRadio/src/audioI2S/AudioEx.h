@@ -490,6 +490,7 @@ private:
         : hostwoext(h), port(p), instance(a) {}
     };
     volatile bool _connectionResult;
+    volatile bool _connectDone = false;      /* задача з'єднання прибрала за собою й заснула — її можна видаляти */
     TaskHandle_t _connectTaskHandle = nullptr;
     
     const size_t    m_frameSizeWav  = 1600;

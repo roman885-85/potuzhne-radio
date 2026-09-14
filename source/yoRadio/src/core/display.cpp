@@ -107,7 +107,19 @@ static void loopDspTask(void * pvParameters){
       netserver.loop();
     #endif
   #endif
+  #if DSP_MODEL==DSP_ILI9341
+    /*  Щойно вивели кадр (прокрутка, перехід, хвиля) — наступний без сну:
+        10 мс між обертами самі по собі обмежували прокрутку до ~30 кадрів.
+        Нічого не рухається — спимо, як і раніше.  */
+    {
+      static uint32_t seen = 0;
+      const uint32_t f = g_m2Frames;
+      vTaskDelay(f != seen ? 1 : DSP_TASK_DELAY);
+      seen = f;
+    }
+  #else
     vTaskDelay(DSP_TASK_DELAY);
+  #endif
   }
   vTaskDelete( NULL );
 }

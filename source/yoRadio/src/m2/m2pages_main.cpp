@@ -120,7 +120,8 @@ class PultPage : public Page {
     uint32_t _sig = 0, _sigT = 0;
     float _briA = -1; int16_t _briDrag = -1; uint32_t _briHold = 0;
     static Rect tile(uint8_t i){ int16_t w = (CWID - 24) / 4; return Rect(MX + i * (w + 8), 4, w, 64); }
-    static Rect card(uint8_t i){ int16_t w = (CWID - 16) / 3; return Rect(MX + (i % 3) * (w + 8), 118 + (i / 3) * 42, w, 36); }
+    /*  розділи — 4 × 2: оновлення й живлення тут же, а не лише в «Параметрах»  */
+    static Rect card(uint8_t i){ int16_t w = (CWID - 24) / 4; return Rect(MX + (i % 4) * (w + 8), 114 + (i / 4) * 44, w, 40); }
     static int briAt(int16_t x){ const float x0 = MX + 40 + 9 + 6, w = CWID - 40 - 50 - 18 - 12; float f = (x - x0) / w; if(f < 0) f = 0; if(f > 1) f = 1; return 5 + lroundf(f * 95); }   /* краї липкі */
 };
 
@@ -173,16 +174,20 @@ void PultPage::draw(Gfx& g){
     g.text(MX + CWID - 12, 97, b, F_SMB, C_TXT, AL_R);
   }
   /*  розділи  */
-  static const char* const NAME[6] = { "Станції", "Обране", "Проповіді", "Звук", "Екран", "Параметри" };
-  static const uint8_t IC[6] = { IC_LIST, IC_STAR, IC_CROSS, IC_EQ, IC_SUN, IC_GEAR };
-  static const uint16_t COL[6] = { C_ORANGE, C_ACC, C_VIOLET, C_BLUE, C_TEAL, C_GREY };
-  for(uint8_t i = 0; i < 6; i++){
+  static const char* const NAME[8] = { "Станції", "Обране", "Проповіді", "Звук", "Екран", "Параметри", "Оновлення", "Живлення" };
+  static const uint8_t IC[8] = { IC_LIST, IC_STAR, IC_CROSS, IC_EQ, IC_SUN, IC_GEAR, IC_REFRESH, IC_POWER };
+  static const uint16_t COL[8] = { C_ORANGE, C_ACC, C_VIOLET, C_BLUE, C_TEAL, C_GREY, C_BLUE, C_RED };
+  for(uint8_t i = 0; i < 8; i++){
     Rect r = card(i);
     if(!g.visible(r.x, r.y, r.w, r.h)) continue;
-    g.box(r.x, r.y, r.w, r.h, R_CARD, C_SURF);
-    g.box(r.x + 5, r.y + 6, 24, 24, R_BADGE, COL[i]);
-    icon(g, IC[i], r.x + 17, r.y + 18, COL[i] == C_ACC ? C_ACCTXT : 0xFFFF, COL[i]);
-    g.text(r.x + 33, r.y + 22, NAME[i], F_SMB, C_TXT, AL_L, r.w - 34);
+    const bool upd = i == 6 && (ota.available() || ota.installing());
+    uint16_t col = upd ? C_ACC : COL[i];
+    g.box(r.x, r.y, r.w, r.h, R_CARD, upd ? Gfx::blend(C_SURF, C_ACC, 40) : C_SURF);
+    const int16_t cx = r.x + r.w / 2;
+    g.box(cx - 11, r.y + 4, 22, 22, R_BADGE, col);
+    icon(g, IC[i], cx, r.y + 15, col == C_ACC ? C_ACCTXT : 0xFFFF, col);
+    if(upd) g.circle(cx + 12, r.y + 5, 4.5f, C_RED);            /* є нова версія */
+    g.text(cx, r.y + 36, upd && ota.installing() ? "іде…" : NAME[i], F_SMB, upd ? C_ACC : C_TXT, AL_C, r.w - 4);
   }
 }
 
@@ -194,6 +199,9 @@ void PultPage::tick(uint32_t now){
     s = s * 31 + (recorder.active() ? recorder.seconds() + 1 : 0);
     s = s * 31 + config.getMode() * 2 + (extras.s.noSd ? 1 : 0);
     if(s != _sig){ _sig = s; M.inval(Rect(0, 0, SW, 70)); }
+    static uint8_t updWas = 255;
+    const uint8_t upd = (ota.available() ? 1 : 0) + (ota.installing() ? 2 : 0);
+    if(upd != updWas){ updWas = upd; M.inval(card(6)); }
   }
   float target = (_briDrag >= 0 && now < _briHold) ? _briDrag : config.store.brightness;
   if(_briA < 0) _briA = target;
@@ -207,7 +215,7 @@ void PultPage::tick(uint32_t now){
 int16_t PultPage::hit(int16_t x, int16_t y, Rect& r, uint8_t& radius){
   for(uint8_t i = 0; i < 4; i++){ Rect t = tile(i); if(t.has(x, y)){ r = t; radius = 14; return i; } }
   if(y >= 76 && y < 110){ r = Rect(MX, 76, CWID, 34); radius = R_CARD; return 10; }
-  for(uint8_t i = 0; i < 6; i++){ Rect t = card(i); if(t.has(x, y)){ r = t; radius = R_CARD; return 20 + i; } }
+  for(uint8_t i = 0; i < 8; i++){ Rect t = card(i); if(t.has(x, y)){ r = t; radius = R_CARD; return 20 + i; } }
   return -1;
 }
 
@@ -257,6 +265,8 @@ void PultPage::tap(int16_t id, int16_t x, int16_t y){
     case 23: M.push(&pgEq); break;
     case 24: M.push(&pgScreen); break;
     case 25: M.push(&pgSettings); break;
+    case 26: M.push(&pgUpdate); break;
+    case 27: M.push(&pgPower); break;
   }
 }
 

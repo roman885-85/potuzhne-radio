@@ -59,13 +59,18 @@ void Gfx::clip(int16_t x, int16_t y, int16_t w, int16_t h){
   _cx0 = x0; _cy0 = y0; _cx1 = x1; _cy1 = y1;
 }
 
+/*  Ділення на 255 — множенням і зсувом: (x·257 + 257) >> 16 дає те саме
+    ціле для всього діапазону. Змішування — найчастіша дія під час прокрутки,
+    а ділення в процесорі в рази повільніше за множення.  */
+static inline uint32_t div255(uint32_t x){ return (x * 257 + 257) >> 16; }
+
 uint16_t Gfx::blend(uint16_t bg, uint16_t fg, uint8_t a){
   if(a >= 252) return fg;
   if(a <= 3) return bg;
   uint32_t ia = 255 - a;
-  uint32_t r = (((fg >> 11) & 31) * a + ((bg >> 11) & 31) * ia + 127) / 255;
-  uint32_t g = (((fg >> 5) & 63) * a + ((bg >> 5) & 63) * ia + 127) / 255;
-  uint32_t b = ((fg & 31) * a + (bg & 31) * ia + 127) / 255;
+  uint32_t r = div255(((fg >> 11) & 31) * a + ((bg >> 11) & 31) * ia + 127);
+  uint32_t g = div255(((fg >> 5) & 63) * a + ((bg >> 5) & 63) * ia + 127);
+  uint32_t b = div255((fg & 31) * a + (bg & 31) * ia + 127);
   return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
@@ -80,11 +85,35 @@ void Gfx::fill(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c){
   }
 }
 
+void Gfx::blit(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* px){
+  if(!px) return;
+  const int16_t sx0 = x + _ox, sy0 = y + _oy;
+  int16_t x0 = sx0, y0 = sy0, x1 = sx0 + w, y1 = sy0 + h;
+  if(x0 < _cx0) x0 = _cx0; if(y0 < _cy0) y0 = _cy0;
+  if(x1 > _cx1) x1 = _cx1; if(y1 > _cy1) y1 = _cy1;
+  if(x1 <= x0 || y1 <= y0) return;
+  const size_t n = (size_t)(x1 - x0) * 2;
+  for(int16_t yy = y0; yy < y1; yy++)
+    memcpy(_px + (int32_t)(yy - _ty) * _tw + (x0 - _tx), px + (int32_t)(yy - sy0) * w + (x0 - sx0), n);
+}
+
 void Gfx::fillA(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c, uint8_t a){
   int16_t x0 = x + _ox, y0 = y + _oy, x1 = x0 + w, y1 = y0 + h;
   if(x0 < _cx0) x0 = _cx0; if(y0 < _cy0) y0 = _cy0;
   if(x1 > _cx1) x1 = _cx1; if(y1 > _cy1) y1 = _cy1;
   if(x1 <= x0 || y1 <= y0) return;
+  if(c == 0){
+    /*  затемнення чорним (перехід між сторінками, тінь під карткою) — лише множення  */
+    const uint32_t k = 256 - a;
+    for(int16_t yy = y0; yy < y1; yy++){
+      uint16_t* p = _px + (int32_t)(yy - _ty) * _tw + (x0 - _tx);
+      for(int16_t i = x1 - x0; i > 0; i--, p++){
+        const uint32_t v = *p;
+        *p = (uint16_t)(((((v >> 11) & 31) * k >> 8) << 11) | ((((v >> 5) & 63) * k >> 8) << 5) | (((v & 31) * k) >> 8));
+      }
+    }
+    return;
+  }
   for(int16_t yy = y0; yy < y1; yy++){
     uint16_t* p = _px + (int32_t)(yy - _ty) * _tw + (x0 - _tx);
     for(int16_t i = x1 - x0; i > 0; i--, p++) *p = blend(*p, c, a);
@@ -109,7 +138,7 @@ void Gfx::vgrad(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c0, uint16_
     uint16_t* p = _px + (int32_t)(yy - _ty) * _tw + (x0 - _tx);
     for(int16_t xx = x0; xx < x1; xx++){
       int d = BAY[((yy & 3) << 2) | (xx & 3)];
-      int rr = (r * 31 + d * 16) / 255, gg = (g * 63 + d * 16) / 255, bb = (b * 31 + d * 16) / 255;
+      int rr = div255(r * 31 + d * 16), gg = div255(g * 63 + d * 16), bb = div255(b * 31 + d * 16);
       if(rr > 31) rr = 31; if(gg > 63) gg = 63; if(bb > 31) bb = 31;
       *p++ = (uint16_t)((rr << 11) | (gg << 5) | bb);
     }
@@ -365,10 +394,11 @@ void Gfx::_glyphs(int16_t x, int16_t baseline, const uint8_t* cp, uint16_t n, co
           if(px < _cx0 || px >= _cx1) continue;
           uint16_t* p = line + (px - _tx);
           if(a == 15){ *p = c; continue; }
-          const uint16_t b = *p, ia = 15 - a;
-          *p = (uint16_t)((((fr * a + ((b >> 11) & 31) * ia) / 15) << 11) |
-                          (((fg * a + ((b >> 5) & 63) * ia) / 15) << 5) |
-                           ((fb * a + (b & 31) * ia) / 15));
+          const uint32_t b = *p, ia = 15 - a;
+          /*  /15 — множенням: (x·4370) >> 16 збігається для x до 945  */
+          *p = (uint16_t)((((fr * a + ((b >> 11) & 31) * ia) * 4370 >> 16) << 11) |
+                          (((fg * a + ((b >> 5) & 63) * ia) * 4370 >> 16) << 5) |
+                           ((fb * a + (b & 31) * ia) * 4370 >> 16));
         }
       }
     }

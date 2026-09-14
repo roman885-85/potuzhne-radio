@@ -109,15 +109,18 @@ uint8_t YoDsp::_build(Bq* q, float fs, uint8_t vol, uint8_t* nGuard) const {
     _peak(q[n++], fs, BAND_HZ[b], EQ_Q, db);
   }
   /*  3. тонкомпенсація: чим тихіше, тим більше низу й верху (ISO 226 наближено)  */
-  if(e.eqLoud && vol > 0){
-    float att = -20.0f * log10(vol / 254.0f);            /* на скільки дБ тихіше за повну */
+  /*  Ланки стоять завжди (на повній гучності — з нулем дБ): коли вони
+      з'являлись і зникали від гучності, мінявся склад ланок, стан фільтрів
+      обнулявся — і повзунок гучності клацав.  */
+  if(e.eqLoud){
+    float att = vol > 0 ? -20.0f * log10(vol / 254.0f) : 48.0f;   /* на скільки дБ тихіше за повну */
     if(att < 0) att = 0;
     bool strong = e.eqLoud >= 2;
     float lo = att * (strong ? 0.40f : 0.25f), hi = att * (strong ? 0.15f : 0.10f);
     if(lo > (strong ? 12.0f : 8.0f)) lo = strong ? 12.0f : 8.0f;
     if(hi > (strong ? 5.0f : 3.0f))  hi = strong ? 5.0f : 3.0f;
-    if(lo >= 0.5f) _lowShelf(q[n++], fs, speaker ? 180.0f : 100.0f, lo);
-    if(hi >= 0.5f && 8000.0f < fs * 0.45f) _highShelf(q[n++], fs, 8000.0f, hi);
+    _lowShelf(q[n++], fs, speaker ? 180.0f : 100.0f, lo);
+    if(8000.0f < fs * 0.45f) _highShelf(q[n++], fs, 8000.0f, hi);
   }
   return n;
 }
@@ -179,6 +182,7 @@ void YoDsp::_recalc(){
   _pre = _preNext;
   _vbK = vbk;
   _limRel = 1.0f / (0.12f * fs);                 /* відпускання ~120 мс */
+  _gSm = 1.0f / (0.02f * fs);                    /* гучність — за ~20 мс */
   _volCalc = _vol;
 }
 
@@ -228,7 +232,9 @@ uint32_t YoDsp::process(int16_t s[2]){
     xl = yl; xr = yr;
   }
   if(ng == nq){ xl += vb; xr += vb; }
-  const float pre = _pre;
+  if(__builtin_expect(_gLc < 0, 0)){ _gLc = _gL; _gRc = _gR; _prec = _pre; }   /* перший відлік — без наїзду */
+  _prec += (_pre - _prec) * _gSm;
+  const float pre = _prec;
   xl *= pre; xr *= pre;
 
   /*  для покажчика рівня — як і було: у пів шкали, до гучності  */
@@ -237,7 +243,11 @@ uint32_t YoDsp::process(int16_t s[2]){
   s[1] = vr > 32767 ? 32767 : vr < -32768 ? -32768 : vr;
 
   if(__builtin_expect(_testGain >= 0, 0)){ xl *= _testGain; xr *= _testGain; }
-  else { xl *= _gL; xr *= _gR; }
+  else {
+    const float sm = _gSm;
+    _gLc += (_gL - _gLc) * sm; _gRc += (_gR - _gRc) * sm;
+    xl *= _gLc; xr *= _gRc;
+  }
 
   /*  м'який пуск / зупинка  */
   if(__builtin_expect(_fade != _fadeTo || _fade < 1.0f, 0)){

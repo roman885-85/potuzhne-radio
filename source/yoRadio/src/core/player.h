@@ -41,7 +41,7 @@ class Player: public Audio {
     plStatus_e  _status;
     //char        _plError[PLERR_LN];
   private:
-    void _stop(bool alreadyStopped = false);
+    void _stop(bool alreadyStopped = false, bool keepAmp = false);
     void _fadeOutWait();                /* звук грає — спершу плавно стишити */
     void _play(uint16_t stationId);
     void _loadVol(uint8_t volume);
@@ -82,6 +82,7 @@ class Player: public Audio {
     void prev();
     void next();
     void toggle();
+    void fadeStop();                 /* одразу, але через затихання (перемикання джерела) — з головного циклу */
     void stepVol(bool up);
     void setVol(uint8_t volume);
     uint8_t volToI2S(uint8_t volume);

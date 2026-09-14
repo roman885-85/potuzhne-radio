@@ -37,6 +37,7 @@ extern Page& pgStations;  /* список станцій / треків карт
 /*  попросити список станцій (будь-яка задача); відкриває головний цикл — stationsPoll() у Menu::loop()  */
 void stationsRequest();
 void stationsPoll();
+extern volatile bool m2RowCache;   /* кеш готових рядків списку (налагодження: m2cache) */
 
 /*  клавіатура: куди писати, заголовок, що робити після «OK» (головний цикл)  */
 void kbdOpen(char* target, size_t max, bool password, const char* title, void (*done)(bool ok));

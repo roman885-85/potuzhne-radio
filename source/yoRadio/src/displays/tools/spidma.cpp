@@ -13,6 +13,7 @@ static const int   SPIDMA_DESC  = 9;          /* 9 x 4092 = 36 КБ за оди�
 static const size_t SPIDMA_CHUNK = 4092;
 static const size_t SPIDMA_MAX   = 32768;     /* межа довжини передачі в регістрі SPI */
 static bool s_broken = false;                /* передача раз не завершилась — далі без DMA */
+uint32_t spidmaHz = 40000000;                 /* частота шини дисплея — щоб знати, скільки спати під час передачі */
 
 bool spidmaBegin(){
   if(s_chan) return true;
@@ -71,7 +72,7 @@ static bool spidmaOnce(const uint8_t* p, size_t len){
   int64_t t0 = esp_timer_get_time();
   /*  Поки кадр іде шиною (40 МГц: 36 КБ — 7 мс), не крутимось упусту, а спимо:
       на тому ж ядрі мікрофон і Wi-Fi, і порожнє очікування забирало в них час.  */
-  uint32_t ms = (uint32_t)(len * 8 / 40000);
+  uint32_t ms = (uint32_t)((uint64_t)len * 8 * 1000 / spidmaHz);
   if(ms >= 3) vTaskDelay(pdMS_TO_TICKS(ms - 1));
   bool done = true;
   while(!hw->dma_int_raw.trans_done){
@@ -118,6 +119,7 @@ bool spidmaWrite(const void* buf, size_t len){
   return true;
 }
 #else
+uint32_t spidmaHz = 40000000;
 bool spidmaBegin(){ return false; }
 bool spidmaOk(){ return false; }
 void* spidmaScratch(size_t len){

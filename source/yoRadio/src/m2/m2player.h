@@ -57,6 +57,12 @@ class Player {
     volatile int8_t _zone = -1;          /* 0 шапка-джерело, 1 шапка-назва, 2 меню, 3 картка, 4 рядок, 5 гучність, 6 годинник */
     volatile int16_t _px = 0, _py = 0, _lx = 0, _ly = 0;
     volatile uint32_t _pt = 0, _upT = 0;
+    /*  хвиля по картці живе своїм часом: дотягується до кінця й гасне після
+        відпускання; на кадр береться знімок, щоб усі смуги малювали одне й те саме  */
+    volatile bool _ripOn = false, _ripRel = false;
+    volatile int16_t _ripX = 0, _ripY = 0;
+    volatile uint32_t _ripT0 = 0, _ripUpT = 0;
+    struct { bool on, rel; int16_t x, y; uint32_t t0, up; } _rf = { false, false, 0, 0, 0, 0 };
     volatile bool _down = false;
     volatile int16_t _volDrag = -1;       /* гучність під пальцем (0..254) */
     uint32_t _volSent = 0; int16_t _volLast = -1;

@@ -111,7 +111,7 @@ void Player::setError(const char *e){
   setError();
 }
 
-void Player::_stop(bool alreadyStopped){
+void Player::_stop(bool alreadyStopped, bool keepAmp){
   log_i("%s called", __func__);
   if(remoteStationName && _status == PLAYING){   /* запам'ятати місце в проповіді */
     uint32_t p = posSec();
@@ -119,7 +119,7 @@ void Player::_stop(bool alreadyStopped){
   }
   if(config.getMode()==PM_SDCARD && !alreadyStopped) config.sdResumePos = player.getFilePos();
   _status = STOPPED;
-  setOutputPins(false);
+  if(!keepAmp) setOutputPins(false);
   if(!_hasError) config.setTitle((display.mode()==LOST || display.mode()==UPDATING)?"":LANG::const_PlStopped);
   config.station.bitrate = 0;
   config.setBitrateFormat(BF_UNKNOWN);
@@ -251,13 +251,21 @@ void Player::_fadeOutWait(){
   while(!yoDsp.faded() && millis() - t0 < 500){ Audio::loop(); vTaskDelay(1); }
 }
 
+void Player::fadeStop(){
+  if(_status != PLAYING) return;
+  _fadeOutWait();
+  _stop(false, true);                     /* підсилювач лишаємо: слідом грає нове джерело, інакше клацне */
+}
+
 void Player::_play(uint16_t stationId) {
   log_i("%s called, stationId=%d", __func__, stationId);
   yoDsp.fadeIn(700);
   _hasError=false;
   setDefaults();
   _status = STOPPED;
-  setOutputPins(false);
+  /*  Підсилювач тут не вимикаємо: при перемиканні станцій він клацав двічі
+      (вимкнули — увімкнули після з'єднання). Звук і так уже стишено; не
+      з'єдналось — _stop() вимкне.  */
   remoteStationName = false;
   
   if(!config.prepareForPlaying(stationId)) return;
@@ -298,7 +306,7 @@ void Player::browseUrl(){
   if(!wasRemote) resumeAfterUrl = burlResumeRadio >= 0 ? burlResumeRadio : (_status==PLAYING);
   burlResumeRadio = -1;
   display.putRequest(PSTOP);
-  setOutputPins(false);
+  /*  підсилювач не вимикаємо — перемотка проповіді клацала б  */
   config.setTitle(LANG::const_PlConnect);
   if (connecttohost(burl)){
     _status = PLAYING;

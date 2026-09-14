@@ -110,6 +110,9 @@ class YoDsp {
     float _pre = 0.5f, _preDb = -6.0f;
     volatile float _preNext = 0.5f;
     float _lim = 1.0f, _limRel = 0.0003f;
+    /*  гучність і попереднє ослаблення міняються не стрибком, а за ~20 мс:
+        стрибок підсилення посеред хвилі клацав у динаміку, коли тягнули повзунок  */
+    float _gLc = -1.0f, _gRc = 0.0f, _prec = 0.5f, _gSm = 0.0011f;
     uint32_t _limHits = 0;
     uint32_t _n = 0;
     float _usAvg = 0;

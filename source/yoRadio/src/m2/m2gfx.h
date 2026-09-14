@@ -72,6 +72,8 @@ class Gfx {
     void lighten(const Rect& area, uint8_t r, float cx, float cy, float rad, uint8_t a, uint16_t c = 0xFFFF);
     /*  картинка RGB565 (звичайний порядок байтів) з заокругленими кутами  */
     void image(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* px, uint8_t r = 0);
+    /*  готовий прямокутник пікселів як є — без змішування й кутів (кеш рядків списку)  */
+    void blit(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* px);
 
     /*  Текст UTF-8 згладженим шрифтом (fonts/aa). Повертає ширину.
         maxw > 0 — не ширше: обрізає з «…».  */

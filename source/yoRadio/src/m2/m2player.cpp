@@ -518,15 +518,20 @@ void Player::_drawVol(Gfx& g){
   g.text(SW - 14, cy + 4, b, F_SMB, C_TXT, AL_R);
 }
 
+/*  Хвиля: за 280 мс розходиться від пальця на всю картку; після відпускання
+    (але не раніше ніж через 200 мс від дотику — короткий дотик теж видно
+    повністю) гасне за 260 мс.  */
 void Player::_ripple(Gfx& g){
-  int8_t z = _zone;
-  if(z < 0 && millis() - _upT > 260) return;
-  if(z != 3 && !(z < 0)) return;
-  if(z < 0) return;
-  uint32_t age = _frameT - _pt;
-  float k = age / 280.0f; if(k > 1) k = 1;
-  float rad = 10 + 180 * (1 - (1 - k) * (1 - k) * (1 - k));
-  g.lighten(Rect(MX, CARD_Y, CWID, CARD_H), 16, _px, _py, rad, 50);
+  if(!_rf.on) return;
+  const int32_t age = (int32_t)(_frameT - _rf.t0);
+  float k = age <= 0 ? 0 : age / 280.0f; if(k > 1) k = 1;
+  const float rad = 10 + 180 * (1 - (1 - k) * (1 - k) * (1 - k));
+  float a = 50;
+  if(_rf.rel){
+    const uint32_t from = _rf.up > _rf.t0 + 200 ? _rf.up : _rf.t0 + 200;
+    if(_frameT > from){ const float f = (_frameT - from) / 260.0f; a = f >= 1 ? 0 : 50 * (1 - f); }
+  }
+  if(a >= 1) g.lighten(Rect(MX, CARD_Y, CWID, CARD_H), 16, _rf.x, _rf.y, rad, (uint8_t)a);
 }
 
 void Player::_drawPopup(Gfx& g){
@@ -549,7 +554,7 @@ void Player::_drawPopup(Gfx& g){
     line[n] = 0;
     const char* l = line; while(*l == '#' || *l == ' ' || *l == '*' || *l == '-') l++;
     g.text(r.x + 16, r.y + 76, *l ? l : "оновлення з GitHub", F_ROW, C_TXT2, AL_L, r.w - 32);
-    g.text(r.x + 16, r.y + 94, "станції й налаштування лишаються", F_SM, C_TXT3, AL_L, r.w - 32);
+    g.text(r.x + 16, r.y + 94, "оновитись пізніше: Меню » Оновлення", F_SM, C_TXT3, AL_L, r.w - 32);
   }else{
     g.circle(r.x + 30, r.y + 30, 16, C_RED);
     icon(g, IC_CLOSE, r.x + 30, r.y + 30, 0xFFFF, C_RED);
@@ -573,7 +578,7 @@ void Player::_draw(Gfx& g){
   uint32_t now = _frameT;
   _drawTop(g, now);
   _drawCard(g, now);
-  if(_zone == 3 && _down) _ripple(g);
+  _ripple(g);
   _drawClock(g);
   _drawRow(g);
   _drawVol(g);
@@ -594,6 +599,7 @@ void Player::_flush(){
   bool dma = spidmaOk() || spidmaBegin();
   Gfx g;
   _frameT = millis();                       /* одна мить на весь кадр: смуги виходять по черзі, а хвиля не має рватися */
+  _rf.on = _ripOn; _rf.rel = _ripRel; _rf.x = _ripX; _rf.y = _ripY; _rf.t0 = _ripT0; _rf.up = _ripUpT;
   g_m2Draw = true;
   dsp.startWrite();
   for(int r = 0; r < 15; r++){
@@ -623,6 +629,7 @@ void Player::_flush(){
   }
   dsp.endWrite();
   g_m2Draw = false;
+  g_m2Frames++;
 }
 
 void Player::render(){
@@ -715,10 +722,16 @@ void Player::render(){
     if(ota.installing()) _otaWasInstalling = true;
     if(want != _popup){ _popup = want; invalAll(); }
   }
-  if(_down && (_zone == 3)) _mark(MX, CARD_Y, CWID, CARD_H);
-  static bool wasDown = false;
-  if(wasDown && !_down) _mark(MX, CARD_Y, CWID, CARD_H);
-  wasDown = _down;
+  if(_ripOn){
+    if(_ripRel){
+      const uint32_t from = _ripUpT > _ripT0 + 200 ? _ripUpT : _ripT0 + 200;
+      if(millis() > from + 270) _ripOn = false;
+    }
+    _mark(MX, CARD_Y, CWID, CARD_H);
+  }
+  static bool wasRip = false;
+  if(wasRip && !_ripOn) _mark(MX, CARD_Y, CWID, CARD_H);
+  wasRip = _ripOn;
   _flush();
 }
 
@@ -746,7 +759,10 @@ void Player::onPress(int16_t x, int16_t y){
     else if(near(300, 19)) _zone = 2;
     else _zone = 1;
   }
-  else if(y >= CARD_Y + 14 && y < CARD_Y + CARD_H) _zone = 3;
+  else if(y >= CARD_Y + 14 && y < CARD_Y + CARD_H){
+    _zone = 3;
+    _ripX = x; _ripY = y; _ripT0 = _pt; _ripUpT = 0; _ripRel = false; _ripOn = true;
+  }
   else if(y < CARD_Y + CARD_H) _zone = 6;
   else if(specRow && y >= ROW_Y - 6) _zone = 5;
   else if(y >= VOL_Y - 5) _zone = 5;
@@ -763,6 +779,8 @@ void Player::onPress(int16_t x, int16_t y){
 
 void Player::onDrag(int16_t x, int16_t y){
   _lx = x; _ly = y;
+  /*  повели пальцем (до списку станцій) — хвиля гасне  */
+  if(_ripOn && !_ripRel && (abs(x - _px) > 14 || abs(y - _py) > 14)){ _ripUpT = millis(); _ripRel = true; }
   if(_zone == 20) return;
   if(_zone == 5){
     /*  доріжка 49..255; краї липкі — біля кінця одразу мінімум чи максимум  */
@@ -787,6 +805,7 @@ void Player::onDrag(int16_t x, int16_t y){
 
 void Player::onRelease(int16_t x, int16_t y){
   (void)x; (void)y;
+  if(_ripOn && !_ripRel){ _ripUpT = millis(); _ripRel = true; }
   int8_t z = _zone;
   if(z == 20){
     int8_t b = _popBtn;

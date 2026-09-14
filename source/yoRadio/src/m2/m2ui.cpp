@@ -8,6 +8,8 @@
 
 extern DspCore dsp;
 
+volatile uint32_t g_m2Frames = 0;
+
 namespace m2 {
 
 Menu M;
@@ -554,15 +556,17 @@ void Menu::_startSnap(Page* p, uint32_t now){
   const int16_t st = p ? p->snapStep() : 0;
   if(st <= 0) return;
   const int16_t mx = _maxScroll(p);
-  int16_t cur = p->scroll < 0 ? 0 : (p->scroll > mx ? mx : p->scroll);
-  const float k = cur / (float)st;
-  /*  ще їхав — до рядка в напрямку руху; стояв — до найближчого  */
-  int32_t kk = _vel > 30 ? (int32_t)ceilf(k - 0.2f) : (_vel < -30 ? (int32_t)floorf(k + 0.2f) : (int32_t)lroundf(k));
-  int32_t to = kk * st;
+  float cur = _scrollF;
+  if(cur < 0) cur = 0;
+  if(cur > mx) cur = mx;
+  /*  куди приїхав би накат ще за мить — до найближчого рядка там; швидкість
+      наката переходить у пружину, тож список перелітає й повертається  */
+  const float ahead = cur + _vel * 0.12f;
+  int32_t to = (int32_t)lroundf(ahead / st) * st;
   if(to < 0) to = 0;
   if(to > mx) to = mx;
-  if(to == p->scroll) return;
-  _spring = true; _spFrom = p->scroll; _spTo = (float)to; _spT0 = now;
+  if(fabsf(to - _scrollF) < 0.5f && fabsf(_vel) < 20){ p->scroll = (int16_t)to; return; }
+  _spring = true; _spX = _scrollF; _spV = _vel; _spTo = (float)to; _spLast = now;
 }
 
 void Menu::_startTransition(Page* from, int8_t dir){
@@ -763,28 +767,33 @@ void Menu::render(){
     if(_scrollF > mx){ _scrollF += (mx - _scrollF) * (dt * 14); _vel *= 0.7f; }
     int16_t s = (int16_t)lroundf(_scrollF);
     if(s != p->scroll){ p->scroll = s; invalScreen(0, HDR - 1, SW, CH + 1); }
-    /*  сторінка з кроком доводиться до рядка раніше, ніж накат зовсім згасне  */
-    const float stopV = p->snapStep() > 0 ? 70.0f : 15.0f;
+    /*  сторінка з кроком віддає накат пружині ще на ходу  */
+    const float stopV = p->snapStep() > 0 ? 380.0f : 15.0f;
     if(fabsf(_vel) < stopV && _scrollF >= -0.5f && _scrollF <= mx + 0.5f){
       _fling = false; ft = 0;
       if(p->scroll < 0) p->scroll = 0;
       if(p->scroll > mx) p->scroll = mx;
+      _scrollF = p->snapStep() > 0 ? _scrollF : p->scroll;
       _startSnap(p, now);
       _vel = 0;
       invalScreen(0, HDR - 1, SW, CH + 1);
     }
   }
-  /*  пружина до рядка: трохи перелітає (на 3–4 пікселі) і м'яко повертається, менше пів секунди  */
+  /*  пружина до рядка (затухання 0,45, 16 рад/с): з місця — перелітає на кілька
+      пікселів, з наката — помітно далі, і м'яко вертається  */
   if(_spring && _tm != TM_SCROLL){
-    const float ts = (now - _spT0) / 1000.0f;
-    int16_t s;
-    if(ts >= 0.45f){ _spring = false; s = (int16_t)_spTo; }
-    else{
-      const float zw = 11.0f, wd = 16.7f;
-      const float e = 1.0f - expf(-zw * ts) * (cosf(wd * ts) + (zw / wd) * sinf(wd * ts));
-      s = (int16_t)lroundf(_spFrom + (_spTo - _spFrom) * e);
+    float dt = (now - _spLast) / 1000.0f; _spLast = now;
+    if(dt > 0.06f) dt = 0.06f;
+    const float w0 = 16.0f, zeta = 0.45f;
+    for(float t = 0; t < dt; t += 0.004f){
+      const float h = dt - t < 0.004f ? dt - t : 0.004f;
+      const float a = -w0 * w0 * (_spX - _spTo) - 2 * zeta * w0 * _spV;
+      _spV += a * h; _spX += _spV * h;
     }
-    if(s != p->scroll){ p->scroll = s; _scrollF = s; invalScreen(0, HDR - 1, SW, CH + 1); }
+    int16_t s = (int16_t)lroundf(_spX);
+    if(fabsf(_spX - _spTo) < 0.5f && fabsf(_spV) < 12){ _spring = false; s = (int16_t)_spTo; }
+    _scrollF = _spX;
+    if(s != p->scroll){ p->scroll = s; invalScreen(0, HDR - 1, SW, CH + 1); }
   }
   /*  хвиля  */
   if(_ripOn){
@@ -848,7 +857,7 @@ void Menu::_flush(){
   dsp.endWrite();
   g_m2Draw = false;
   { uint32_t us = (uint32_t)(esp_timer_get_time() - f0); if(us > pfMaxUs) pfMaxUs = us; }
-  pfFrames++;
+  pfFrames++; g_m2Frames++;
 }
 
 void Menu::_drawHeader(Gfx& g, Page* p){

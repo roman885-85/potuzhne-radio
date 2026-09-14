@@ -8,6 +8,8 @@
 #include "../core/timekeeper.h"
 #include "../core/sdmanager.h"
 #include "../displays/dspcore.h"
+#include "../displays/tools/spidma.h"
+#include "esp_core_dump.h"
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include "freertos_stats.h"
@@ -589,6 +591,34 @@ void yodbgLoop(){
       Serial.printf("SPECSET шкала=%.1f запас=%.1f спад=%.1f усередн=%.2f\n", yoSpec.range, yoSpec.head, yoSpec.decay, yoSpec.avgK);
     }
     else if(!strcmp(buf,"fade")){ Serial.printf("FADE %.3f\n", yoDsp.fadeLevel()); }
+    else if(!strcmp(buf,"coredump")){
+      /*  Дамп останнього падіння з флеш — без esptool і перезавантаження.
+          Адреси розшифровувати addr2line з ELF тієї ж збірки (firmware/elf/).  */
+      if(esp_core_dump_image_check() != ESP_OK) Serial.println("COREDUMP немає");
+      else{
+        esp_core_dump_summary_t* cs = (esp_core_dump_summary_t*)heap_caps_calloc(1, sizeof(esp_core_dump_summary_t), MALLOC_CAP_SPIRAM);
+        if(cs && esp_core_dump_get_summary(cs) == ESP_OK){
+          Serial.printf("COREDUMP задача=%s pc=0x%08lx причина=%lu адреса=0x%08lx elf=%s\n", cs->exc_task, (unsigned long)cs->exc_pc,
+                        (unsigned long)cs->ex_info.exc_cause, (unsigned long)cs->ex_info.exc_vaddr, (const char*)cs->app_elf_sha256);
+          Serial.print("COREDUMP стек:");
+          for(uint32_t k = 0; k < cs->exc_bt_info.depth && k < 16; k++) Serial.printf(" 0x%08lx", (unsigned long)cs->exc_bt_info.bt[k]);
+          Serial.printf("%s\n", cs->exc_bt_info.corrupted ? " (пошкоджено)" : "");
+        }else Serial.println("COREDUMP не прочитався");
+        if(cs) free(cs);
+      }
+    }
+    else if(!strcmp(buf,"coredumpclr")){ esp_core_dump_image_erase(); Serial.println("COREDUMP стерто"); }
+    else if(!strncmp(buf,"m2cache",7)){
+      /*  m2cache 0|1 — кеш готових рядків списку станцій (порівняти m2perf)  */
+      if(buf[7] == ' ') m2::m2RowCache = atoi(buf + 8) != 0;
+      Serial.printf("M2CACHE %d\n", m2::m2RowCache ? 1 : 0);
+    }
+    else if(!strncmp(buf,"spihz",5)){
+      /*  spihz <МГц> — частота шини дисплея без перезбирання (перевірка 80 МГц); без числа — показати  */
+      int mhz = atoi(buf + 5);
+      if(mhz >= 10 && mhz <= 80){ dsp.setSPISpeed((uint32_t)mhz * 1000000UL); spidmaHz = (uint32_t)mhz * 1000000UL; }
+      Serial.printf("SPIHZ %u МГц\n", (unsigned)(spidmaHz / 1000000UL));
+    }
     else if(!strcmp(buf,"m2perf")){
       /*  нове меню: скільки кадрів і куди йде час (з минулого виклику)  */
       static uint32_t t0 = 0;
