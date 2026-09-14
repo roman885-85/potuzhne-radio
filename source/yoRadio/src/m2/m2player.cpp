@@ -204,7 +204,7 @@ uint8_t Player::_mode() const {
 int16_t Player::_statusLeft() const {
   int16_t x = SW - 40;
   x -= 20;                                           /* Wi-Fi */
-  if(extras.batMv() >= 2800 && !extras.s.noBat) x -= 26;
+  if(extras.batMv() >= 2800 && !extras.s.noBat) x -= extras.onPower() ? 36 : 26;
   if(mic.listening()) x -= 14;
   if(extras.s.alarmOn) x -= 16;
   if(extras.sleepLeft()) x -= 32;
@@ -236,12 +236,21 @@ void Player::_drawTop(Gfx& g, uint32_t now){
     /*  Колір — завжди за станом, а не лише поки заряджається: інакше, щойно
         батарея дозарядилась (живлення є, «заряджено»), значок сірів.
         Від зарядника — зелений; від батареї — за рівнем.  */
-    bool low = extras.lowBattery();
-    uint16_t c = extras.onPower() ? C_GREEN : (low || pct < 10 ? C_RED : (pct < 30 ? C_ORANGE : C_GREEN));
-    g.frame(x, 13, 19, 12, 3, c, 1);
-    g.box(x + 19, 16, 2, 6, 1, c);
+    bool low = extras.lowBattery(), pwr = extras.onPower();
+    uint16_t c = pwr ? C_GREEN : (low || pct < 10 ? C_RED : (pct < 30 ? C_ORANGE : C_GREEN));
+    const int16_t bx = x;
+    if(pwr){
+      /*  підключено до зарядника / комп'ютера — блискавка перед батареєю  */
+      x -= 10;
+      static const float BOLT[] = { 5.5f, 0, 0.5f, 7, 3.6f, 7, 2.5f, 12, 7.5f, 5, 4.4f, 5 };
+      float pts[12];
+      for(uint8_t k = 0; k < 12; k += 2){ pts[k] = x + BOLT[k]; pts[k + 1] = 13 + BOLT[k + 1]; }
+      g.poly(pts, 6, C_GREEN);
+    }
+    g.frame(bx, 13, 19, 12, 3, c, 1);
+    g.box(bx + 19, 16, 2, 6, 1, c);
     int16_t fw = (int16_t)(15 * pct / 100); if(fw < 1) fw = 1;
-    g.box(x + 2, 15, fw, 8, 2, c);
+    g.box(bx + 2, 15, fw, 8, 2, c);
   }
   if(mic.listening()){ x -= 14; icon(g, IC_MIC, x + 6, 19, C_TXT2, C_BG); }
   if(extras.s.alarmOn){ x -= 16; icon(g, IC_BELL, x + 7, 19, C_TXT2, C_BG); }
