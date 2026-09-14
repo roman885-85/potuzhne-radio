@@ -42,6 +42,7 @@ class Player: public Audio {
     //char        _plError[PLERR_LN];
   private:
     void _stop(bool alreadyStopped = false);
+    void _fadeOutWait();                /* звук грає — спершу плавно стишити */
     void _play(uint16_t stationId);
     void _loadVol(uint8_t volume);
     bool _hasError;

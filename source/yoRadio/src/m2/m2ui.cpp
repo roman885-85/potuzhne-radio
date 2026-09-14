@@ -287,14 +287,11 @@ int16_t ListPage::hit(int16_t x, int16_t y, Rect& r, uint8_t& radius){
     if(it.enabled && !it.enabled()) return -1;
     r = Rect(MX, it.y, CWID, it.hh);
     radius = (it.first || it.last) ? R_CARD : 0;
+    /*  Неточний дотик теж спрацьовує: увесь рядок — і смуга вибору (варіант під
+        пальцем по горизонталі), і повзунок.  */
     if(it.type == IT_SEG){
-      /*  лише сама смуга вибору: дотик по підпису нічого не перемикає  */
       int16_t sy = it.y + ((it.label && it.label[0]) ? 30 : 8);
-      if(y < sy - 6) return -1;
       r = Rect(MX + 8, sy, CWID - 16, 30); radius = 9;
-    }else if(it.type == IT_SLIDER){
-      if(y < it.y + 24) return -1;
-      r = Rect(MX, it.y + 24, CWID, it.hh - 24); radius = 0;
     }
     return i;
   }
@@ -308,7 +305,8 @@ uint8_t ListPage::grab(int16_t id){
 
 int32_t ListPage::_sliderAt(const Item& it, int16_t x) const {
   const float x0 = MX + 12 + 9, w = CWID - 24 - 18;
-  float f = (x - x0) / w;
+  /*  краї липкі: біля кінця доріжки — одразу мінімум чи максимум  */
+  float f = (x - x0 - 6) / (w - 12);
   if(f < 0) f = 0; if(f > 1) f = 1;
   int32_t v = it.lo + lroundf(f * (it.hi - it.lo));
   /*  двобічний: середина притягує  */
@@ -352,6 +350,22 @@ void ListPage::tap(int16_t id, int16_t x, int16_t y){
 void ListPage::value(int16_t id, int32_t v){
   if(id < 0 || id >= _n) return;
   if(_it[id].type == IT_SLIDER && _it[id].set) _it[id].set(v);
+}
+
+/*  Екран маленький, палець великий: не влучив — шукаємо найближчий елемент
+    довкола, кільцями до 18 пікселів. Діє на всіх сторінках, без їхньої участі.  */
+static int16_t hitNear(Page* p, int16_t x, int16_t y, Rect& r, uint8_t& rad){
+  static const int8_t OFF[][2] = {
+    { 0, -6 }, { 0, 6 }, { -6, 0 }, { 6, 0 }, { -6, -6 }, { 6, -6 }, { -6, 6 }, { 6, 6 },
+    { 0, -12 }, { 0, 12 }, { -12, 0 }, { 12, 0 }, { -9, -9 }, { 9, -9 }, { -9, 9 }, { 9, 9 },
+    { 0, -18 }, { 0, 18 }, { -18, 0 }, { 18, 0 }, { -13, -13 }, { 13, -13 }, { -13, 13 }, { 13, 13 } };
+  int16_t id = p->hit(x, y, r, rad);
+  if(id >= 0) return id;
+  for(uint8_t i = 0; i < sizeof(OFF) / sizeof(OFF[0]); i++){
+    id = p->hit(x + OFF[i][0], y + OFF[i][1], r, rad);
+    if(id >= 0) return id;
+  }
+  return -1;
 }
 
 /*  =================== меню: черги =================== */
@@ -619,8 +633,10 @@ void Menu::_processTouch(){
       if(_tDir){ _tm = TM_DEAD; continue; }
       bool caught = _fling;
       _fling = false;
+      /*  «назад» притягує дотик: трохи нижче шапки й правіше самої кнопки теж  */
+      if(t.y < HDR + 8 && t.x < 64 && p->canBack()) t.y = 0;
       if(t.y < HDR){
-        if(t.x < 56 && p->canBack()){
+        if(t.x < 64 && p->canBack()){
           _tm = TM_BACK;
           _ripHdr = true; _ripT0 = t.t; _ripOn = true; _ripUp = false; _ripPage = p;
         }else _tm = TM_DEAD;
@@ -629,11 +645,14 @@ void Menu::_processTouch(){
       int16_t cy = t.y - HDR + p->scroll;
       Rect r; uint8_t rad = 0;
       /*  палець зупинив список, що ще їхав: далі його можна вести, але цей дотик нічого не натискає  */
-      int16_t id = caught ? -1 : p->hit(t.x, cy, r, rad);
+      int16_t id = caught ? -1 : hitNear(p, t.x, cy, r, rad);
       _pressId = id;
       _tm = TM_UNDECIDED;
       if(id >= 0){
-        _rip = r; _ripR = rad; _ripX = t.x; _ripY = cy; _ripT0 = t.t; _ripOn = true; _ripUp = false; _ripHdr = false; _ripPage = p;
+        /*  хвиля — з найближчої до пальця точки елемента  */
+        int16_t rx = t.x < r.x ? r.x : (t.x >= r.x + r.w ? r.x + r.w - 1 : t.x);
+        int16_t ry = cy < r.y ? r.y : (cy >= r.y + r.h ? r.y + r.h - 1 : cy);
+        _rip = r; _ripR = rad; _ripX = rx; _ripY = ry; _ripT0 = t.t; _ripOn = true; _ripUp = false; _ripHdr = false; _ripPage = p;
         if(p->grab(id) == 2){ _tm = TM_GRAB; p->drag(id, t.x, cy, false); _ripOn = false; }
       }
       _scroll0 = p->scroll; _scrollF = p->scroll;
@@ -675,7 +694,7 @@ void Menu::_processTouch(){
       }else if(_tm == TM_GRAB){
         p->drag(_pressId, _plx, t.y - HDR + p->scroll, true);
       }else if(_tm == TM_UNDECIDED){
-        if(_pressId >= 0 && !_held) _post(A_TAP, p, _pressId, _px0, _py0 - HDR + p->scroll, 0);
+        if(_pressId >= 0 && !_held) _post(A_TAP, p, _pressId, _ripX, _ripY, 0);
       }else if(_tm == TM_BACK){
         _post(A_BACK, p, -1, 0, 0, 0);
       }
@@ -710,7 +729,7 @@ void Menu::render(){
   /*  довгий дотик  */
   if(_tm == TM_UNDECIDED && !_held && _pressId >= 0 && now - _pressT > 550){
     _held = true;
-    _post(A_HOLD, p, _pressId, _px0, _py0 - HDR + p->scroll, 0);
+    _post(A_HOLD, p, _pressId, _ripX, _ripY, 0);
   }
   /*  інерція прокрутки й пружина на краях  */
   if(_fling && _tm != TM_SCROLL){
@@ -763,6 +782,8 @@ void Menu::_flush(){
   if(!buf) return;
   bool dma = spidmaOk() || spidmaBegin();
   Gfx g;
+  _frameT = millis();                        /* одна мить на весь кадр — хвиля й повідомлення не рвуться між смугами */
+  g_m2Draw = true;
   dsp.startWrite();
   for(int r = 0; r < 15; r++){
     while(rows[r]){
@@ -785,6 +806,7 @@ void Menu::_flush(){
     }
   }
   dsp.endWrite();
+  g_m2Draw = false;
 }
 
 void Menu::_drawHeader(Gfx& g, Page* p){
@@ -817,7 +839,7 @@ void Menu::_drawPage(Gfx& g, Page* p, int16_t dx, bool overlays){
   g.fill(0, 90, SW, SH - 90, C_BG);
   _drawHeader(g, p);
   if(overlays && _ripOn && _ripHdr && _ripPage == p){
-    int32_t up = millis() - _ripUpT;
+    int32_t up = _frameT - _ripUpT;
     int a = !_ripUp ? 80 : (up >= 260 ? 0 : (int)(80 * (1 - up / 260.0f)));
     if(a > 0) g.lighten(Rect(6, 6, 28, 28), 14, 20, 20, 20, (uint8_t)a);
   }
@@ -825,7 +847,7 @@ void Menu::_drawPage(Gfx& g, Page* p, int16_t dx, bool overlays){
   g.origin(dx, HDR - p->scroll);
   p->draw(g);
   if(overlays && _ripOn && !_ripHdr && _ripPage == p){
-    uint32_t now = millis();
+    uint32_t now = _frameT;
     float k = (now - _ripT0) / 280.0f; if(k > 1) k = 1;
     float e = easeOut(k);
     float dxm = _ripX - _rip.x > _rip.x + _rip.w - _ripX ? _ripX - _rip.x : _rip.x + _rip.w - _ripX;
@@ -877,7 +899,7 @@ void Menu::_drawScene(Gfx& g){
   }else _drawPage(g, p, 0, true);
   /*  повідомлення знизу  */
   if(_toastOn){
-    uint32_t age = millis() - _toastT;
+    uint32_t age = _frameT - _toastT;
     float k = age < 220 ? easeOut(age / 220.0f) : (age > 2380 ? 1 - (age - 2380) / 220.0f : 1);
     if(k < 0) k = 0;
     int16_t tw = Gfx::textW(_toast, F_ROW) + 32; if(tw > SW - 24) tw = SW - 24;

@@ -7,6 +7,7 @@
 #include "netserver.h"
 #include "timekeeper.h"
 #include "../extras/yoExtras.h"
+#include "../extras/yoDsp.h"
 #include "../displays/tools/l10n.h"
 #include "../pluginsManager/pluginsManager.h"
 #if I2S_ES8311
@@ -127,6 +128,7 @@ void Player::_stop(bool alreadyStopped){
   #endif
   setDefaults();
   if(!alreadyStopped) stopSong();
+  yoDsp.fadeReset();
   netserver.requestOnChange(BITRATE, 0);
   display.putRequest(DBITRATE);
   display.putRequest(PSTOP);
@@ -166,8 +168,9 @@ void Player::loop() {
   playerRequestParams_t requestP;
   if(xQueueReceive(playerQueue, &requestP, isRunning()?PL_QUEUE_TICKS:PL_QUEUE_TICKS_ST)){
     switch (requestP.type){
-      case PR_STOP: _stop(); break;
+      case PR_STOP: _fadeOutWait(); _stop(); break;
       case PR_PLAY: {
+        _fadeOutWait();
         if (requestP.payload>0) {
           config.setLastStation((uint16_t)requestP.payload);
         }
@@ -203,6 +206,7 @@ void Player::loop() {
       case PR_BURL: {
       #if defined(MQTT_ROOT_TOPIC) || defined(YO_BROWSEURL)
         if(strlen(burl)>0){
+          _fadeOutWait();
           browseUrl();
         }
       #endif
@@ -237,8 +241,19 @@ void Player::setOutputPins(bool isPlaying) {
   if(MUTE_PIN!=255) digitalWrite(MUTE_PIN, _ml);
 }
 
+/*  Перемикання й зупинка — через затихання: звук ще 0,3 с грає, стишуючись,
+    і лише тоді обривається. Новий потік (станція, трек, проповідь) наростає
+    за 0,7 с від першого відліку.  */
+void Player::_fadeOutWait(){
+  if(_status != PLAYING || !isRunning()) return;
+  yoDsp.fadeOut(300);
+  uint32_t t0 = millis();
+  while(!yoDsp.faded() && millis() - t0 < 500){ Audio::loop(); vTaskDelay(1); }
+}
+
 void Player::_play(uint16_t stationId) {
   log_i("%s called, stationId=%d", __func__, stationId);
+  yoDsp.fadeIn(700);
   _hasError=false;
   setDefaults();
   _status = STOPPED;
@@ -272,6 +287,7 @@ void Player::_play(uint16_t stationId) {
 
 #if defined(MQTT_ROOT_TOPIC) || defined(YO_BROWSEURL)
 void Player::browseUrl(){
+  yoDsp.fadeIn(700);
   _hasError=false;
   /*  Перемотка всередині проповіді — теж новий запит; тоді «що грало до
       неї» не переписуємо, інакше після кінця проповіді вмикалось би радіо,

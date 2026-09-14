@@ -3,6 +3,7 @@
 #include "Arduino.h"
 #include <math.h>
 #include "touchscreen.h"
+#include "../m2/m2player.h"
 #include "sdmanager.h"
 #include "config.h"
 #include "controls.h"
@@ -301,6 +302,26 @@ void TouchScreen::loop(){
       /*  без мережі є сенс лише в Wi-Fi, як apScreen() у Nextion; при втраті
           зв'язку меню не замикаємо — мережа може повернутись сама  */
       if(t > 50) yomenu.openWifi(!lostLink);
+    }
+    wastouched = istouched;
+    return;
+  }
+  /*  Новий головний екран (src/m2) розбирає дотики сам.  */
+  if(display.mode() == PLAYER && m2::P.shown()){
+    if(istouched){
+      uint16_t mx, my;
+    #if TS_MODEL==TS_MODEL_XPT2046
+      TSPoint p = ts.getPoint();
+      mx = map(p.x, TS_X_MIN, TS_X_MAX, 0, _width); my = map(p.y, TS_Y_MIN, TS_Y_MAX, 0, _height);
+    #else
+      mx = ts.points[0].x; my = ts.points[0].y;
+    #endif
+      if(_inject){ mx = _injX; my = _injY; }
+      _oldTouchX = mx; _oldTouchY = my;
+      if(!wastouched) m2::P.onPress(mx, my);
+      else m2::P.onDrag(mx, my);
+    }else if(wastouched){
+      m2::P.onRelease(_oldTouchX, _oldTouchY);
     }
     wastouched = istouched;
     return;

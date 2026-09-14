@@ -31,6 +31,7 @@ extern Page& pgDac;
 extern Page& pgDacInfo;
 extern Page& pgNightFrom;
 extern Page& pgNightTo;
+extern Page& pgUpdate;
 
 /*  клавіатура: куди писати, заголовок, що робити після «OK» (головний цикл)  */
 void kbdOpen(char* target, size_t max, bool password, const char* title, void (*done)(bool ok));

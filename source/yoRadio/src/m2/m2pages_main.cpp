@@ -13,6 +13,7 @@
 #include "../extras/yoSermons.h"
 #include "../extras/yoLogos.h"
 #include "../extras/yoVersion.h"
+#include "../extras/yoOta.h"
 #include "../core/display.h"
 #include "esp_heap_caps.h"
 
@@ -120,7 +121,7 @@ class PultPage : public Page {
     float _briA = -1; int16_t _briDrag = -1; uint32_t _briHold = 0;
     static Rect tile(uint8_t i){ int16_t w = (CWID - 24) / 4; return Rect(MX + i * (w + 8), 4, w, 64); }
     static Rect card(uint8_t i){ int16_t w = (CWID - 16) / 3; return Rect(MX + (i % 3) * (w + 8), 118 + (i / 3) * 42, w, 36); }
-    static int briAt(int16_t x){ const float x0 = MX + 40 + 9, w = CWID - 40 - 50 - 18; float f = (x - x0) / w; if(f < 0) f = 0; if(f > 1) f = 1; return 5 + lroundf(f * 95); }
+    static int briAt(int16_t x){ const float x0 = MX + 40 + 9 + 6, w = CWID - 40 - 50 - 18 - 12; float f = (x - x0) / w; if(f < 0) f = 0; if(f > 1) f = 1; return 5 + lroundf(f * 95); }   /* краї липкі */
 };
 
 static bool sdOff(){ return extras.s.noSd; }
@@ -280,6 +281,13 @@ static const char* vGest(){
 static const char* vPres(){ return (extras.s.sleepEar || extras.s.presWake || extras.s.presOff) ? "увімк" : "вимк"; }
 static const char* vTz(){ static char b[12]; snprintf(b, sizeof(b), "%+03d:%02d", config.store.tzHour, abs(config.store.tzMin)); return b; }
 static const char* vVer(){ return prVersion(); }
+static const char* vUpd(){
+  static char b[40];
+  if(ota.installing()) return "іде…";
+  if(ota.available()){ snprintf(b, sizeof(b), "є %s", ota.latest()); return b; }
+  if(ota.state() == OTA_CHECKING) return "перевіряю…";
+  return ota.latest()[0] ? "остання" : "";
+}
 
 static Item s_setItems[] = {
   iSection("МЕРЕЖА"),
@@ -297,6 +305,7 @@ static Item s_setItems[] = {
   iSwitch("Класичне меню", IC_MENU, C_GREY, [](){ return (int32_t)extras.s.menuClassic; },
           [](int32_t v){ extras.s.menuClassic = v ? 1 : 0; extras.changed(); if(v){ M.toast("далі — класичне меню"); M.close(); } }),
   iSection("РАДІО"),
+  iNav("Оновлення", IC_REFRESH, C_BLUE, vUpd, [](){ M.push(&pgUpdate); }),
   iNav("Про радіо", IC_INFO, C_GREY, vVer, [](){ M.push(&pgInfo); }),
   iNav("Живлення", IC_POWER, C_RED, nullptr, [](){ M.push(&pgPower); }),
   iNav("Розробник", IC_CODE, C_ACC, nullptr, [](){ M.push(&pgDev); }),
@@ -565,7 +574,8 @@ void FavPage::draw(Gfx& g){
     const int16_t ls = 34, lx = r.x + 9, ly = r.y + 9;
     if(_logoOk[i] && _logo[i]){
       /*  логотип 45×45 зменшуємо до 34×34 найближчим сусідом  */
-      static uint16_t small[34 * 34];
+      static uint16_t* small = (uint16_t*)heap_caps_malloc(34 * 34 * 2, MALLOC_CAP_SPIRAM);
+      if(!small) continue;
       for(int16_t yy = 0; yy < ls; yy++) for(int16_t xx = 0; xx < ls; xx++)
         small[yy * ls + xx] = _logo[i][(yy * LOGO_S / ls) * LOGO_S + xx * LOGO_S / ls];
       g.image(lx, ly, ls, ls, small, 8);

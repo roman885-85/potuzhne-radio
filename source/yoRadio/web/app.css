@@ -318,3 +318,7 @@ code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;background:#1c1c1c;bo
 .vh-try input{flex:1;min-width:0}
 .vh-out.bad{color:var(--bad)}
 @media (max-width:560px){.vh-item{grid-template-columns:1fr}.vh-try{flex-wrap:wrap}.vh-try input{flex-basis:100%}}
+/* оновлення з GitHub: смуга під шапкою */
+.otabar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:12px 20px 0;padding:12px 16px;border-radius:14px;background:var(--acc-soft);border:1px solid rgba(230,210,90,.35)}
+.otabar .otatx{flex:1;min-width:200px}
+.otabar .prog{flex-basis:100%}

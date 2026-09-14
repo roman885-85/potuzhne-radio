@@ -1295,8 +1295,12 @@ void BitrateWidget::_charSize(uint8_t textsize, uint8_t& width, uint16_t& height
 }
 
 void BitrateWidget::_draw(){
+  /*  Спершу — чи віджет узагалі на екрані. Раніше квадрат стирався до цієї
+      перевірки: на ILI9341 віджета на сторінці немає, а при кожному пуску й
+      зупинці на екрані з'являвся чорний квадрат 42×42 праворуч під шапкою.  */
+  if(!_active) return;
   _clear();
-  if(!_active || _format == BF_UNKNOWN || _bitrate==0) return;
+  if(_format == BF_UNKNOWN || _bitrate==0) return;
   dsp.drawRect(_config.left, _config.top, _dimension, _dimension, _fgcolor);
   dsp.fillRect(_config.left, _config.top + _dimension/2, _dimension, _dimension/2, _fgcolor);
   /*  Те саме, що й у годиннику: вбудований 5x7 у подвійному масштабі давав

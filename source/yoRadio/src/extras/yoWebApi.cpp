@@ -17,6 +17,7 @@
 #include "yoSermons.h"
 #include "yoLogos.h"
 #include "yoSfx.h"
+#include "yoOta.h"
 #include <LittleFS.h>
 #include "yoVersion.h"
 
@@ -229,6 +230,12 @@ static void onState(AsyncWebServerRequest* r){
   o.k("sfx"); o.put('{');
   o.kn("on", s.sfxOn); o.kn("vol", s.sfxVol); o.kn("mask", s.sfxMask); o.kn("fs", sfx.fsOk()); o.kn("user", sfx.userMask());
   o.kn("splashOff", s.splashOff); o.kn("splashVol", s.splashVol);
+  o.put('}');
+  /*  оновлення з GitHub: стан і хід (опис випуску — окремо, /api/ota)  */
+  o.k("ota"); o.put('{');
+  o.kn("st", ota.state()); o.kn("avail", ota.available()); o.ks("tag", ota.latest());
+  o.kn("pct", ota.progress()); o.kn("got", ota.done()); o.kn("size", ota.total()); o.kn("bps", ota.speed());
+  o.ks("step", ota.stepName()); o.ks("err", ota.error());
   o.put('}');
   o.ks("msg", _msg);
   o.put('}');
@@ -554,6 +561,15 @@ void yoWebApiBegin(AsyncWebServer& s){
   s.on("/api/logos",    HTTP_GET,  onLogos);
   s.on("/api/logo",     HTTP_POST, onLogoDone, onLogoUpload);
   s.on("/api/sfx",      HTTP_GET,  onSfxList);
+  s.on("/api/ota",      HTTP_GET,  [](AsyncWebServerRequest* r){
+    /*  опис випуску — окремо від стану: він довгий  */
+    static char* b = nullptr;
+    if(!b) b = (char*)ps_malloc(2048);
+    if(!b){ r->send(500); return; }
+    JOut o(b, 2048);
+    o.put('{'); o.ks("cur", prVersion()); o.ks("tag", ota.latest()); o.kn("avail", ota.available()); o.ks("notes", ota.notes()); o.put('}');
+    sendJson(r, o.b, o.n);
+  });
   s.on("/api/sfx",      HTTP_POST, onSfxDone, onSfxUpload);
   /*  логотипи — прямо з SPIFFS; сторінка додає ?v=<версія>, тож кеш на добу безпечний  */
   s.serveStatic("/logo/", SPIFFS, "/logo/").setCacheControl("max-age=86400");
@@ -572,6 +588,8 @@ static void apply(const WebCmd& c){
   else if(!strcmp(k, "splashOff"))  s.splashOff = clampi(v, 0, 1);
   else if(!strcmp(k, "splashVol"))  s.splashVol = clampi(v, 0, 100);
   else if(!strcmp(k, "splashDemo")) { display.splashDemo(clampi(v, 2000, 20000)); ext = false; }
+  else if(!strcmp(k, "otaCheck"))   { ota.check(clampi(v, 0, 1)); ext = false; }
+  else if(!strcmp(k, "otaInstall")) { ota.install(); ext = false; }
   else if(!strcmp(k, "sfxVol"))     s.sfxVol = clampi(v, 0, 100);
   else if(!strcmp(k, "sfxMask"))    s.sfxMask = clampi(v, 0, 0xFFFF);
   else if(!strcmp(k, "sfxPlay"))    { int e = YoSfx::find(v); if(e >= 0) sfx.test((SfxEvent)e); ext = false; }

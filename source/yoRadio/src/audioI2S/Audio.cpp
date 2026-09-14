@@ -18,6 +18,7 @@
 #include "../extras/yoMic.h"
 #include "../extras/yoDsp.h"
 #include "../extras/yoSfx.h"
+#include "../extras/yoSpectrum.h"
 
 void yoRecTap(const uint8_t* p, size_t n);   /* extras/yoRecorder.cpp */
 
@@ -4841,6 +4842,8 @@ bool Audio::playSample(int16_t sample[2]) {
         sample[RIGHTCHANNEL] = ((sample[RIGHTCHANNEL] & 0xff) -128) << 8;
     }
 
+    /*  спектр для головного екрана — ще до еквалайзера й гучності (extras/yoSpectrum)  */
+    yoSpec.push(sample[LEFTCHANNEL], sample[RIGHTCHANNEL]);
     /*  еквалайзер, захист динаміка, гучність, обмежувач — src/extras/yoDsp  */
     uint32_t s32 = yoDsp.process(sample);
     _computeVUlevel(sample);

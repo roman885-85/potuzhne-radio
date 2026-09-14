@@ -13,9 +13,16 @@ typedef struct clipArea {
 
 class psFrameBuffer;
 
+extern volatile bool g_dspWatch;       /* налагодження: хто малює в дисплей поза новим екраном */
+extern volatile bool g_m2Draw;         /* зараз малює новий екран / нове меню */
+
 class DspCore: public yoDisplay {
 #ifdef YO_DEBUG
   public:
+    void setAddrWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h) override {
+      if(g_dspWatch && !g_m2Draw) Serial.printf("##DSPW#\t%u,%u %ux%u\n", x, y, w, h);
+      yoDisplay::setAddrWindow(x, y, w, h);
+    }
     /*  Читання відеопам'яті ILI9341: CASET/PASET, далі RAMRD і по три байти
         на піксель. Потрібен доступ до writeCommand()/spiRead(), які в
         Adafruit_SPITFT захищені, тому метод живе всередині класу.  */

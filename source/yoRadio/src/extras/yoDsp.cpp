@@ -239,6 +239,18 @@ uint32_t YoDsp::process(int16_t s[2]){
   if(__builtin_expect(_testGain >= 0, 0)){ xl *= _testGain; xr *= _testGain; }
   else { xl *= _gL; xr *= _gR; }
 
+  /*  м'який пуск / зупинка  */
+  if(__builtin_expect(_fade != _fadeTo || _fade < 1.0f, 0)){
+    const float step = 1000.0f / ((float)(_fadeMs ? _fadeMs : 1) * (float)_fs);
+    float f = _fade;
+    if(f < _fadeTo){ f += step; if(f > _fadeTo) f = _fadeTo; }
+    else if(f > _fadeTo){ f -= step; if(f < _fadeTo) f = _fadeTo; }
+    _fade = f;
+    /*  квадратична крива — на слух рівніше за пряму  */
+    const float g = f * f;
+    xl *= g; xr *= g;
+  }
+
   /*  обмежувач: миттєвий напад, відпускання ~120 мс, спільний для каналів  */
   const float T = 0.97f;
   float al = xl < 0 ? -xl : xl, ar = xr < 0 ? -xr : xr;

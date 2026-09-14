@@ -1,0 +1,139 @@
+/*  Нове меню й екран: оновлення з GitHub (extras/yoOta).
+    - сторінка «Оновлення» в «Параметрах»;
+    - екран ходу встановлення — поверх усього, хоч би що було відкрите;
+    - пропозиція оновитись — на головному екрані (m2player.cpp).  */
+#include "../core/options.h"
+#include "m2pages.h"
+#include "m2update.h"
+#include "../core/config.h"
+#include "../displays/dspcore.h"
+#include "../displays/tools/spidma.h"
+#include "../extras/yoOta.h"
+#include "../extras/yoVersion.h"
+#include "../extras/yoExtras.h"
+
+extern DspCore dsp;
+
+namespace m2 {
+
+/*  =================== сторінка «Оновлення» =================== */
+static const char* vGh(){
+  static char b[48];
+  if(ota.state() == OTA_CHECKING) return "перевіряю…";
+  if(!ota.latest()[0]) return "ще не перевіряли";
+  snprintf(b, sizeof(b), "%s%s", ota.latest(), ota.available() ? " — новіша" : "");
+  return b;
+}
+static const char* vUpdNote(){
+  static char b[200];
+  switch(ota.state()){
+    case OTA_CHECKING: return "звертаюсь до GitHub…";
+    case OTA_LATEST:   return "у радіо остання версія";
+    case OTA_ERROR:    snprintf(b, sizeof(b), "не вийшло: %s", ota.error()); return b;
+    case OTA_AVAILABLE: {
+      /*  перші рядки опису випуску  */
+      const char* s = ota.notes(); size_t n = 0; uint8_t lines = 0;
+      while(s[n] && lines < 2 && n < sizeof(b) - 1){ if(s[n] == '\n') lines++; n++; }
+      if(!n) return "вийшла нова версія";
+      memcpy(b, s, n); b[n] = 0;
+      while(n && (b[n - 1] == '\n' || b[n - 1] == ' ')) b[--n] = 0;
+      return b;
+    }
+    default: return ota.available() ? "вийшла нова версія" : "радіо саме перевіряє GitHub двічі на добу";
+  }
+}
+static const char* vInstall(){ static char b[48]; snprintf(b, sizeof(b), "Встановити %s", ota.latest()); return b; }
+
+static Item s_updItems[] = {
+  iSection("ПРОШИВКА"),
+  iInfo("У радіо", [](){ return prVersion(); }),
+  iInfo("На GitHub", vGh),
+  iNote(vUpdNote, 36),
+  iButton("Перевірити зараз", IC_REFRESH, [](){ ota.check(false); }),
+  iButton("Встановити", IC_DOWN, [](){ ota.install(); M.closeNow(); }),
+  iNote([](){ return "станції, мережі, обране й налаштування лишаються;\nпід час оновлення радіо не вимикати"; }, 36),
+};
+
+class UpdatePage : public ListPage {
+  public:
+    UpdatePage() : ListPage("Оновлення", s_updItems, sizeof(s_updItems) / sizeof(s_updItems[0])) {}
+    void enter() override {
+      s_updItems[4].enabled = [](){ return !ota.busy(); };
+      s_updItems[5].show = [](){ return ota.available() && !ota.installing(); };
+      s_updItems[5].text = vInstall;
+      ListPage::enter();
+      if(!ota.busy() && (!ota.checkedAt() || millis() - ota.checkedAt() > 600000UL)) ota.check(false);
+    }
+};
+static UpdatePage s_update;
+Page& pgUpdate = s_update;
+
+/*  =================== екран ходу встановлення =================== */
+static uint32_t s_sig = 0xFFFFFFFF;
+static bool s_was = false;
+
+bool otaViewActive(){ return ota.installing(); }
+
+static void drawOta(Gfx& g){
+  g.vgrad(0, 0, SW, 120, C_BGTOP, C_BG);
+  g.fill(0, 120, SW, SH - 120, C_BG);
+  g.text(SW / 2, 34, "Оновлення радіо", F_TITLE, C_TXT, AL_C);
+  char b[96];
+  snprintf(b, sizeof(b), "%s  →  %s", prVersion(), ota.latest());
+  g.text(SW / 2, 56, b, F_ROWB, C_ACC, AL_C);
+  /*  кільце ходу  */
+  const float cx = SW / 2, cy = 120;
+  OtaState st = ota.state();
+  uint8_t pct = st == OTA_FIRMWARE ? ota.progress() : (st == OTA_VERIFY || st == OTA_DONE ? 100 : 0);
+  g.arc(cx, cy, 38, 7, C_SURF2);
+  if(st == OTA_FIRMWARE || st == OTA_VERIFY || st == OTA_DONE){
+    if(pct) g.arc(cx, cy, 38, 7, st == OTA_DONE ? C_TEAL : C_ACC, 0, 3.6f * pct);
+    snprintf(b, sizeof(b), "%u%%", pct);
+    g.text((int16_t)cx, (int16_t)cy + 8, b, F_MID, C_TXT, AL_C);
+  }else{
+    float a = fmodf(millis() * 0.36f, 360.0f);
+    g.arc(cx, cy, 38, 7, C_ACC, a, a + 90);
+  }
+  g.text(SW / 2, 186, ota.stepName(), F_ROW, C_TXT, AL_C, SW - 20);
+  if(st == OTA_FIRMWARE && ota.total()){
+    snprintf(b, sizeof(b), "%.1f з %.1f МБ · %u КБ/с", ota.done() / 1048576.0f, ota.total() / 1048576.0f, (unsigned)(ota.speed() / 1024));
+    g.text(SW / 2, 206, b, F_SM, C_TXT2, AL_C);
+  }
+  g.text(SW / 2, 228, st == OTA_DONE ? "за мить радіо увімкнеться знову" : "не вимикайте радіо", F_SM, st == OTA_DONE ? C_TEAL : C_TXT2, AL_C);
+}
+
+void otaViewRender(){
+  s_was = true;
+  OtaState st = ota.state();
+  uint32_t sig = (uint32_t)st * 1000 + ota.progress() + (st != OTA_FIRMWARE ? (millis() / 60) * 7 : 0) + (ota.speed() / 4096) * 131;
+  if(sig == s_sig) return;
+  s_sig = sig;
+  /*  підсвітка — повна: людина має бачити, що йде  */
+  static bool lit = false;
+  if(!lit){ lit = true; extras.pwmSet(extras.pwmTarget() ? extras.pwmTarget() : 180); }
+  const int16_t STRIP = 320 * 32;
+  uint16_t* buf = (uint16_t*)spidmaScratch((size_t)STRIP * 2);
+  if(!buf) return;
+  bool dma = spidmaOk() || spidmaBegin();
+  Gfx g;
+  g_m2Draw = true;
+  dsp.startWrite();
+  for(int16_t y0 = 0; y0 < SH; y0 += 32){
+    int16_t h = y0 + 32 > SH ? SH - y0 : 32;
+    g.target(buf, 0, y0, SW, h);
+    drawOta(g);
+    const uint32_t n = (uint32_t)SW * h;
+    for(uint32_t i = 0; i < n; i++){ uint16_t v = buf[i]; buf[i] = (uint16_t)((v >> 8) | (v << 8)); }
+    dsp.setAddrWindow(0, y0, SW, h);
+    if(!(dma && spidmaWrite(buf, n * 2))) dsp.writePixels(buf, n, true, true);
+  }
+  dsp.endWrite();
+  g_m2Draw = false;
+}
+
+bool otaViewEnded(){
+  if(s_was && !ota.installing()){ s_was = false; s_sig = 0xFFFFFFFF; return true; }
+  return false;
+}
+
+}  // namespace m2

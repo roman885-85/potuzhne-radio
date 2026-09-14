@@ -342,6 +342,12 @@ void YoSermons::_coverTask(void* arg){
     if(len > 100){
       if(!s->_coverPix) s->_coverPix = (uint16_t*)ps_malloc(COVER_W * COVER_H * 2);
       if(s->_coverPix) ok = yoJpegFit(jpg, len, s->_coverPix, COVER_W, COVER_H);
+      /*  і велика, для нового головного екрана  */
+      s->_coverBigOk = false;
+      if(ok){
+        if(!s->_coverBig) s->_coverBig = (uint16_t*)ps_malloc(COVERB_W * COVERB_H * 2);
+        if(s->_coverBig) s->_coverBigOk = yoJpegFit(jpg, len, s->_coverBig, COVERB_W, COVERB_H);
+      }
     }
     if(pool) free(pool);
     if(rgb) free(rgb);

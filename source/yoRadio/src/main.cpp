@@ -16,6 +16,7 @@
 #include "extras/yoMic.h"
 #include "extras/yoDsp.h"
 #include "extras/yoSfx.h"
+#include "extras/yoOta.h"
 #ifdef USE_NEXTION
 #include "displays/nextion.h"
 #endif
@@ -165,6 +166,7 @@ void loop() {
   }
   STEP(loopControls());
 #ifdef USE_YOMENU
+  STEP(ota.loop());               /* оновлення з GitHub: автоперевірка двічі на добу */
   STEP(yomenu.wifiTick());        /* пошук мереж — тут, а не в задачі дисплея */
   STEP(yoDsp.roomTick());         /* налаштування під кімнату: тони, замір, поправка */
   STEP(mic.loop());               /* мікрофон: дії на хлопки й стук, присутність, сон */

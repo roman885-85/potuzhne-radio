@@ -17,6 +17,8 @@
 #include "yoMenu.h"
 #include "uicanvas.h"
 #include "../m2/m2pages.h"
+#include "../extras/yoOta.h"
+#include "../extras/yoVersion.h"
 #include "../core/touchscreen.h"
 #include "../extras/yoExtras.h"
 #include "../extras/yoRecorder.h"
@@ -569,6 +571,23 @@ void yodbgLoop(){
       }
     }
     else if(!strcmp(buf,"m2close")) m2::M.closeNow();
+    else if(!strncmp(buf,"ota",3)){
+      /*  ota — стан; ota check / ota beta — перевірити; ota install — встановити знайдене  */
+      const char* a = buf[3] == ' ' ? buf + 4 : "";
+      if(!strcmp(a, "check")) ota.check(false);
+      else if(!strcmp(a, "beta")) ota.check(true);
+      else if(!strcmp(a, "install")) ota.install();
+      Serial.printf("OTA стан=%u (%s) у радіо %s, на GitHub %s, новіша=%d, %u%% %u/%u, %u Б/с, помилка: %s\n",
+        ota.state(), ota.stepName(), prVersion(), ota.latest(), ota.available(), ota.progress(),
+        (unsigned)ota.done(), (unsigned)ota.total(), (unsigned)ota.speed(), ota.error());
+    }
+    else if(!strncmp(buf,"dspwatch ",9)){ extern volatile bool g_dspWatch; g_dspWatch = atoi(buf+9) != 0; Serial.printf("DSPWATCH %d\n", (int)g_dspWatch); }
+    else if(!strcmp(buf,"spec")){
+      extern float m2SpecDbg[32];
+      Serial.print("SPEC");
+      for(uint8_t k = 0; k < 32; k++) Serial.printf(" %d", (int)lroundf(m2SpecDbg[k] * 100));
+      Serial.println();
+    }
     else if(!strncmp(buf,"tap ",4)){
       /*  Імітація дотику: дозволяє перевірити меню без людини біля екрана. */
       char* sp = strchr(buf+4,' ');

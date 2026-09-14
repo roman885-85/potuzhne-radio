@@ -18,6 +18,8 @@
 #define SERMON_MAX   900              /* місце в PSRAM; на сайті зараз 555 */
 #define COVER_W      80
 #define COVER_H      45
+#define COVERB_W     176         /* велика — для нового головного екрана */
+#define COVERB_H     99
 
 struct Sermon {
   char     title[176];               /* найдовша назва на сайті — 170 байт */
@@ -43,6 +45,7 @@ class YoSermons {
     /*  Обкладинка проповіді, що грає: 80x45 RGB565, готова для екрана.  */
     const uint16_t* coverPix() const { return _coverIdx >= 0 && _coverIdx == _playing ? _coverPix : nullptr; }
     uint32_t coverVersion() const { return _coverVer; }
+    const uint16_t* coverBig() const { return _coverIdx >= 0 && _coverIdx == _playing && _coverBigOk ? _coverBig : nullptr; }
   private:
     Sermon*  _items = nullptr;
     volatile uint16_t _n = 0;
@@ -53,6 +56,8 @@ class YoSermons {
     int16_t  _playing = -1;
     static void _task(void* arg);
     uint16_t* _coverPix = nullptr;
+    uint16_t* _coverBig = nullptr;
+    volatile bool _coverBigOk = false;
     volatile int16_t  _coverIdx = -1, _coverWant = -1;
     volatile bool     _coverBusy = false, _playAfterCover = false;
     volatile uint32_t _coverVer = 0;

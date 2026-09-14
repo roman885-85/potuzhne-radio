@@ -128,6 +128,7 @@ class Display {
     NumWidget *_nums;
     ClockWidget *_clock;
     Page *_boot;
+    Page *_m2empty = nullptr;          /* новий головний екран (src/m2): сторінка плеєра без старих віджетів */
     TextWidget *_bootstring, *_volip, *_voltxt, *_rssi, *_bitrate;
     bool _locked = false;
     bool  _plScroll = false;

@@ -45,6 +45,13 @@ class YoDsp {
         гучності, у пів шкали, як і було); повертає кадр для I2S (L<<16 | R).  */
     uint32_t process(int16_t s[2]);
 
+    /*  М'який пуск і зупинка: множник звуку, що плавно їде до 0 чи 1 по відліках
+        (поки звуку немає, він стоїть — нарощування почнеться з першим відліком).  */
+    void fadeIn(uint16_t ms)  { _fade = 0.0f; _fadeTo = 1.0f; _fadeMs = ms; }
+    void fadeOut(uint16_t ms) { _fadeTo = 0.0f; _fadeMs = ms; }
+    bool faded() const { return _fade <= 0.001f; }
+    void fadeReset() { _fade = 1.0f; _fadeTo = 1.0f; }
+
     void applyPreset(uint8_t p);                 /* 0 — «свій», нічого не міняє */
     void setBand(uint8_t band, int8_t db);       /* повзунок: пресет стає «свій» */
     bool roomFromSweep(char* why, size_t n);     /* поправка під кімнату з останнього заміру */
@@ -77,6 +84,9 @@ class YoDsp {
     uint8_t  stages() const { return _nq; }
 
   private:
+    volatile float _fade = 1.0f, _fadeTo = 1.0f;
+    volatile uint16_t _fadeMs = 300;
+  
     struct Bq { float b0, b1, b2, a1, a2; };
     struct St { float z1, z2; };
     /*  ланка разом зі станом обох каналів — підряд у пам'яті  */

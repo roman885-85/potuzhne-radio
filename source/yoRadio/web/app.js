@@ -256,6 +256,7 @@ async function pollState() {
     if (S.logo !== LOGO.ver && LOGO.ver !== -1) loadLogos();
     if (S.msg) { toast(S.msg, true); setx({ msgClr: 1 }); }
     bus('state');
+    otaBar();
   } catch (e) { stFails++; if (stFails === 3) toast('Радіо не відповідає', true); topStat(); }
   stT = setTimeout(pollState, document.hidden ? 8000 : 2000);
 }
@@ -431,6 +432,7 @@ function shell() {
         h('h1', { id: 'ptitle' }, ''),
         h('button', { class: 'voicebtn', id: 'voicebtn', type: 'button', hidden: true, title: 'Голосова команда', 'aria-label': 'Голосова команда', onclick: () => voiceStart() }, ic('mic')),
         h('div', { class: 'stat', id: 'stat' })),
+      h('div', { id: 'otabar', class: 'otabar', hidden: true }),
       h('div', { id: 'page' })),
     mini());
   $('#app').replaceWith(app);
@@ -1677,8 +1679,9 @@ VIEWS.update = page => {
   };
 
   page.append(
+    otaCard(),
     card('Зараз на радіо', now),
-    card('Прошивка',
+    card('Прошивка з файлу',
       h('ol', { style: { margin: '0 0 12px', paddingLeft: '20px', lineHeight: 1.6 } },
         h('li', null, 'Зберіть прошивку: ', h('code', null, 'firmware/rebuild.sh'), ' (або візьміть готову).'),
         h('li', null, 'Виберіть файл ', h('b', null, 'firmware/PotuzhneRadio-ES3C28P-update.bin'), ' — сторінка покаже його версію й дату збірки.'),
@@ -1691,8 +1694,71 @@ VIEWS.update = page => {
       row('Обране', 'шість кнопок швидкого вибору', h('div', { class: 'bar' }, btn('Зберегти', 'download', () => download('obrane.json', JSON.stringify((S && S.fav) || [], null, 1), 'application/json'), 'sm'), btn('Відновити', 'upload', () => favFile.click(), 'sm ghost'), favFile)),
       row('Мережі Wi-Fi', 'wifi.csv — з паролями відкритим текстом, зберігайте надійно', h('div', { class: 'bar' }, h('a', { class: 'btn sm', href: '/data/wifi.csv', download: 'wifi.csv' }, ic('download'), 'Зберегти'), btn('Відновити', 'upload', () => wifiFile.click(), 'sm ghost'), wifiFile))),
     card('Якщо сторінка не відкривається', h('p', { style: { margin: 0 } }, 'Під\'єднайте радіо кабелем USB до Mac і в теці ', h('b', null, 'firmware'), ' виконайте ', h('code', null, './flash.sh --app-only'), ' — оновиться лише програма, списки лишаться. ', h('code', null, './flash.sh'), ' без параметрів пише повний образ і стирає станції та мережі.')));
-  live(() => drawNow());
+  live(() => { drawNow(); otaCard.draw && otaCard.draw(); });
 };
+
+/* ---------------------------------------------------------------- оновлення з GitHub */
+/*  Стан приходить у /api/state (S.ota): st — 0 нічого, 1 перевіряю, 2 остання, 3 є новіша, 4 помилка,
+    5 зупиняю звук, 6 сторінка, 7 прошивка, 8 перевірка, 9 готово.  */
+let otaDismiss = '';
+try { otaDismiss = sessionStorage.getItem('otaDismiss') || ''; } catch (e) {}
+function otaInstallAsk(tag) {
+  return confirmBox('Оновити радіо?', `Буде встановлено ПОТУЖНЕ РАДІО ${tag} з GitHub. Звук зупиниться, радіо саме завантажить прошивку й перезавантажиться — близько двох хвилин. Станції, мережі й налаштування лишаються.`, 'Оновити');
+}
+function otaBar() {
+  const bar = document.getElementById('otabar');
+  if (!bar || !S || !S.ota) return;
+  const o = S.ota;
+  bar.textContent = '';
+  if (o.st >= 5) {
+    const pct = o.st === 7 ? o.pct : o.st >= 8 ? 100 : 0;
+    const mb = o.st === 7 && o.size ? ` · ${(o.got / 1048576).toFixed(1)} з ${(o.size / 1048576).toFixed(1)} МБ · ${Math.round(o.bps / 1024)} КБ/с` : '';
+    bar.append(h('div', { class: 'otatx' }, h('b', null, `Оновлення до ${o.tag}: `), `${o.step}${o.st === 7 ? ' ' + pct + '%' : ''}${mb}`),
+      h('div', { class: 'prog' }, h('i', { style: { width: pct + '%' } })));
+    bar.hidden = false;
+    return;
+  }
+  if (o.avail && o.tag !== otaDismiss) {
+    bar.append(h('div', { class: 'otatx' }, h('b', null, `Вийшла нова версія ${o.tag}`), ` (у радіо ${S.v})`),
+      h('div', { class: 'bar' },
+        btn('Пізніше', null, () => { otaDismiss = o.tag; try { sessionStorage.setItem('otaDismiss', o.tag); } catch (e) {} otaBar(); }, 'sm ghost'),
+        btn('Оновити', 'upload', async () => { if (await otaInstallAsk(o.tag)) { await setx({ otaInstall: 1 }); pollState(); } }, 'sm acc')));
+    bar.hidden = false;
+    return;
+  }
+  bar.hidden = true;
+}
+
+function otaCard() {
+  const kv = h('dl', { class: 'kv' });
+  const notes = h('div', { class: 'note', style: { whiteSpace: 'pre-wrap', margin: '8px 0' } });
+  const stat = h('p', { class: 'note' });
+  const progI = h('i'), prog = h('div', { class: 'prog', hidden: true }, progI);
+  let notesTag = '';
+  const chk = btn('Перевірити зараз', 'refresh', async () => { await setx({ otaCheck: 0 }); setTimeout(pollState, 1500); }, 'sm');
+  const ins = btn('Оновити', 'upload', async () => { const o = S.ota; if (await otaInstallAsk(o.tag)) { await setx({ otaInstall: 1 }); pollState(); } }, 'acc');
+  const draw = async () => {
+    const o = (S && S.ota) || {};
+    kv.textContent = '';
+    kv.append(h('dt', null, 'У радіо'), h('dd', null, (S && S.v) || '—'),
+      h('dt', null, 'На GitHub'), h('dd', null, o.tag || (o.st === 1 ? 'перевіряю…' : 'ще не перевіряли'), o.avail ? h('span', { class: 'pill ok', style: { marginLeft: '8px' } }, 'новіша') : null));
+    const txt = { 1: 'Звертаюсь до GitHub…', 2: 'У радіо остання версія.', 4: 'Не вийшло: ' + (o.err || '') }[o.st];
+    stat.textContent = o.st >= 5 ? `${o.step}${o.st === 7 ? ' — ' + o.pct + '%' : ''}` : (txt || (o.avail ? '' : 'Радіо саме перевіряє GitHub двічі на добу.'));
+    prog.hidden = !(o.st >= 5); progI.style.width = (o.st === 7 ? o.pct : o.st >= 8 ? 100 : 0) + '%';
+    chk.disabled = o.st === 1 || o.st >= 5;
+    ins.hidden = !o.avail || o.st >= 5;
+    if (o.avail) ins.lastChild.textContent = 'Оновити до ' + o.tag;
+    if (o.tag && o.tag !== notesTag) {
+      notesTag = o.tag;
+      try { const r = await api('/api/ota'); notes.textContent = r.notes || ''; } catch (e) {}
+    }
+    notes.hidden = !o.avail;
+  };
+  otaCard.draw = draw;
+  draw();
+  return card('З GitHub', kv, notes, stat, prog, h('div', { class: 'bar' }, chk, ins),
+    h('p', { class: 'note', style: { margin: '8px 0 0' } }, 'Нові версії виходять на github.com/roman885-85/potuzhne-radio. Радіо само завантажує прошивку й сторінку, станції та налаштування лишаються.'));
+}
 
 /* ---------------------------------------------------------------- про пристрій */
 VIEWS.about = page => {

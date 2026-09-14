@@ -1,0 +1,838 @@
+#include "../core/options.h"
+#include "m2player.h"
+#include "m2pages.h"
+#include "../displays/fonts/aa/m2Clock.h"
+#include <SPIFFS.h>
+#include <WiFi.h>
+#include "esp_heap_caps.h"
+#include "../core/config.h"
+#include "../core/player.h"
+#include "../core/network.h"
+#include "../core/display.h"
+#include "../core/timekeeper.h"
+#include "../displays/dspcore.h"
+#include "../displays/tools/spidma.h"
+#include "../extras/yoExtras.h"
+#include "../extras/yoRecorder.h"
+#include "../extras/yoSermons.h"
+#include "../extras/yoLogos.h"
+#include "../extras/yoMic.h"
+#include "../extras/yoSpectrum.h"
+#include "../extras/yoOta.h"
+#include "../extras/yoVersion.h"
+#include "../menu/yoMenu.h"
+
+extern DspCore dsp;
+extern float m2SpecDbg[32];
+
+namespace m2 {
+
+Player P;
+}
+volatile bool g_dspWatch = false;
+volatile bool g_m2Draw = false;
+float m2SpecDbg[32] = { 0 };
+namespace m2 {
+
+static const int16_t STRIP = 320 * 32;
+/*  розкладка  */
+static const int16_t TOP_H = 38;
+static const int16_t CARD_Y = 42, CARD_H = 74;
+static const int16_t CLK_Y = 120, CLK_H = 60;
+static const int16_t ROW_Y = 182, ROW_H = 26;
+static const int16_t VOL_Y = 212, VOL_H = 28;
+static const int16_t LOGO = 58;
+
+static uint32_t crcs(const char* s){
+  uint32_t c = 0xFFFFFFFF;
+  for(; *s; s++){ c ^= (uint8_t)*s; for(uint8_t k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320 & (0 - (c & 1))); }
+  return ~c;
+}
+static uint32_t mixs(uint32_t h, const char* s){ if(s) for(; *s; s++) h = (h ^ (uint8_t)*s) * 16777619UL; return h; }
+
+bool Player::on() const { return !extras.s.menuClassic; }
+
+void Player::_mark(int16_t x, int16_t y, int16_t w, int16_t h){
+  if(w <= 0 || h <= 0) return;
+  int16_t x1 = x + w - 1, y1 = y + h - 1;
+  if(x < 0) x = 0; if(y < 0) y = 0;
+  if(x1 >= SW) x1 = SW - 1; if(y1 >= SH) y1 = SH - 1;
+  if(x > x1 || y > y1) return;
+  int tx0 = x / 16, tx1 = x1 / 16, ty0 = y / 16, ty1 = y1 / 16;
+  uint32_t bits = (((1UL << (tx1 - tx0 + 1)) - 1) << tx0);
+  portENTER_CRITICAL(&_mux);
+  for(int ty = ty0; ty <= ty1; ty++) _dirty[ty] |= bits;
+  portEXIT_CRITICAL(&_mux);
+}
+
+void Player::show(){
+  _shown = true;
+  _sTop = _sCard = _sClock = _sSec = _sRow = _sVol = 0;
+  _logoKey = 0xFFFFFFFF; _favKey = 0xFFFFFFFF;
+  _t0Name = _t0Title = millis();
+  invalAll();
+}
+
+/*  ---------- тло: темний перехід і світіння кольором логотипа ---------- */
+void Player::_makeBg(uint16_t glow){
+  if(!_bg) _bg = (uint16_t*)heap_caps_malloc((size_t)SW * SH * 2, MALLOC_CAP_SPIRAM);
+  if(!_bg) return;
+  _bgColor = glow;
+  static const uint8_t BAY[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
+  const int br = ((C_BG >> 11) & 31) * 255 / 31, bgc = ((C_BG >> 5) & 63) * 255 / 63, bb = (C_BG & 31) * 255 / 31;
+  const int tr = ((C_BGTOP >> 11) & 31) * 255 / 31, tg = ((C_BGTOP >> 5) & 63) * 255 / 63, tb = (C_BGTOP & 31) * 255 / 31;
+  const int gr = ((glow >> 11) & 31) * 255 / 31, gg = ((glow >> 5) & 63) * 255 / 63, gb = (glow & 31) * 255 / 31;
+  for(int16_t y = 0; y < SH; y++){
+    float ky = y < 110 ? 1 - y / 110.0f : 0;
+    for(int16_t x = 0; x < SW; x++){
+      float dx = (x - 50) / 190.0f, dy = (y - 30) / 150.0f;
+      float d = 1 - (dx * dx + dy * dy); if(d < 0) d = 0;
+      float a = d * d * 0.32f;
+      float r = br + (tr - br) * ky, g2 = bgc + (tg - bgc) * ky, b = bb + (tb - bb) * ky;
+      r += (gr - r) * a; g2 += (gg - g2) * a; b += (gb - b) * a;
+      int dd = BAY[((y & 3) << 2) | (x & 3)];
+      int rr = ((int)r * 31 + dd * 16) / 255, g6 = ((int)g2 * 63 + dd * 16) / 255, b5 = ((int)b * 31 + dd * 16) / 255;
+      if(rr > 31) rr = 31; if(g6 > 63) g6 = 63; if(b5 > 31) b5 = 31;
+      _bg[(int32_t)y * SW + x] = (uint16_t)((rr << 11) | (g6 << 5) | b5);
+    }
+  }
+}
+
+/*  ---------- логотип станції ---------- */
+void Player::_loadLogo(){
+  uint32_t key = player.remoteStationName ? 0xC0FE0000 + sermons.playing() : (config.getMode() == PM_SDCARD ? 0x5D : crcs(config.station.url));
+  uint32_t full = key ^ (logos.version() * 2654435761UL);        /* логотип докачався — перечитати */
+  if(full == _logoKey) return;
+  _logoKey = full;
+  _logoOk = false;
+  uint16_t glow = RGB(40, 70, 110);
+  if(!player.remoteStationName && config.getMode() != PM_SDCARD){
+    char path[28]; snprintf(path, sizeof(path), "/logo/%08x.565", (unsigned)key);
+    /*  робочий буфер — у PSRAM: внутрішньої пам'яті мало (від неї залежать TLS і Wi-Fi)  */
+    static uint16_t* raw = (uint16_t*)heap_caps_malloc(LOGO_S * LOGO_S * 2, MALLOC_CAP_SPIRAM);
+    if(!raw) return;
+    bool ok = false;
+    if(SPIFFS.exists(path)){
+      File f = SPIFFS.open(path, "r");
+      if(f && f.size() == LOGO_S * LOGO_S * 2) ok = f.read((uint8_t*)raw, LOGO_S * LOGO_S * 2) == LOGO_S * LOGO_S * 2;
+      if(f) f.close();
+    }else if(config.station.url[0]){
+      /*  логотипа ще нема — попросити пошук (як і старий плеєр), якщо минулого разу не позначили «нема»  */
+      snprintf(path, sizeof(path), "/logo/%08x.no", (unsigned)key);
+      if(!SPIFFS.exists(path)) logos.want(config.station.url, config.station.name);
+    }
+    if(ok){
+      if(!_logo) _logo = (uint16_t*)heap_caps_malloc(LOGO * LOGO * 2, MALLOC_CAP_SPIRAM);
+      if(_logo){
+        /*  45 → 58: білінійно, щоб не було сходинок  */
+        uint32_t sr = 0, sg = 0, sb = 0, n = 0;
+        for(int16_t y = 0; y < LOGO; y++){
+          float fy = y * (LOGO_S - 1) / (float)(LOGO - 1); int y0 = (int)fy; int y1 = y0 + 1 < LOGO_S ? y0 + 1 : y0; float ay = fy - y0;
+          for(int16_t x = 0; x < LOGO; x++){
+            float fx = x * (LOGO_S - 1) / (float)(LOGO - 1); int x0 = (int)fx; int x1 = x0 + 1 < LOGO_S ? x0 + 1 : x0; float ax = fx - x0;
+            uint16_t p00 = raw[y0 * LOGO_S + x0], p01 = raw[y0 * LOGO_S + x1], p10 = raw[y1 * LOGO_S + x0], p11 = raw[y1 * LOGO_S + x1];
+            auto ch = [&](int sh, int m){
+              float a = ((p00 >> sh) & m) * (1 - ax) + ((p01 >> sh) & m) * ax;
+              float b = ((p10 >> sh) & m) * (1 - ax) + ((p11 >> sh) & m) * ax;
+              return (int)lroundf(a * (1 - ay) + b * ay);
+            };
+            int r = ch(11, 31), g = ch(5, 63), b = ch(0, 31);
+            _logo[y * LOGO + x] = (uint16_t)((r << 11) | (g << 5) | b);
+            sr += r; sg += g; sb += b; n++;
+          }
+        }
+        _logoOk = true;
+        /*  колір світіння — середній колір логотипа, трохи насичений  */
+        int r = sr / n * 255 / 31, g = sg / n * 255 / 63, b = sb / n * 255 / 31;
+        int mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+        if(mx > 20){ r = r * 200 / mx; g = g * 200 / mx; b = b * 200 / mx; }
+        glow = RGB(r, g, b);
+      }
+    }else{
+      static const uint16_t PAL[8] = { 0x3A8D, 0x5A4B, 0x2C6A, 0x6A28, 0x2B0F, 0x7A6C, 0x4B09, 0x31CC };
+      glow = PAL[key & 7];
+    }
+  }else if(player.remoteStationName) glow = RGB(110, 70, 160);
+  else glow = RGB(160, 100, 40);
+  _glow = glow;
+  if(!_bg || glow != _bgColor){ _makeBg(glow); invalAll(); }
+}
+
+void Player::_loadFav(){
+  uint32_t key = 17;
+  for(uint8_t i = 0; i < 6; i++) key = key * 31 + crcs(extras.fav[i].url);
+  if(key == _favKey) return;
+  _favKey = key;
+  static uint16_t* raw = (uint16_t*)heap_caps_malloc(LOGO_S * LOGO_S * 2, MALLOC_CAP_SPIRAM);
+  if(!raw) return;
+  for(uint8_t i = 0; i < 6; i++){
+    _favOk[i] = false;
+    if(!extras.fav[i].url[0]) continue;
+    char path[28]; snprintf(path, sizeof(path), "/logo/%08x.565", (unsigned)crcs(extras.fav[i].url));
+    if(!SPIFFS.exists(path)) continue;
+    File f = SPIFFS.open(path, "r");
+    bool ok = f && f.size() == LOGO_S * LOGO_S * 2 && f.read((uint8_t*)raw, LOGO_S * LOGO_S * 2) == LOGO_S * LOGO_S * 2;
+    if(f) f.close();
+    if(!ok) continue;
+    if(!_favPix[i]) _favPix[i] = (uint16_t*)heap_caps_malloc(24 * 24 * 2, MALLOC_CAP_SPIRAM);
+    if(!_favPix[i]) continue;
+    for(int16_t y = 0; y < 24; y++) for(int16_t x = 0; x < 24; x++){
+      /*  45 → 24: середнє по квадрату  */
+      int sx = x * LOGO_S / 24, sy = y * LOGO_S / 24, r = 0, g = 0, b = 0, n = 0;
+      for(int dy = 0; dy < 2; dy++) for(int dx = 0; dx < 2; dx++){
+        uint16_t p = raw[(sy + dy < LOGO_S ? sy + dy : sy) * LOGO_S + (sx + dx < LOGO_S ? sx + dx : sx)];
+        r += (p >> 11) & 31; g += (p >> 5) & 63; b += p & 31; n++;
+      }
+      _favPix[i][y * 24 + x] = (uint16_t)(((r / n) << 11) | ((g / n) << 5) | (b / n));
+    }
+    _favOk[i] = true;
+  }
+  _mark(0, ROW_Y, SW, ROW_H);
+}
+
+static bool sermonOn(){ return player.remoteStationName && sermons.playing() >= 0; }
+
+uint8_t Player::_mode() const {
+  if(config.getMode() == PM_SDCARD || sermonOn()) return 2;
+  bool any = false;
+  for(uint8_t i = 0; i < 6; i++) if(extras.fav[i].url[0]) any = true;
+  if(!extras.s.favHide && any) return 1;
+  return 0;
+}
+
+/*  ---------- стан у шапці ---------- */
+int16_t Player::_statusLeft() const {
+  int16_t x = SW - 40;
+  x -= 20;                                           /* Wi-Fi */
+  if(extras.batMv() >= 2800 && !extras.s.noBat) x -= 26;
+  if(mic.listening()) x -= 14;
+  if(extras.s.alarmOn) x -= 16;
+  if(extras.sleepLeft()) x -= 32;
+  if(recorder.active()) x -= 34;
+  return x;
+}
+
+static const char* const WDAY[7] = { "Неділя", "Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота" };
+static const char* const MON[12] = { "січня", "лютого", "березня", "квітня", "травня", "червня", "липня", "серпня", "вересня", "жовтня", "листопада", "грудня" };
+
+void Player::_drawTop(Gfx& g, uint32_t now){
+  if(!g.visible(0, 0, SW, TOP_H)) return;
+  /*  джерело  */
+  g.circle(20, 19, 14, C_SURF);
+  uint8_t src = player.remoteStationName ? IC_CROSS : (config.getMode() == PM_SDCARD ? IC_CARD : IC_RADIO);
+  icon(g, src, 20, 19, C_ACC, C_SURF);
+  /*  меню  */
+  g.circle(300, 19, 14, C_SURF);
+  icon(g, IC_MENU, 300, 19, C_TXT, C_SURF);
+  /*  стан — праворуч наліво  */
+  int16_t x = SW - 40;
+  int rs = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127;
+  uint8_t wl = rs > -55 ? 4 : rs > -65 ? 3 : rs > -75 ? 2 : rs > -85 ? 1 : 0;
+  x -= 20; signalBars(g, x, 25, wl, C_TXT2, C_SURF2);
+  char b[16];
+  if(extras.batMv() >= 2800 && !extras.s.noBat){
+    x -= 26;
+    int8_t pct = extras.batPct(); if(pct < 0) pct = 0;
+    bool low = extras.lowBattery(), chg = extras.charging();
+    uint16_t c = low ? C_RED : (chg ? C_GREEN : C_TXT2);
+    g.frame(x, 13, 19, 12, 3, c, 1);
+    g.box(x + 19, 16, 2, 6, 1, c);
+    int16_t fw = (int16_t)(15 * pct / 100); if(fw < 1) fw = 1;
+    g.box(x + 2, 15, fw, 8, 2, c);
+  }
+  if(mic.listening()){ x -= 14; icon(g, IC_MIC, x + 6, 19, C_TXT2, C_BG); }
+  if(extras.s.alarmOn){ x -= 16; icon(g, IC_BELL, x + 7, 19, C_TXT2, C_BG); }
+  if(extras.sleepLeft()){
+    x -= 32; icon(g, IC_MOON, x + 7, 19, C_TXT2, C_BG);
+    snprintf(b, sizeof(b), "%u", (unsigned)extras.sleepLeft());
+    g.text(x + 17, 24, b, F_SMB, C_TXT2);
+  }
+  if(recorder.active()){
+    x -= 34; g.circle(x + 6, 19, 4.5f, C_REC);
+    snprintf(b, sizeof(b), "%u'", (unsigned)(recorder.seconds() / 60));
+    g.text(x + 14, 24, b, F_SMB, C_REC);
+  }
+  /*  назва станції: не влазить — біжить  */
+  const int16_t nx = 42, nw = x - 8 - nx;
+  const char* name = config.station.name;
+  if(player.remoteStationName && sermons.playing() >= 0 && sermons.at(sermons.playing())) name = "Проповідь";
+  int16_t tw = Gfx::textW(name, F_TITLE);
+  Rect s = g.narrow(nx, 0, nw, TOP_H);
+  if(tw <= nw) g.text(nx, 25, name, F_TITLE, C_TXT);
+  else{
+    int16_t off = _offName;
+    g.text(nx - off, 25, name, F_TITLE, C_TXT);
+    g.text(nx - off + tw + 40, 25, name, F_TITLE, C_TXT);
+  }
+  g.restore(s);
+}
+
+/*  Що писати в картці: назва (жирно) і виконавець.  */
+static void cardLines(char* line1, size_t c1, char* line2, size_t c2){
+  line1[0] = line2[0] = 0;
+  bool playing = player.status() == PLAYING;
+  if(config.station.title[0]){
+    const char* dash = strstr(config.station.title, " - ");
+    if(dash){
+      strlcpy(line1, dash + 3, c1);
+      size_t n = dash - config.station.title; if(n >= c2) n = c2 - 1;
+      memcpy(line2, config.station.title, n); line2[n] = 0;
+    }else strlcpy(line1, config.station.title, c1);
+  }else{
+    strlcpy(line1, playing ? "Грає" : "Зупинено", c1);
+    strlcpy(line2, config.station.name, c2);
+  }
+}
+
+/*  Текст у кілька рядків по словах; повертає, скільки рядків вийшло.  */
+static uint8_t wrapText(Gfx& g, int16_t x, int16_t y, int16_t w, int16_t lh, uint8_t maxLines, const char* s, const GFXfont* f, uint16_t c){
+  char line[96]; uint8_t n = 0;
+  while(*s && n < maxLines){
+    while(*s == ' ') s++;
+    const char* best = nullptr; const char* p = s;
+    char tmp[96];
+    while(*p){
+      const char* sp = strchr(p, ' ');
+      const char* e = sp ? sp : p + strlen(p);
+      size_t len = e - s; if(len >= sizeof(tmp)) break;
+      memcpy(tmp, s, len); tmp[len] = 0;
+      if(Gfx::textW(tmp, f) > w) break;
+      best = e;
+      if(!sp) break;
+      p = sp + 1;
+    }
+    bool last = n + 1 == maxLines;
+    if(!best || last){
+      /*  останній рядок чи слово не влазить — ріжемо з «…»  */
+      strlcpy(line, s, sizeof(line));
+      g.text(x, y + n * lh, line, f, c, AL_L, w);
+      return n + 1;
+    }
+    size_t len = best - s; if(len >= sizeof(line)) len = sizeof(line) - 1;
+    memcpy(line, s, len); line[len] = 0;
+    g.text(x, y + n * lh, line, f, c);
+    n++;
+    s = best;
+  }
+  return n;
+}
+
+static const int16_t SM_H = 111;          /* проповідь: висота картки з великою обкладинкою */
+
+void Player::_drawCard(Gfx& g, uint32_t now){
+  if(sermonOn() && sermons.at(sermons.playing())){
+    if(!g.visible(MX, CARD_Y, CWID, SM_H)) return;
+    const Sermon* sm = sermons.at(sermons.playing());
+    g.box(MX, CARD_Y, CWID, SM_H, 16, C_SURF);
+    const int16_t cx = MX + 6, cy = CARD_Y + 6;
+    const uint16_t* big = sermons.coverBig();
+    if(big) g.image(cx, cy, COVERB_W, COVERB_H, big, 12);
+    else{ g.box(cx, cy, COVERB_W, COVERB_H, 12, _glow); icon(g, IC_CROSS, cx + COVERB_W / 2, cy + COVERB_H / 2, 0xFFFF, _glow); }
+    if(player.status() != PLAYING){
+      g.circle(cx + COVERB_W / 2, cy + COVERB_H / 2, 20, C_ACC);
+      icon(g, IC_PLAY, cx + COVERB_W / 2 + 1, cy + COVERB_H / 2, C_ACCTXT, C_ACC);
+    }
+    const int16_t tx = cx + COVERB_W + 9, tw = MX + CWID - 8 - tx;
+    uint8_t n = wrapText(g, tx, CARD_Y + 20, tw, 15, 4, sm->title, F_ROWB, C_TXT);
+    int16_t y = CARD_Y + 20 + n * 15 + 4;
+    wrapText(g, tx, y, tw, 13, 2, sm->preacher, F_SM, C_TXT2);
+    g.text(tx, CARD_Y + SM_H - 9, sm->date, F_SM, C_TXT2, AL_L, tw);
+    return;
+  }
+  if(!g.visible(MX, CARD_Y, CWID, CARD_H)) return;
+  g.box(MX, CARD_Y, CWID, CARD_H, 16, C_SURF);
+  int16_t tx = MX + 76;
+  const uint16_t* cover = player.remoteStationName ? sermons.coverPix() : nullptr;
+  if(cover){
+    g.image(MX + 8, CARD_Y + (CARD_H - COVER_H) / 2, COVER_W, COVER_H, cover, 8);
+    tx = MX + 16 + COVER_W;
+  }else if(_logoOk && _logo){
+    g.image(MX + 8, CARD_Y + 8, LOGO, LOGO, _logo, 12);
+  }else{
+    g.box(MX + 8, CARD_Y + 8, LOGO, LOGO, 12, _glow);
+    if(config.getMode() == PM_SDCARD) icon(g, IC_CARD, MX + 8 + LOGO / 2, CARD_Y + 8 + LOGO / 2, 0xFFFF, _glow);
+    else{
+      char ini[8] = { 0 }; const char* s = config.station.name; uint8_t k = 0, ch = 0;
+      while(*s && ch < 2 && k < 6){ uint8_t c = (uint8_t)*s; uint8_t len = c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : (c & 0xF0) == 0xE0 ? 3 : 1; if(c == ' ' || c == '*'){ s++; continue; } for(uint8_t j = 0; j < len && s[j]; j++) ini[k++] = s[j]; s += len; ch++; }
+      g.text(MX + 8 + LOGO / 2, CARD_Y + 8 + LOGO / 2 + 8, ini, F_MID, 0xFFFF, AL_C);
+    }
+  }
+  /*  що грає: «виконавець - назва» → назва жирно, виконавець нижче  */
+  char line1[160], line2[160];
+  line1[0] = line2[0] = 0;
+  bool playing = player.status() == PLAYING;
+  if(player.remoteStationName && sermons.playing() >= 0 && sermons.at(sermons.playing())){
+    const Sermon* sm = sermons.at(sermons.playing());
+    strlcpy(line1, sm->title, sizeof(line1));
+    snprintf(line2, sizeof(line2), "%s · %s", sm->preacher, sm->date);
+  }else cardLines(line1, sizeof(line1), line2, sizeof(line2));
+  const int16_t right = MX + CWID - 44, w = right - tx;
+  Rect s = g.narrow(tx, CARD_Y, w, CARD_H);
+  int16_t t1 = Gfx::textW(line1, F_ROWB);
+  if(t1 <= w) g.text(tx, CARD_Y + 26, line1, F_ROWB, C_TXT);
+  else{
+    int16_t off = _offTitle;
+    g.text(tx - off, CARD_Y + 26, line1, F_ROWB, C_TXT);
+    g.text(tx - off + t1 + 40, CARD_Y + 26, line1, F_ROWB, C_TXT);
+  }
+  g.restore(s);
+  g.text(tx, CARD_Y + 44, line2, F_ROW, C_TXT2, AL_L, w);
+  /*  бітрейт і кодек  */
+  if(config.station.bitrate && playing){
+    char b[32]; snprintf(b, sizeof(b), "%u кбіт/с · %s", (unsigned)config.station.bitrate, player.getCodecname());
+    int16_t bw = Gfx::textW(b, F_SM) + 16;
+    if(bw > w) bw = w;
+    g.box(tx, CARD_Y + 51, bw, 16, 8, C_SURF2);
+    g.text(tx + 8, CARD_Y + 63, b, F_SM, C_TXT2, AL_L, bw - 12);
+  }
+  /*  праворуч: грає — живі риски; стоїть — кнопка «грати»  */
+  const float cx = MX + CWID - 24, cy = CARD_Y + CARD_H / 2;
+  if(playing){
+    for(uint8_t k = 0; k < 5; k++){
+      float h = 4 + _bars[k] * 18;
+      g.line(cx - 10 + k * 5, cy + 10, cx - 10 + k * 5, cy + 10 - h, 3, C_ACC);
+    }
+  }else{
+    g.circle(cx, cy, 16, C_ACC);
+    icon(g, IC_PLAY, cx + 1, cy, C_ACCTXT, C_ACC);
+  }
+}
+
+void Player::_drawClock(Gfx& g){
+  if(!g.visible(0, CLK_Y, SW, CLK_H)) return;
+  const struct tm& t = network.timeinfo;
+  if(sermonOn() && sermons.at(sermons.playing())){
+    /*  під великою обкладинкою — годинник і дата одним рядком  */
+    if(t.tm_year < 120) return;
+    char b[48];
+    snprintf(b, sizeof(b), "%02d:%02d", t.tm_hour, t.tm_min);
+    int16_t w = g.text(MX + 4, CARD_Y + SM_H + 24, b, F_MID, C_TXT);
+    snprintf(b, sizeof(b), "%s, %d %s", WDAY[t.tm_wday % 7], t.tm_mday, MON[t.tm_mon % 12]);
+    g.text(MX + 12 + w, CARD_Y + SM_H + 24, b, F_ROW, C_TXT2, AL_L, SW - MX - 20 - w);
+    return;
+  }
+  bool ok = t.tm_year >= 120;
+  char b[48];                                   /* кирилиця — по два байти на літеру */
+  if(ok) snprintf(b, sizeof(b), "%02d:%02d", t.tm_hour, t.tm_min); else snprintf(b, sizeof(b), "--:--");
+  int16_t w = g.text(12, CLK_Y + 48, b, &m2Clock, C_TXT);
+  if(ok){ snprintf(b, sizeof(b), "%02d", t.tm_sec); g.text(18 + w, CLK_Y + 48, b, F_TITLE, C_TXT2); }
+  const int16_t rx = SW - 14;
+  if(ok){
+    g.text(rx, CLK_Y + 16, WDAY[t.tm_wday % 7], F_ROWB, C_TXT, AL_R);
+    snprintf(b, sizeof(b), "%d %s", t.tm_mday, MON[t.tm_mon % 12]);
+    g.text(rx, CLK_Y + 32, b, F_ROW, C_TXT2, AL_R);
+  }
+  if(timekeeper.weatherHave){
+    snprintf(b, sizeof(b), "%d°", (int)lroundf(timekeeper.weatherTemp));
+    int16_t tw = g.text(rx, CLK_Y + 52, b, F_TITLE, C_TXT, AL_R);
+    /*  значок погоди  */
+    float cx = rx - tw - 18, cy = CLK_Y + 45;
+    uint8_t ic = timekeeper.weatherIcon;
+    const uint16_t cl = RGB(205, 210, 220), sun = C_ACC;
+    auto cloud = [&](float x, float y, float s, uint16_t c){
+      g.circle(x - 4 * s, y + 1 * s, 4.2f * s, c); g.circle(x + 2 * s, y - 1.5f * s, 5.5f * s, c);
+      g.box((int16_t)(x - 8 * s), (int16_t)(y + 1 * s), (int16_t)(16 * s), (int16_t)(5 * s), (uint8_t)(2.5f * s), c);
+    };
+    if(ic == 0){ icon(g, IC_SUN, cx, cy - 2, sun, C_BG); }
+    else if(ic == 1){ icon(g, IC_SUN, cx + 4, cy - 6, sun, C_BG); cloud(cx - 2, cy + 1, 0.9f, cl); }
+    else if(ic == 2 || ic == 3){ if(ic == 3) cloud(cx + 5, cy - 4, 0.7f, RGB(140, 148, 160)); cloud(cx, cy, 1, cl); }
+    else if(ic == 4 || ic == 5){ cloud(cx, cy - 3, 1, cl); for(uint8_t k = 0; k < 3; k++) g.line(cx - 5 + k * 5, cy + 5, cx - 7 + k * 5, cy + 10, 1.6f, C_BLUE); }
+    else if(ic == 6){ cloud(cx, cy - 3, 1, cl); const float xy[8] = { cx + 1, cy + 3, cx - 4, cy + 10, cx - 1, cy + 10, cx - 3, cy + 15 }; g.line(xy[0], xy[1], xy[2], xy[3], 2, sun); g.line(xy[2], xy[3], xy[4], xy[5], 2, sun); g.line(xy[4], xy[5], xy[6], xy[7], 2, sun); }
+    else if(ic == 7){ cloud(cx, cy - 3, 1, cl); for(uint8_t k = 0; k < 3; k++) g.circle(cx - 5 + k * 5, cy + 8, 1.5f, 0xFFFF); }
+    else if(ic == 8){ for(uint8_t k = 0; k < 3; k++) g.line(cx - 8 + (k & 1) * 3, cy - 4 + k * 5, cx + 8 - (k & 1) * 3, cy - 4 + k * 5, 2, cl); }
+  }
+}
+
+void Player::_drawRow(Gfx& g){
+  if(!g.visible(0, ROW_Y, SW, ROW_H)) return;
+  uint8_t m = _mode();
+  if(m == 1){
+    int8_t pl = extras.favPlaying();
+    for(uint8_t i = 0; i < 6; i++){
+      float cx = 30 + i * 52, cy = ROW_Y + 13;
+      if(!extras.fav[i].url[0]){ g.arc(cx, cy, 12, 1.2f, C_LINE); icon(g, IC_PLUS, cx, cy, C_TXT3, C_BG); continue; }
+      if(pl == (int8_t)i) g.circle(cx, cy, 15, C_ACC);
+      if(_favOk[i] && _favPix[i]){ g.circle(cx, cy, 13, C_SURF); g.image((int16_t)cx - 12, (int16_t)cy - 12, 24, 24, _favPix[i], 12); }
+      else{
+        static const uint16_t PAL[8] = { 0x3A8D, 0x5A4B, 0x2C6A, 0x6A28, 0x2B0F, 0x7A6C, 0x4B09, 0x31CC };
+        g.circle(cx, cy, 13, PAL[crcs(extras.fav[i].url) & 7]);
+        char ini[4] = { 0 }; const char* s = extras.fav[i].name; uint8_t k = 0;
+        uint8_t c = (uint8_t)*s; uint8_t len = c < 0x80 ? 1 : (c & 0xE0) == 0xC0 ? 2 : 3; for(uint8_t j = 0; j < len && s[j] && k < 3; j++) ini[k++] = s[j];
+        g.text((int16_t)cx, (int16_t)cy + 5, ini, F_ROWB, 0xFFFF, AL_C);
+      }
+    }
+    return;
+  }
+  if(m == 2){
+    /*  пульт картки / проповіді: ⏮ смуга ⏭  */
+    const float cy = ROW_Y + 13;
+    g.circle(26, cy, 13, _btn == 0 ? C_ACC : C_SURF);
+    g.line(20, cy - 6, 20, cy + 6, 2, _btn == 0 ? C_ACCTXT : C_TXT);
+    { const float xy[6] = { 32, cy - 6, 32, cy + 6, 22, cy }; g.poly(xy, 3, _btn == 0 ? C_ACCTXT : C_TXT); }
+    g.circle(SW - 26, cy, 13, _btn == 1 ? C_ACC : C_SURF);
+    g.line(SW - 20, cy - 6, SW - 20, cy + 6, 2, _btn == 1 ? C_ACCTXT : C_TXT);
+    { const float xy[6] = { SW - 32, cy - 6, SW - 32, cy + 6, SW - 22, cy }; g.poly(xy, 3, _btn == 1 ? C_ACCTXT : C_TXT); }
+    uint32_t dur = player.durSec(), pos = player.posSec();
+    float f = dur ? (float)pos / dur : 0;
+    if(_seek >= 0) f = _seek;
+    if(f > 1) f = 1;
+    const int16_t bx = 76, bw = SW - 152;
+    char b[12];
+    uint32_t sh = _seek >= 0 ? (uint32_t)(f * dur) : pos;
+    snprintf(b, sizeof(b), "%u:%02u", (unsigned)(sh / 60), (unsigned)(sh % 60));
+    g.text(bx - 6, (int16_t)cy + 4, b, F_SM, C_TXT2, AL_R);
+    snprintf(b, sizeof(b), "%u:%02u", (unsigned)(dur / 60), (unsigned)(dur % 60));
+    g.text(bx + bw + 6, (int16_t)cy + 4, dur ? b : "--:--", F_SM, C_TXT2);
+    drawSlider(g, bx, (int16_t)cy, bw, f, dur > 0);
+    return;
+  }
+  /*  рівень звуку: риски, що дихають із музикою  */
+  bool playing = player.status() == PLAYING;
+  for(uint8_t k = 0; k < 32; k++){
+    float h = _specH[k] > 2 ? _specH[k] : 2;
+    float x = 14 + k * 9.3f;
+    uint16_t c = playing ? Gfx::blend(C_SURF2, C_ACC, (uint8_t)(90 + _spec[k] * 165)) : C_SURF2;
+    g.line(x, ROW_Y + 24, x, ROW_Y + 24 - h, 4.5f, c);
+  }
+}
+
+void Player::_drawVol(Gfx& g){
+  if(!g.visible(0, VOL_Y, SW, VOL_H)) return;
+  int v = _volDrag >= 0 ? _volDrag : config.store.volume;
+  const int16_t cy = VOL_Y + 14;
+  icon(g, IC_SPEAKER, 22, cy, C_TXT2, C_BG);
+  drawSlider(g, 40, cy, SW - 40 - 56, v / 254.0f);
+  char b[8]; snprintf(b, sizeof(b), "%d%%", (int)((v * 100 + 127) / 254));
+  g.text(SW - 14, cy + 4, b, F_SMB, C_TXT, AL_R);
+}
+
+void Player::_ripple(Gfx& g){
+  int8_t z = _zone;
+  if(z < 0 && millis() - _upT > 260) return;
+  if(z != 3 && !(z < 0)) return;
+  if(z < 0) return;
+  uint32_t age = _frameT - _pt;
+  float k = age / 280.0f; if(k > 1) k = 1;
+  float rad = 10 + 180 * (1 - (1 - k) * (1 - k) * (1 - k));
+  g.lighten(Rect(MX, CARD_Y, CWID, CARD_H), 16, _px, _py, rad, 50);
+}
+
+void Player::_drawPopup(Gfx& g){
+  Rect r = _popRect();
+  if(!g.visible(r.x, r.y, r.w, r.h)) return;
+  /*  тінь під карткою й сама картка  */
+  g.fillA(0, 0, SW, SH, 0x0000, 90);
+  g.box(r.x, r.y, r.w, r.h, 18, C_SURF);
+  g.frame(r.x, r.y, r.w, r.h, 18, _popup == 2 ? C_RED : C_ACC, 1);
+  char b[96];
+  if(_popup == 1){
+    g.circle(r.x + 30, r.y + 30, 16, C_ACC);
+    icon(g, IC_DOWN, r.x + 30, r.y + 31, C_ACCTXT, C_ACC);
+    g.text(r.x + 56, r.y + 26, "Є нова версія", F_TITLE, C_TXT, AL_L, r.w - 70);
+    snprintf(b, sizeof(b), "%s  →  %s", prVersion(), ota.latest());
+    g.text(r.x + 56, r.y + 44, b, F_ROWB, C_ACC, AL_L, r.w - 70);
+    /*  перший рядок опису випуску  */
+    char line[96]; const char* s = ota.notes(); size_t n = 0;
+    while(s[n] && s[n] != '\n' && n < sizeof(line) - 1){ line[n] = s[n]; n++; }
+    line[n] = 0;
+    const char* l = line; while(*l == '#' || *l == ' ' || *l == '*' || *l == '-') l++;
+    g.text(r.x + 16, r.y + 76, *l ? l : "оновлення з GitHub", F_ROW, C_TXT2, AL_L, r.w - 32);
+    g.text(r.x + 16, r.y + 94, "станції й налаштування лишаються", F_SM, C_TXT3, AL_L, r.w - 32);
+  }else{
+    g.circle(r.x + 30, r.y + 30, 16, C_RED);
+    icon(g, IC_CLOSE, r.x + 30, r.y + 30, 0xFFFF, C_RED);
+    g.text(r.x + 56, r.y + 36, "Оновлення не вдалося", F_TITLE, C_TXT, AL_L, r.w - 70);
+    g.text(r.x + 16, r.y + 76, ota.error(), F_ROW, C_TXT2, AL_L, r.w - 32);
+    g.text(r.x + 16, r.y + 94, "радіо працює на старій версії", F_SM, C_TXT3, AL_L, r.w - 32);
+  }
+  const int16_t by = r.y + r.h - 46, bw = (r.w - 40) / 2;
+  if(_popup == 1){
+    g.box(r.x + 14, by, bw, 34, 12, _popBtn == 0 ? C_LINE : C_SURF2);
+    g.text(r.x + 14 + bw / 2, by + 22, "Пізніше", F_ROWB, C_TXT, AL_C);
+    g.box(r.x + 26 + bw, by, bw, 34, 12, _popBtn == 1 ? C_TXT : C_ACC);
+    g.text(r.x + 26 + bw + bw / 2, by + 22, "Оновити", F_ROWB, C_ACCTXT, AL_C);
+  }else{
+    g.box(r.x + 14, by, r.w - 28, 34, 12, _popBtn >= 0 ? C_LINE : C_SURF2);
+    g.text(r.x + r.w / 2, by + 22, "Зрозуміло", F_ROWB, C_TXT, AL_C);
+  }
+}
+
+void Player::_draw(Gfx& g){
+  uint32_t now = _frameT;
+  _drawTop(g, now);
+  _drawCard(g, now);
+  if(_zone == 3 && _down) _ripple(g);
+  _drawClock(g);
+  _drawRow(g);
+  _drawVol(g);
+  if(_popup) _drawPopup(g);
+}
+
+void Player::_flush(){
+  uint32_t rows[15];
+  portENTER_CRITICAL(&_mux);
+  memcpy(rows, _dirty, sizeof(rows));
+  memset(_dirty, 0, sizeof(_dirty));
+  portEXIT_CRITICAL(&_mux);
+  bool any = false;
+  for(int r = 0; r < 15; r++) if(rows[r]){ any = true; break; }
+  if(!any) return;
+  uint16_t* buf = (uint16_t*)spidmaScratch((size_t)STRIP * 2);
+  if(!buf) return;
+  bool dma = spidmaOk() || spidmaBegin();
+  Gfx g;
+  _frameT = millis();                       /* одна мить на весь кадр: смуги виходять по черзі, а хвиля не має рватися */
+  g_m2Draw = true;
+  dsp.startWrite();
+  for(int r = 0; r < 15; r++){
+    while(rows[r]){
+      uint32_t m = rows[r];
+      int s = __builtin_ctz(m), e = s;
+      while(e < 20 && ((m >> e) & 1)) e++;
+      uint32_t run = (((1UL << (e - s)) - 1) << s);
+      rows[r] &= ~run;
+      int16_t x0 = s * 16, w = (e - s) * 16;
+      if(x0 + w > SW) w = SW - x0;
+      int16_t y0 = r * 16, h = 16;
+      for(int rr = r + 1; rr < 15 && (rows[rr] & run) == run && (int32_t)w * (h + 16) <= STRIP; rr++){ rows[rr] &= ~run; h += 16; }
+      if(y0 + h > SH) h = SH - y0;
+      /*  тло — готове, із PSRAM  */
+      for(int16_t yy = 0; yy < h; yy++){
+        if(_bg) memcpy(buf + (int32_t)yy * w, _bg + (int32_t)(y0 + yy) * SW + x0, (size_t)w * 2);
+        else for(int16_t i = 0; i < w; i++) buf[(int32_t)yy * w + i] = C_BG;
+      }
+      g.target(buf, x0, y0, w, h);
+      _draw(g);
+      const uint32_t n = (uint32_t)w * h;
+      for(uint32_t i = 0; i < n; i++){ uint16_t v = buf[i]; buf[i] = (uint16_t)((v >> 8) | (v << 8)); }
+      dsp.setAddrWindow(x0, y0, w, h);
+      if(!(dma && spidmaWrite(buf, n * 2))) dsp.writePixels(buf, n, true, true);
+    }
+  }
+  dsp.endWrite();
+  g_m2Draw = false;
+}
+
+void Player::render(){
+  if(!_shown) return;
+  uint32_t now = millis();
+  _loadLogo();
+  _loadFav();
+  if(now - _sigT >= 250){
+    _sigT = now;
+    /*  шапка  */
+    uint32_t s = mixs(2166136261UL, config.station.name);
+    s = s * 31 + (player.remoteStationName ? 2 : 0) + config.getMode();
+    s = s * 31 + (extras.batMv() >= 2800 && !extras.s.noBat ? extras.batPct() + 1 : 0) + (extras.charging() ? 500 : 0) + (extras.lowBattery() ? 1000 : 0);
+    s = s * 31 + (mic.listening() ? 1 : 0) + extras.s.alarmOn * 2 + extras.sleepLeft() * 4;
+    s = s * 31 + (recorder.active() ? recorder.seconds() / 60 + 1 : 0);
+    int rs = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127;
+    s = s * 31 + (rs > -55 ? 4 : rs > -65 ? 3 : rs > -75 ? 2 : rs > -85 ? 1 : 0);
+    if(s != _sTop){ _sTop = s; _t0Name = now; _mark(0, 0, SW, TOP_H); }
+    /*  картка  */
+    uint32_t c = mixs(2166136261UL, config.station.title) * 31 + (player.status() == PLAYING) + config.station.bitrate * 7 + (_logoOk ? 3 : 0);
+    c = c * 31 + (uint32_t)sermons.playing() + (sermons.coverPix() ? 9 : 0) + sermons.coverVersion() * 131;
+    c = c * 31 + (sermonOn() ? 77 : 0) + (sermons.coverBig() ? 5 : 0);
+    if(c != _sCard){ _sCard = c; _t0Title = now; _mark(0, CARD_Y, SW, CLK_Y + CLK_H - CARD_Y); }
+    /*  годинник  */
+    const struct tm& t = network.timeinfo;
+    uint32_t k = (uint32_t)t.tm_min * 61 + t.tm_hour * 3600 + t.tm_mday * 99991 + (timekeeper.weatherHave ? (int)lroundf(timekeeper.weatherTemp) * 7 + timekeeper.weatherIcon : 0);
+    if(k != _sClock){ _sClock = k; _mark(0, CLK_Y, SW, CLK_H); }
+    if((uint32_t)t.tm_sec != _sSec && !sermonOn()){ _sSec = t.tm_sec; _mark(120, CLK_Y + 20, 80, 36); }
+    /*  третій рядок  */
+    uint8_t m = _mode();
+    uint32_t r = m * 1000003UL + (uint32_t)(extras.favPlaying() + 2) * 31 + _favKey;
+    if(m == 2) r = r * 31 + player.posSec() + player.durSec() * 7;
+    if(r != _sRow || m != _rowMode){ _sRow = r; _rowMode = m; _mark(0, ROW_Y, SW, ROW_H); }
+    /*  гучність  */
+    if((uint32_t)config.store.volume != _sVol){ _sVol = config.store.volume; _mark(0, VOL_Y, SW, VOL_H); }
+  }
+  /*  біжучі рядки  */
+  if(now - _mqT >= 25){
+    _mqT = now;
+    int16_t nw = _statusLeft() - 8 - 42;
+    int16_t tw = Gfx::textW(config.station.name, F_TITLE);
+    if(tw > nw && now - _t0Name > 1500){
+      if(++_offName >= tw + 40){ _offName = 0; _t0Name = now; }        /* коло пройшло — знову пауза на початку */
+      _mark(42, 0, nw, TOP_H);
+    }else if(tw <= nw) _offName = 0;
+    if(!sermonOn()){
+      char l1[160], l2[160]; cardLines(l1, sizeof(l1), l2, sizeof(l2));
+      int16_t w = MX + CWID - 44 - (MX + 76);
+      int16_t t1 = Gfx::textW(l1, F_ROWB);
+      if(t1 > w && now - _t0Title > 2000){
+        if(++_offTitle >= t1 + 40){ _offTitle = 0; _t0Title = now; }
+        _mark(MX + 76, CARD_Y + 8, w, 24);
+      }else if(t1 <= w) _offTitle = 0;
+    }
+  }
+  /*  рівень звуку й риски в картці  */
+  if(now - _specT >= 30){
+    _specT = now;
+    bool playing = player.status() == PLAYING;
+    uint16_t vu = playing ? player.get_VUlevel(100) : 0;
+    (void)vu;
+    /*  справжній спектр: що звучить, те й видно; тиша — риски стоять  */
+    yoSpec.bands(_spec, 32, playing ? player.getSampleRate() : 0);
+    memcpy(::m2SpecDbg, _spec, sizeof(_spec));
+    bool moved = false;
+    for(uint8_t k = 0; k < 32; k++){
+      /*  висота дробова, як і раніше: кінець риски згладжений, рух — плавний, без сходинок у піксель  */
+      float h = _spec[k] > 0 ? 3 + _spec[k] * 20 : 0;
+      if(fabsf(h - _specH[k]) > 0.2f){ _specH[k] = h; moved = true; }
+    }
+    if(moved && _mode() == 0) _mark(0, ROW_Y, SW, ROW_H);
+  }
+  if(now - _barT >= 90){
+    _barT = now;
+    /*  риски в картці — ті самі смуги спектра, зведені в п'ять (низи … верхи)  */
+    bool ch = false;
+    for(uint8_t k = 0; k < 5; k++){
+      float m = 0;
+      for(uint8_t j = k * 6; j < k * 6 + 6 && j < 32; j++) if(_spec[j] > m) m = _spec[j];
+      if(fabsf(m - _bars[k]) > 0.02f) ch = true;
+      _bars[k] = m;
+    }
+    if(ch && !sermonOn()) _mark(MX + CWID - 44, CARD_Y + 10, 40, CARD_H - 20);
+  }
+  /*  пропозиція оновитись / повідомлення, що не вдалося  */
+  {
+    int8_t want = 0;
+    if(ota.state() == OTA_ERROR && _otaWasInstalling) want = 2;
+    else if(ota.available() && !ota.installing() && strcmp(ota.latest(), _dismiss)) want = 1;
+    if(ota.installing()) _otaWasInstalling = true;
+    if(want != _popup){ _popup = want; invalAll(); }
+  }
+  if(_down && (_zone == 3)) _mark(MX, CARD_Y, CWID, CARD_H);
+  static bool wasDown = false;
+  if(wasDown && !_down) _mark(MX, CARD_Y, CWID, CARD_H);
+  wasDown = _down;
+  _flush();
+}
+
+/*  ---------- дотики (головний цикл) ---------- */
+void Player::onPress(int16_t x, int16_t y){
+  _px = _lx = x; _py = _ly = y; _pt = millis(); _down = true;
+  if(_popup){
+    /*  картка зверху: лише її кнопки (з притяганням — уся нижня частина картки)  */
+    Rect r = _popRect();
+    _zone = 20;
+    _popBtn = -1;
+    if(y >= r.y + r.h - 62 && y < r.y + r.h + 16) _popBtn = (_popup == 1 && x >= SW / 2) ? 1 : 0;
+    _mark(r.x, r.y, r.w, r.h);
+    return;
+  }
+  /*  Гучність ловимо з запасом: у ряду рівня звуку дотик нічого не робить, тож
+      увесь низ від нього — повзунок; інакше — від середини проміжку над смугою.  */
+  bool specRow = _mode() == 0;
+  /*  Кнопки притягують дотик: шапка ловить на 16 пікселів нижче себе, значок
+      джерела й меню — за відстанню до центру (до 36 пікселів), а пауза в
+      картці спрацьовує лише всередині неї, не на краю під шапкою.  */
+  auto near = [&](int16_t cx, int16_t cy){ int32_t dx = x - cx, dy = y - cy; return dx * dx + dy * dy <= 36 * 36; };
+  if(y < TOP_H + 16){
+    if(near(20, 19)) _zone = 0;
+    else if(near(300, 19)) _zone = 2;
+    else _zone = 1;
+  }
+  else if(y >= CARD_Y + 14 && y < CARD_Y + CARD_H) _zone = 3;
+  else if(y < CARD_Y + CARD_H) _zone = 6;
+  else if(specRow && y >= ROW_Y - 6) _zone = 5;
+  else if(y >= VOL_Y - 5) _zone = 5;
+  else if(y >= ROW_Y - 6) _zone = 4;
+  else _zone = 6;
+  if(_zone == 5){ onDrag(x, y); }
+  if(_zone == 4 && _mode() == 2){
+    /*  кнопки ⏮ ⏭ ловлять ширше за себе: до 60 пікселів від краю  */
+    if(x < 60){ _btn = 0; _mark(0, ROW_Y, 70, ROW_H); }
+    else if(x >= SW - 60){ _btn = 1; _mark(SW - 70, ROW_Y, 70, ROW_H); }
+    else onDrag(x, y);
+  }
+}
+
+void Player::onDrag(int16_t x, int16_t y){
+  _lx = x; _ly = y;
+  if(_zone == 20) return;
+  if(_zone == 5){
+    /*  доріжка 49..255; краї липкі — біля кінця одразу мінімум чи максимум  */
+    int v;
+    if(x <= 58) v = 0;
+    else if(x >= SW - 66) v = 254;
+    else v = map((int)x, 58, SW - 66, 0, 254);
+    if(v < 0) v = 0; if(v > 254) v = 254;
+    _volDrag = v;
+    _mark(0, VOL_Y, SW, VOL_H);
+    uint32_t now = millis();
+    /*  у чергу плеєра не частіше ніж раз на 120 мс; кінцеве — на відпусканні  */
+    if(v != (int)config.store.volume && now - _volSent >= 120){ _volLast = v; _volSent = now; player.setVol((uint8_t)v); }
+    return;
+  }
+  if(_zone == 4 && _mode() == 2 && _btn < 0){
+    float f = (x - 76) / (float)(SW - 152);
+    if(f < 0) f = 0; if(f > 1) f = 1;
+    _seek = f; _mark(0, ROW_Y, SW, ROW_H);
+  }
+}
+
+void Player::onRelease(int16_t x, int16_t y){
+  (void)x; (void)y;
+  int8_t z = _zone;
+  if(z == 20){
+    int8_t b = _popBtn;
+    _down = false; _zone = -1; _popBtn = -1;
+    if(b >= 0 && _popup == 1){
+      if(b == 1) ota.install();
+      else strlcpy(_dismiss, ota.latest(), sizeof(_dismiss));
+    }else if(b >= 0 && _popup == 2){
+      _otaWasInstalling = false;
+    }
+    invalAll();
+    return;
+  }
+  _down = false; _upT = millis();
+  _zone = -1;
+  int16_t dx = _lx - _px, dy = _ly - _py;
+  bool tap = abs(dx) < 14 && abs(dy) < 14;
+  if(z == 5){
+    /*  порівнюємо з тим, що є насправді: гучність могли змінити й з веба  */
+    if(_volDrag >= 0 && _volDrag != (int)config.store.volume){ _volLast = _volDrag; player.setVol((uint8_t)_volDrag); }
+    int16_t v = _volDrag; (void)v;
+    _volDrag = -1; _mark(0, VOL_Y, SW, VOL_H);
+    return;
+  }
+  if(z == 4 && _mode() == 2){
+    bool sm = sermonOn();
+    if(_btn == 0){ if(sm) sermons.playRel(-1); else player.prev(); }
+    else if(_btn == 1){ if(sm) sermons.playRel(1); else player.next(); }
+    else if(_seek >= 0){
+      uint32_t dur = player.durSec();
+      if(dur){ if(sm) player.burlSeek((uint32_t)(_seek * dur)); else player.setAudioPlayPosition((uint16_t)(_seek * dur)); }
+    }
+    _btn = -1; _seek = -1; _mark(0, ROW_Y, SW, ROW_H);
+    return;
+  }
+  /*  провели пальцем угору чи вниз — список станцій  */
+  if(abs(dy) > 30 && abs(dy) > abs(dx) && (z == 1 || z == 3 || z == 6)){
+    display.putRequest(NEWMODE, STATIONS);
+    return;
+  }
+  if(!tap) return;
+  /*  довгий дотик по годиннику чи картці — список станцій, як і раніше  */
+  if((z == 3 || z == 6) && millis() - _pt > 700){ display.putRequest(NEWMODE, STATIONS); return; }
+  switch(z){
+    case 0: if(!extras.s.noSd) config.changeMode(); break;
+    case 1: display.putRequest(NEWMODE, STATIONS); break;
+    case 2: yomenu.openHome(); break;
+    case 3: player.toggle(); _mark(MX, CARD_Y, CWID, CARD_H); break;
+    case 4:
+      if(_mode() == 1){
+        /*  найближчий кружок по горизонталі (центри через 52 пікселі від 30)  */
+        int i = ((int)_px - 30 + 26) / 52; if(i < 0) i = 0; if(i > 5) i = 5;
+        if(extras.fav[i].url[0]) extras.favPlay((uint8_t)i);
+        else yomenu.openFav();
+      }
+      break;
+    case 6: break;                        /* годинник і край картки — нічого: випадкова зупинка гірша за зайвий дотик */
+  }
+}
+
+}  // namespace m2

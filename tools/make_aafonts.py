@@ -40,6 +40,7 @@ SET = [
     ("m2Sm",    "Roboto-Regular.ttf",   8, 15),
     ("m2SmB",   "Roboto-Bold.ttf",      8, 15),
     ("m2Key",   "Roboto-Regular.ttf",  12, 20),
+    ("m2Clock", "Montserrat-Bold.otf", 34, 50, 0x3A),     # великий годинник плеєра: лише цифри й «:»
 ]
 GAMMA = 0.85          # трохи густіші краї: дрібний світлий текст на темному інакше «худне»
 
@@ -58,13 +59,13 @@ def cap_size(path, cap_px):
     return (lo + hi) / 2
 
 
-def build(name, file, cap, yadv):
+def build(name, file, cap, yadv, last=0xFF):
     path = os.path.join(FONTS, file)
     size = cap_size(path, cap)
     font = ImageFont.truetype(path, size)
     bitmaps = bytearray()
     glyphs = []
-    for code in range(0x20, 0x100):
+    for code in range(0x20, last + 1):
         try:
             ch = bytes([code]).decode("cp1251")
         except UnicodeDecodeError:
@@ -103,7 +104,7 @@ def build(name, file, cap, yadv):
         for i, g in enumerate(glyphs):
             f.write(f"  {{ {g[0]:6d}, {g[1]:3d}, {g[2]:3d}, {g[3]:3d}, {g[4]:4d}, {g[5]:4d} }},   // 0x{0x20 + i:02X}\n")
         f.write("};\n\n")
-        f.write(f"inline const GFXfont {name} PROGMEM = {{ (uint8_t*){name}Bitmaps, (GFXglyph*){name}Glyphs, 0x20, 0xFF, {yadv} }};\n")
+        f.write(f"inline const GFXfont {name} PROGMEM = {{ (uint8_t*){name}Bitmaps, (GFXglyph*){name}Glyphs, 0x20, 0x{last:02X}, {yadv} }};\n")
     print(f"{name}: {file} {size:.1f}px, бітмапи {len(bitmaps)} байт")
 
 

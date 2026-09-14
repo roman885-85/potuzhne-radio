@@ -33,6 +33,11 @@ bool Pager::removePage(Page* page){
   //return _pages.remove(page);
 }
 
+void Pager::setPageKeep(Page* page){
+  for(const auto& p: _pages) p->setActive(false);
+  page->setActive(true);
+}
+
 void Pager::setPage(Page* page, bool black){
   for(const auto& p: _pages) p->setActive(false);
   dsp.clearDsp(black);

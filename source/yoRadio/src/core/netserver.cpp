@@ -604,6 +604,11 @@ void handleNotFound(AsyncWebServerRequest * request) {
     }
   }// if (request->method() == HTTP_POST)
   
+  if (request->url() == "/apple-touch-icon.png") {
+    AsyncWebServerResponse *response = request->beginResponse_P(200, "image/png", apple_touch_png, sizeof(apple_touch_png));
+    request->send(response);
+    return;
+  }
   if (request->url() == "/favicon.ico") {
     AsyncWebServerResponse *response = request->beginResponse_P(200, "image/png", favicon_png, sizeof(favicon_png));
     response->addHeader("Cache-Control","no-cache");

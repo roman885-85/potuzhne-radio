@@ -211,6 +211,7 @@ class Menu {
     uint32_t _fadeTick = 0;
     uint32_t _closeAt = 0;
     uint32_t _valT = 0;
+    uint32_t _frameT = 0;                 /* час поточного кадру — однаковий для всіх смуг */
     /*  що перемалювати: квадрати 16×16  */
     uint32_t _dirty[15] = { 0 };
     uint8_t  _hdrMin = 255;

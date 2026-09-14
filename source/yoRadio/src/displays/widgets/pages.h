@@ -30,6 +30,7 @@ class Pager{
     Page& addPage(Page* page, bool setNow = false);
     bool removePage(Page* page);
     void setPage(Page* page, bool black=false);
+    void setPageKeep(Page* page);          /* без заливки екрана: новий головний екран малює себе сам */
   private:
     std::list<Page*> _pages;
     

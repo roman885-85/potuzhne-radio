@@ -17,6 +17,8 @@
 #include "../displays/tools/l10n.h"
 #include "../menu/yoMenu.h"
 #include "../menu/uicanvas.h"
+#include "../m2/m2player.h"
+#include "../m2/m2update.h"
 #include "../extras/yoExtras.h"
 #include "../extras/yoRecorder.h"
 #include "../extras/yoSplash.h"
@@ -312,6 +314,8 @@ void Display::_buildPager(){
 #endif
   pages[PG_PLAYLIST]->addWidget(_plwidget);
   for(const auto& p: pages) _pager->addPage(p);
+  _m2empty = new Page();
+  _pager->addPage(_m2empty);
 }
 
 /*  Мережі немає. Власної точки доступу радіо більше не піднімає, тож і
@@ -1028,6 +1032,9 @@ void Display::dbgWeather(){
     Спершу замикаємо те, що зникає (воно стирає своє місце), потім
     відмикаємо й малюємо те, що з'являється.  */
 void Display::_applySdLayout(){
+#if DSP_MODEL==DSP_ILI9341
+  if(m2::P.shown()) return;              /* новий головний екран: старих віджетів не вмикаємо */
+#endif
   /*  Поки грає проповідь, смугу займає її обкладинка.  */
   if(_smLayout){
     if(_weather)     _weather->lock(true);
@@ -1064,6 +1071,17 @@ void Display::_applyDev(){
 void Display::forceRedraw(){
   if (network.status != CONNECTED && network.status != SDREADY){ _noNetScreen(); return; }
   if (!_ensurePlayer()) return;
+#if DSP_MODEL==DSP_ILI9341
+  if(m2::P.on()){
+    /*  новий головний екран: старі віджети плеєра не показуються зовсім  */
+    _mode = PLAYER;
+    _pager->setPageKeep(_m2empty);
+    m2::P.show();
+    m2::P.render();                    /* увесь кадр одразу — поки не засвітилась підсвітка */
+    return;
+  }
+  m2::P.hide();
+#endif
   _applyDev();
   _mode = PLAYER;
   _pager->setPage( pages[PG_PLAYER]);
@@ -1133,6 +1151,15 @@ void Display::_finishStart(bool draw){
   #ifndef HIDE_IP
     if(_volip) _volip->setText(config.ipToStr(WiFi.localIP()), iptxtFmt);
   #endif
+#if DSP_MODEL==DSP_ILI9341
+  if(draw && m2::P.on()){
+    /*  новий головний екран — одразу, без старих віджетів  */
+    _pager->setPageKeep(_m2empty);
+    _station();
+    m2::P.show();
+    m2::P.render();
+  }else
+#endif
   if(draw){
     _pager->setPage( pages[PG_PLAYER]);
     _volume();
@@ -1180,7 +1207,20 @@ void Display::_swichMode(displayMode_e newmode) {
   _sbSig = 0xFFFFFFFF;               /* рядок стану — наново на новому екрані */
   _logoCrc = 1;                      /* логотип — теж */
   dsp.setScrollId(NULL);
+#if DSP_MODEL==DSP_ILI9341
+  if (newmode != PLAYER) m2::P.hide();
+  if (newmode == PLAYER && m2::P.on()) {
+    numOfNextStation = 0;
+    config.isScreensaver = false;
+    _pager->setPageKeep(_m2empty);
+    config.setDspOn(config.store.dspon, false);
+    m2::P.show();
+    m2::P.render();                    /* перехід іде в темряві — кадр готовий до того, як засвітиться */
+    pm.on_display_player();
+  } else
+#endif
   if (newmode == PLAYER) {
+    m2::P.hide();
     if(player.isRunning())
       if(clockMove.width<0) _clock->moveBack(); else _clock->moveTo(clockMove);
     else
@@ -1304,6 +1344,16 @@ void Display::loop() {
     return;
   }
   if(displayQueue==NULL || _locked) return;
+#if DSP_MODEL==DSP_ILI9341
+  /*  Іде оновлення з GitHub — екран належить його ходу, хоч би що було відкрите.  */
+  if(m2::otaViewActive()){
+    m2::otaViewRender();
+    requestParams_t drop;
+    while(xQueueReceive(displayQueue, &drop, 0)) { }
+    return;
+  }
+  if(m2::otaViewEnded() && _bootStep == 2) forceRedraw();       /* не вийшло — назад на плеєр */
+#endif
   if(_splashDemoMs){
     _splashDemoUntil = millis() + _splashDemoMs; _splashDemoMs = 0;
     dsp.fillScreen(0);
@@ -1376,7 +1426,13 @@ void Display::loop() {
       значок джерела в шапці. Перехід на радіо в changeMode() не має ні
       діалогу, ні повернення на плеєр, тож без цього пульт картки лишався
       на екрані радіо. Тут, після виходу для меню, щоб не малювати поверх нього.  */
-  {
+  bool m2p = (_mode == PLAYER && m2::P.shown());
+  if(m2p){
+    /*  новий головний екран малює себе сам; старі частини плеєра мовчать  */
+    if(_redrawReq && !fading()){ _redrawReq = false; m2::P.invalAll(); }
+    m2::P.render();
+  }
+  if(!m2p){
     static int8_t shownPlayMode = -1, shownSrc = -1;
     if(_mode == PLAYER && shownPlayMode != (int8_t)config.getMode()){
       shownPlayMode = (int8_t)config.getMode();
@@ -1393,18 +1449,22 @@ void Display::loop() {
   if(_bootStep == 1 && splash.active()) splash.tick();     /* заставка, поки радіо шукає мережу */
 #ifdef YO_DEBUG
   DSTEP(_pager->loop());
+  if(!m2p){
   DSTEP(_statusBar());
   DSTEP(_sermonLayout());
   DSTEP(_stationLogo());
   DSTEP(_favMain());
   DSTEP(_lowBat());
+  }
 #else
   _pager->loop();
+  if(!m2p){
   _statusBar();
   _sermonLayout();
   _stationLogo();
   _favMain();
   _lowBat();
+  }
 #endif
 #ifdef USE_NEXTION
   nextion.loop();
