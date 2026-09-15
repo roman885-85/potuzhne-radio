@@ -62,6 +62,7 @@ final class AppModel: ObservableObject {
     private var fails = 0
     private var autoConnect = true
     private var watch: Any?
+    private var active: Any?
 
     private let kLastIP = "lastIP", kLastHost = "lastHost"
 
@@ -72,6 +73,10 @@ final class AppModel: ObservableObject {
             DispatchQueue.main.async { self?.maybeAutoConnect() }
         }
         VoiceListener.shared.showCheck = { [weak self] in self?.voiceCheckShown = true }
+        // повернулись із «Системних параметрів» — картка дозволів на сторінці бачить новий стан
+        active = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in if let wv = self?.web { VoiceListener.shared.sendCheck(to: wv) } }
+        }
         _ = VoiceSelfTest.runIfAsked(model: self)          // --voice-check: самоперевірка голосу (див. VoiceCheckView.swift)
         Task { await start() }
     }

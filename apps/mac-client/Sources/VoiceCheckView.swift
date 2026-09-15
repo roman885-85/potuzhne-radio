@@ -233,7 +233,11 @@ enum VoiceSelfTest {
             if got.contains(where: { (($0 as? [Any])?.first as? String).map { $0 == "result" || $0 == "error" } ?? false }) { break }
         }
         let busy = await js(wv, "VOICE.busy") as? Bool
-        return ["events": got, "busyAfter": busy as Any]
+        // картка «Дозволи на цьому Mac» у розділі голосових команд (є на сторінці з 1.4.17)
+        _ = await js(wv, "location.hash = '#/voice'; true")
+        try? await Task.sleep(nanoseconds: 3_000_000_000)
+        let card = await js(wv, "(() => { const c = [...document.querySelectorAll('.card')].find(x => (x.querySelector('h2') || {}).textContent === 'Дозволи на цьому Mac'); return c ? c.innerText : 'картки немає'; })()")
+        return ["events": got, "busyAfter": busy as Any, "permCard": card ?? "js не відповів"]
     }
 
     @MainActor private static func micPeak(seconds: Double) async -> Float {

@@ -16,7 +16,7 @@
 #      PotuzhneRadio-ES3C28P-update.bin — за ним ідуть радіо;
 #      PotuzhneRadio-ES3C28P-app.js.gz, -app.css.gz — сторінка радіо (теж для радіо);
 #      PotuzhneRadio-ES3C28P-full.bin, PotuzhneRadio-web.zip — для прошивання вручну;
-#      програми (Android, Windows, Mac, збирачі) — з попереднього випуску, якщо не лежать поруч новіші;
+#      програми (Android, Windows, збирачі) — з попереднього випуску; Mac — з Програми/, якщо зібрана під цю версію;
 #   4. публікує (Latest або попередній) і звіряє завантажений update.bin із зібраним.
 set -e
 REPO="roman885-85/potuzhne-radio"
@@ -51,6 +51,13 @@ PREV="$(gh release view -R "$REPO" --json tagName --jq .tagName 2>/dev/null || t
 for f in PotuzhneRadio-Android.apk PotuzhneRadio-Windows.exe PotuzhneRadio-Mac.zip PotuzhneRadio-Builder-Mac.zip PotuzhneRadio-Builder-Windows.zip; do
   if [ -n "$PREV" ] && [ "$PREV" != "$TAG" ]; then gh release download "$PREV" -R "$REPO" -p "$f" -D "$TMP" 2>/dev/null || true; fi
 done
+# програма для Mac — свіжа з «Програми/», якщо її зібрано під цю версію (apps/mac-client/build.sh)
+MACAPP="$ROOT/Програми/ПОТУЖНЕ РАДІО.app"
+if [ -d "$MACAPP" ] && [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$MACAPP/Contents/Info.plist" 2>/dev/null)" = "$VER" ]; then
+  echo ">>> програма для Mac $VER — з Програми/"
+  rm -f "$TMP/PotuzhneRadio-Mac.zip"
+  ditto -c -k --sequesterRsrc --keepParent "$MACAPP" "$TMP/PotuzhneRadio-Mac.zip"
+fi
 
 echo ">>> push main"
 git -C "$ROOT" push origin main

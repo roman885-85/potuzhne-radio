@@ -398,6 +398,7 @@ function cleanSt(s) {
 const PAGES = [
   { id: 'player', t: 'Плеєр', d: 'що грає, гучність, керування', i: 'play' },
   { id: 'stations', t: 'Станції', d: 'список, додати, змінити, імпорт і експорт', i: 'radio' },
+  { id: 'find', t: 'Пошук станцій', d: 'вільні каталоги: назва, країна, мова, жанр', i: 'search' },
   { id: 'fav', t: 'Обране', d: 'шість швидких кнопок', i: 'star' },
   { id: 'sermons', t: 'Проповіді', d: 'архів проповідей із сайту церкви', i: 'book' },
   { id: 'records', t: 'Запис і картка', d: 'запис ефіру, файли на картці', i: 'sd' },
@@ -694,7 +695,7 @@ VIEWS.stations = async page => {
   const tools = h('div', { class: 'tools' }, h('div', { class: 'bar' },
     h('div', { class: 'search' }, ic('search'), q),
     btn('Додати', 'plus', () => editStation(-1), 'acc'),
-    btn('Каталог', 'globe', catalog),
+    btn('Знайти в каталогах', 'globe', () => { location.hash = '#/find'; }),
     btn('Імпорт', 'upload', importFile),
     btn('Експорт', 'download', exportMenu)));
   const dirty = h('div', { class: 'dirty', hidden: true });
@@ -892,59 +893,268 @@ function importReview(found, from) {
     }, 'acc')]);
 }
 
-/*  Каталог radio-browser.info — той самий, де плата шукає логотипи.  */
-function catalog() {
-  const q = h('input', { type: 'search', placeholder: 'Назва станції, наприклад «Промінь»' });
-  let ua = true;
-  const res = h('div', { class: 'imp', style: { maxHeight: '52vh' } }, h('div', { class: 'none' }, 'Введіть назву й натисніть «Шукати».'));
-  const audio = h('audio', { preload: 'none' });
-  let playingBtn = null;
-  const have = () => new Set(ED.list.map(s => s.url));
-  async function run() {
-    const t = q.value.trim();
-    res.textContent = ''; res.append(h('div', { class: 'none' }, 'Шукаю…'));
-    const qs = new URLSearchParams({ limit: 60, hidebroken: 'true', order: 'votes', reverse: 'true' });
-    if (t) qs.set('name', t);
-    if (ua) qs.set('countrycode', 'UA');
-    let items = null;
-    for (const host of ['de1.api.radio-browser.info', 'fi1.api.radio-browser.info', 'de2.api.radio-browser.info']) {
-      try { const r = await fetch(`https://${host}/json/stations/search?${qs}`); if (r.ok) { items = await r.json(); break; } } catch (e) {}
+/* ---------------------------------------------------------------- пошук станцій
+   Вільні каталоги, шукає сама сторінка (радіо в пошуку не бере участі):
+   radio-browser.info — понад 50 тисяч станцій, дані суспільного надбання:
+     назва, країна, мова, жанр, формат, якість, популярність;
+   Icecast (dir.xiph.org) — сервери Icecast з усього світу: назва, жанр, формат.
+   Знайдене додається в список станцій; на радіо — кнопкою «Зберегти на радіо».  */
+const RB_HOSTS = ['de1.api.radio-browser.info', 'all.api.radio-browser.info', 'de2.api.radio-browser.info', 'fi1.api.radio-browser.info'];
+const FIND = { host: '', countries: null, languages: null, tags: null, xiph: null, xiphP: null };
+/*  Формати, які декодує радіо (бібліотека звуку: MP3, AAC/AAC+, FLAC, OGG-FLAC).  */
+const radioPlays = codec => !codec || /^(mp3|mpeg|aac\+?|aacp|he-aac|flac|unknown)$/i.test(String(codec).trim());
+
+async function rbGet(path, params) {
+  const qs = params ? '?' + new URLSearchParams(params) : '';
+  const hosts = FIND.host ? [FIND.host, ...RB_HOSTS.filter(x => x !== FIND.host)] : RB_HOSTS;
+  for (const host of hosts) {
+    const ac = new AbortController(), t = setTimeout(() => ac.abort(), 9000);
+    try {
+      const r = await fetch(`https://${host}/json/${path}${qs}`, { signal: ac.signal });
+      clearTimeout(t);
+      if (r.ok) { FIND.host = host; return await r.json(); }
+    } catch (e) { clearTimeout(t); }
+  }
+  throw new Error('каталог radio-browser.info не відповідає — перевірте інтернет на цьому пристрої');
+}
+
+const ukRegion = (() => { try { return new Intl.DisplayNames(['uk'], { type: 'region' }); } catch (e) { return null; } })();
+const ukLang = (() => { try { return new Intl.DisplayNames(['uk'], { type: 'language' }); } catch (e) { return null; } })();
+const capital = s => s ? s[0].toUpperCase() + s.slice(1) : s;
+function countryName(code, fallback) { try { return (code && ukRegion && ukRegion.of(code.toUpperCase())) || fallback || code; } catch (e) { return fallback || code; } }
+function langName(iso, name) {
+  try { if (iso && ukLang) { const n = ukLang.of(iso.split(',')[0].trim()); if (n && n.toLowerCase() !== iso.toLowerCase()) return capital(n); } } catch (e) {}
+  return capital(name || iso || '');
+}
+
+async function findLists() {
+  if (!FIND.countries) {
+    const [c, l, t] = await Promise.all([
+      rbGet('countries', { hidebroken: 'true' }),
+      rbGet('languages', { hidebroken: 'true', order: 'stationcount', reverse: 'true', limit: 400 }),
+      rbGet('tags', { hidebroken: 'true', order: 'stationcount', reverse: 'true', limit: 400 })]);
+    FIND.countries = c.filter(x => x.iso_3166_1 && x.stationcount > 0)
+      .map(x => ({ code: x.iso_3166_1.toUpperCase(), name: countryName(x.iso_3166_1, x.name), n: x.stationcount }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'uk'));
+    FIND.languages = l.filter(x => x.name && x.stationcount > 1)
+      .map(x => ({ key: x.name, name: langName(x.iso_639, x.name), n: x.stationcount }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'uk'));
+    FIND.tags = t.filter(x => x.name && x.stationcount > 4).map(x => x.name);
+    FIND.langMap = new Map(FIND.languages.map(x => [x.key, x.name]));
+  }
+}
+
+/*  Каталог Icecast — один XML на ~9 МБ: вантажимо раз, далі шукаємо в пам'яті.  */
+function xiphLoad() {
+  if (FIND.xiph) return Promise.resolve(FIND.xiph);
+  if (!FIND.xiphP) FIND.xiphP = (async () => {
+    const r = await fetch('https://dir.xiph.org/yp.xml');
+    if (!r.ok) throw new Error('каталог Icecast не відповідає');
+    const doc = new DOMParser().parseFromString(await r.text(), 'text/xml');
+    const out = [], seen = new Set();
+    const typeCodec = t => /mpeg/.test(t) ? 'MP3' : /aacp/.test(t) ? 'AAC+' : /aac/.test(t) ? 'AAC' : /flac/.test(t) ? 'FLAC' : /ogg/.test(t) ? 'OGG' : (t || '').replace(/^.*\//, '').toUpperCase();
+    for (const e of doc.getElementsByTagName('entry')) {
+      const g = n => (e.getElementsByTagName(n)[0] || {}).textContent || '';
+      const url = g('listen_url').trim();
+      if (!/^https?:\/\//.test(url) || seen.has(url)) continue;
+      seen.add(url);
+      out.push({ name: g('server_name').trim() || url, url, codec: typeCodec(g('server_type')), bitrate: parseInt(g('bitrate')) || 0, tags: g('genre').trim(), song: g('current_song').trim() });
     }
-    res.textContent = '';
-    if (!items) { res.append(h('div', { class: 'none' }, 'Каталог не відповідає. Перевірте інтернет на цьому комп\'ютері.')); return; }
-    if (!items.length) { res.append(h('div', { class: 'none' }, 'Нічого не знайдено.')); return; }
-    const hv = have();
-    for (const it of items) {
-      const url = (it.url_resolved || it.url || '').trim();
-      if (!/^https?:\/\//.test(url) || bytes(url) > 160) continue;
-      const added = hv.has(url);
-      const add = btn(added ? 'Є' : 'Додати', added ? 'check' : 'plus', () => {
-        ED.list.push(cleanSt({ name: it.name, url, ovol: 0 })); add.disabled = true; add.lastChild.textContent = 'Додано'; redrawStations();
-      }, 'sm' + (added ? ' ghost' : ''));
-      if (added) add.disabled = true;
-      const pl = ibtn('play', 'Послухати', () => {
-        if (playingBtn === pl) { audio.pause(); pl.replaceChildren(ic('play')); playingBtn = null; return; }
-        if (playingBtn) playingBtn.replaceChildren(ic('play'));
-        audio.src = url; audio.play().catch(() => toast('Браузер не відкрив цей потік', true));
-        pl.replaceChildren(ic('pause')); playingBtn = pl;
-      }, 'sm ghost');
-      const fav = h('div', { class: 'logo', style: { background: '#fff', width: '36px', height: '36px' } });
-      if (it.favicon && /^https?:/.test(it.favicon)) { const im = h('img', { src: it.favicon, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }); im.onerror = () => { fav.style.background = PAL[0]; fav.textContent = initials(it.name); }; fav.append(im); }
-      else { fav.style.background = PAL[0]; fav.textContent = initials(it.name); }
-      res.append(h('div', { class: 'st', style: { minHeight: '52px' } }, fav,
-        h('div', { class: 'tx' }, h('div', { class: 'nm' }, it.name.trim()), h('div', { class: 'ur' }, [it.codec, it.bitrate ? it.bitrate + ' кбіт/с' : '', it.country || '', (it.tags || '').split(',').slice(0, 3).join(', ')].filter(Boolean).join(' · '))),
-        h('div', { class: 'act' }, pl, add)));
+    FIND.xiph = out;
+    return out;
+  })().catch(e => { FIND.xiphP = null; throw e; });
+  return FIND.xiphP;
+}
+
+VIEWS.find = async page => {
+  let F = { src: 'rb', name: '', country: 'UA', lang: '', tag: '', codec: '', br: 0, order: 'votes', plays: true, working: true };
+  try { Object.assign(F, JSON.parse(localStorage.getItem('potuzhne.find') || '{}')); } catch (e) {}
+  const keep = () => { try { localStorage.setItem('potuzhne.find', JSON.stringify(F)); } catch (e) {} };
+
+  const q = h('input', { type: 'search', placeholder: 'Назва станції — «Промінь», «jazz», «Hit FM»', 'aria-label': 'Назва станції', value: F.name });
+  const country = h('select', { 'aria-label': 'Країна' }, h('option', { value: '' }, 'Усі країни'));
+  const lang = h('select', { 'aria-label': 'Мова' }, h('option', { value: '' }, 'Усі мови'));
+  const tagList = h('datalist', { id: 'findtags' });
+  const tag = h('input', { type: 'search', placeholder: 'наприклад: news, rock, christian', list: 'findtags', 'aria-label': 'Жанр', value: F.tag });
+  const codec = h('select', { 'aria-label': 'Формат' }, [['', 'Будь-який'], ['MP3', 'MP3'], ['AAC', 'AAC'], ['AAC+', 'AAC+'], ['FLAC', 'FLAC']].map(([v, t]) => h('option', { value: v }, t)));
+  const br = h('select', { 'aria-label': 'Якість' }, [[0, 'Будь-яка'], [64, 'від 64 кбіт/с'], [128, 'від 128 кбіт/с'], [192, 'від 192 кбіт/с'], [320, '320 кбіт/с']].map(([v, t]) => h('option', { value: v }, t)));
+  const order = h('select', { 'aria-label': 'Порядок' });
+  const orders = {
+    rb: [['votes', 'Найпопулярніші'], ['clickcount', 'Найчастіше слухають'], ['name', 'За назвою'], ['bitrate', 'Найкраща якість'], ['lastchangetime', 'Нові й оновлені']],
+    xiph: [['name', 'За назвою'], ['bitrate', 'Найкраща якість']] };
+  codec.value = F.codec; br.value = F.br;
+  const src = seg([['rb', 'radio-browser.info'], ['xiph', 'Icecast (dir.xiph.org)']], F.src, v => { F.src = v; keep(); srcUi(); run(); });
+  const playsSw = sw(F.plays, v => { F.plays = v; keep(); run(); });
+  const workSw = sw(F.working, v => { F.working = v; keep(); run(); });
+  const srcNote = h('p', { class: 'note', style: { margin: '8px 0 0' } });
+  const dirty = h('div', { class: 'dirty', hidden: true });
+  const info = h('span', { class: 'note', style: { margin: 0 } });
+  const list = h('div', { class: 'list' }, h('div', { class: 'none' }, 'Готую каталог…'));
+  const more = h('div');
+  const audio = h('audio', { preload: 'none' });
+  let playingBtn = null, offset = 0, items = [], token = 0;
+
+  const workLbl = h('label', { class: 'bar', style: { gap: '8px' } }, workSw, h('span', null, 'Лише робочі (перевірені каталогом)'));
+  const fld = (label, el) => h('label', { class: 'ffld' }, h('small', null, label), el);
+  const cc = fld('Країна', country), ll = fld('Мова', lang);
+  page.append(
+    h('p', { class: 'lead' }, 'Пошук радіостанцій у вільних каталогах — за назвою, країною, мовою, жанром і якістю. Послухайте тут, додайте в список і збережіть на радіо.'),
+    h('div', { class: 'tools', style: { position: 'static' } },
+      h('div', { class: 'bar' }, src),
+      h('div', { class: 'bar', style: { marginTop: '10px' } }, h('div', { class: 'search' }, ic('search'), q), btn('Шукати', 'search', () => run(), 'acc')),
+      h('div', { class: 'ffilters' }, cc, ll, fld('Жанр', tag), fld('Формат', codec), fld('Якість', br), fld('Порядок', order)),
+      h('div', { class: 'bar', style: { marginTop: '8px', gap: '16px' } },
+        h('label', { class: 'bar', style: { gap: '8px' } }, playsSw, h('span', null, 'Лише ті, що зіграє радіо')),
+        workLbl,
+        h('span', { class: 'sp' }), info),
+      srcNote, tagList),
+    dirty, list, more, audio,
+    h('p', { class: 'note' }, 'Каталоги ведуть слухачі й власники станцій; адреса може змінитись чи перестати працювати. «Послухати» грає на цьому пристрої, не на радіо. Радіо грає MP3, AAC і FLAC; OGG/Opus і WMA — ні.'));
+
+  function srcUi() {
+    const rb = F.src === 'rb';
+    cc.hidden = !rb; ll.hidden = !rb; workLbl.hidden = !rb;
+    order.textContent = '';
+    for (const [v, t] of orders[F.src]) order.append(h('option', { value: v }, t));
+    if (!orders[F.src].some(o => o[0] === F.order)) F.order = orders[F.src][0][0];
+    order.value = F.order;
+    srcNote.textContent = rb
+      ? 'radio-browser.info — відкритий каталог, понад 50 000 станцій з усього світу; дані — суспільне надбання.'
+      : 'Icecast (dir.xiph.org) — сервери Icecast, що самі записались у каталог: назва, жанр, формат. Країни й мови там немає. Перший пошук вантажить каталог (близько 9 МБ).';
+  }
+
+  function drawDirty() {
+    const d = edDirty();
+    dirty.hidden = !d;
+    dirty.textContent = '';
+    if (d) {
+      const n = ED.list.length - parseCSVText(ED.orig).length;
+      dirty.append(h('b', null, n > 0 ? `Додано ${n} ${plural(n, 'станцію', 'станції', 'станцій')} — на радіо їх ще немає.` : 'Список змінено, але ще не збережено на радіо.'),
+        btn('До списку', 'radio', () => { location.hash = '#/stations'; }, 'ghost sm'),
+        btn('Зберегти на радіо', 'check', async () => { await saveStations(); setTimeout(() => { drawDirty(); redrawRows(); }, 1000); }, 'acc sm'));
     }
   }
+
+  const have = () => new Set(ED.list.map(s => s.url));
+  let rowsRedraw = [];
+  function redrawRows() { const hv = have(); rowsRedraw.forEach(f => f(hv)); }
+
+  function rowEl(it) {
+    const url = it.url;
+    const plays = radioPlays(it.codec);
+    const add = btn('Додати', 'plus', () => {
+      if (have().has(url)) return;
+      ED.list.push(cleanSt({ name: it.name, url, ovol: 0 }));
+      toast(`«${it.name}» — у списку. Натисніть «Зберегти на радіо».`);
+      drawDirty(); redrawRows();
+    }, 'sm acc');
+    const setAdded = hv => { const on = hv.has(url); add.disabled = on; add.className = 'btn sm ' + (on ? 'ghost' : 'acc'); add.replaceChildren(ic(on ? 'check' : 'plus'), on ? 'У списку' : 'Додати'); };
+    rowsRedraw.push(setAdded);
+    const pl = ibtn('play', 'Послухати тут', () => {
+      if (playingBtn === pl) { audio.pause(); pl.replaceChildren(ic('play')); playingBtn = null; return; }
+      if (playingBtn) playingBtn.replaceChildren(ic('play'));
+      audio.src = url; audio.play().catch(() => { pl.replaceChildren(ic('play')); playingBtn = null; toast('Цей потік тут не відкрився — на радіо він усе одно може грати', true); });
+      pl.replaceChildren(ic('pause')); playingBtn = pl;
+      if (it.uuid) rbGet('url/' + it.uuid).catch(() => {});        /* каталог рахує прослуховування */
+    }, 'sm ghost');
+    const fav = h('div', { class: 'logo', style: { background: '#fff' } });
+    if (it.favicon && /^https?:/.test(it.favicon)) {
+      const im = h('img', { src: it.favicon, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' });
+      im.onerror = () => { im.remove(); fav.style.background = PAL[0]; fav.textContent = initials(it.name); };
+      fav.append(im);
+    } else { fav.style.background = PAL[it.name.length % PAL.length]; fav.textContent = initials(it.name); }
+    const meta = [it.country, it.lang, (it.tags || '').split(',').map(x => x.trim()).filter(Boolean).slice(0, 3).join(', '),
+      [it.codec, it.bitrate ? it.bitrate + ' кбіт/с' : ''].filter(Boolean).join(' ')].filter(Boolean).join(' · ');
+    const el = h('div', { class: 'st', style: { minHeight: '60px' } }, fav,
+      h('div', { class: 'tx', onclick: () => pl.click(), title: url },
+        h('div', { class: 'nm' }, it.name, !plays ? h('span', { class: 'pill bad', style: { marginLeft: '8px' } }, `${it.codec} — радіо не зіграє`) : null),
+        h('div', { class: 'ur' }, meta || url)),
+      h('div', { class: 'act', style: { alignItems: 'center', gap: '6px' } },
+        it.homepage && /^https?:/.test(it.homepage) ? h('a', { class: 'btn sm ghost ico', href: it.homepage, target: '_blank', rel: 'noopener', title: 'Сайт станції' }, ic('globe')) : null,
+        pl, add));
+    setAdded(have());
+    return el;
+  }
+
+  async function fetchRb(off) {
+    const p = { limit: 60, offset: off, order: F.order, reverse: F.order === 'name' ? 'false' : 'true', hidebroken: F.working ? 'true' : 'false' };
+    if (F.name) p.name = F.name;
+    if (F.country) p.countrycode = F.country;
+    if (F.lang) { p.language = F.lang; p.languageExact = 'true'; }
+    if (F.tag) p.tag = F.tag;
+    if (F.codec) { p.codec = F.codec; p.codecExact = 'true'; }
+    if (F.br) p.bitrateMin = F.br;
+    const got = await rbGet('stations/search', p);
+    return {
+      raw: got.length,
+      rows: got.map(x => ({ uuid: x.stationuuid, name: (x.name || '').trim(), url: (x.url_resolved || x.url || '').trim(), favicon: x.favicon, homepage: x.homepage,
+        country: x.countrycode ? countryName(x.countrycode, x.country) : x.country,
+        lang: (x.language || '').split(',').map(l => l.trim()).filter(Boolean).slice(0, 2).map(l => (FIND.langMap && FIND.langMap.get(l)) || capital(l)).join(' / '),
+        tags: x.tags, codec: x.codec, bitrate: x.bitrate })) };
+  }
+
+  async function fetchXiph(off) {
+    const all = await xiphLoad();
+    const n = F.name.toLowerCase(), g = F.tag.toLowerCase();
+    let r = all.filter(x => (!n || x.name.toLowerCase().includes(n)) && (!g || x.tags.toLowerCase().includes(g)) &&
+      (!F.codec || x.codec === F.codec) && (!F.br || x.bitrate >= F.br) && (!F.plays || radioPlays(x.codec)));
+    r = F.order === 'bitrate' ? r.sort((a, b) => b.bitrate - a.bitrate) : r.sort((a, b) => a.name.localeCompare(b.name, 'uk'));
+    FIND.xiphTotal = r.length;
+    return { raw: Math.max(0, Math.min(60, r.length - off)), rows: r.slice(off, off + 60) };
+  }
+
+  async function run(append) {
+    F.name = q.value.trim(); F.tag = tag.value.trim(); F.country = country.value; F.lang = lang.value;
+    F.codec = codec.value; F.br = +br.value; F.order = order.value; keep();
+    const my = ++token;
+    if (!append) {
+      offset = 0; items = []; rowsRedraw = [];
+      list.textContent = ''; more.textContent = '';
+      list.append(h('div', { class: 'none' }, F.src === 'xiph' && !FIND.xiph ? 'Вантажу каталог Icecast (близько 9 МБ)…' : 'Шукаю…'));
+      info.textContent = '';
+    }
+    let res;
+    try { res = await (F.src === 'rb' ? fetchRb(offset) : fetchXiph(offset)); }
+    catch (e) { if (my !== token) return; list.textContent = ''; list.append(h('div', { class: 'none' }, 'Не вдалося: ' + e.message)); return; }
+    if (my !== token) return;
+    if (!append) list.textContent = '';
+    offset += 60;
+    const hv = new Set(items.map(x => x.url));
+    const fresh = res.rows.filter(x => /^https?:\/\//.test(x.url) && bytes(x.url) <= 160 && x.name && !hv.has(x.url) && (!F.plays || radioPlays(x.codec)));
+    items.push(...fresh);
+    fresh.forEach(it => list.append(rowEl(it)));
+    const shown = items.length;
+    info.textContent = F.src === 'xiph'
+      ? `Знайдено ${FIND.xiphTotal}${F.plays ? ' (показую ті, що зіграє радіо)' : ''}`
+      : shown ? `Показано ${shown}` : '';
+    if (!shown) list.append(h('div', { class: 'none' }, 'Нічого не знайдено. Спробуйте коротшу назву або приберіть частину умов.'));
+    more.textContent = '';
+    if (res.raw >= 60) more.append(h('div', { class: 'none', style: { padding: '14px' } }, btn('Показати ще', 'down', () => { more.textContent = ''; run(true); }, 'sm')));
+  }
+
+  srcUi();
+  /*  пішли з розділу — прослуховування вимкнути (відчеплений <audio> грав би далі)  */
+  window.addEventListener('hashchange', () => { audio.pause(); audio.removeAttribute('src'); }, { once: true });
   q.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
-  const body = h('div', null,
-    h('div', { class: 'bar' }, h('div', { class: 'search' }, ic('search'), q), btn('Шукати', 'search', run, 'acc')),
-    h('div', { class: 'bar', style: { marginTop: '10px' } }, sw(ua, v => { ua = v; }), h('span', null, 'Лише українські станції')),
-    res, audio,
-    h('p', { class: 'note' }, 'Додані станції з\'являться в списку; щоб вони потрапили на радіо, натисніть «Зберегти».'));
-  const d = dialog('Каталог станцій', body, [btn('Готово', null, () => d.close(), 'acc')], { onclose: () => audio.pause() });
+  tag.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+  for (const s of [country, lang, codec, br, order]) s.addEventListener('change', () => run());
+  live(what => { if (what === 'pl') { drawDirty(); redrawRows(); } });
+  try { await loadEditor(); } catch (e) {}
+  drawDirty();
+  try {
+    await findLists();
+    const ua = FIND.countries.find(c => c.code === 'UA');
+    if (ua) country.append(h('option', { value: 'UA' }, `${ua.name} (${ua.n})`), h('option', { disabled: true }, '──────────'));
+    FIND.countries.forEach(c => country.append(h('option', { value: c.code }, `${c.name} (${c.n})`)));
+    const uk = FIND.languages.find(l => l.key === 'ukrainian');
+    if (uk) lang.append(h('option', { value: uk.key }, `${uk.name} (${uk.n})`), h('option', { disabled: true }, '──────────'));
+    FIND.languages.forEach(l => lang.append(h('option', { value: l.key }, `${l.name} (${l.n})`)));
+    FIND.tags.forEach(t => tagList.append(h('option', { value: t })));
+  } catch (e) { if (F.src === 'rb') { list.textContent = ''; list.append(h('div', { class: 'none' }, 'Не вдалося: ' + e.message)); } }
+  country.value = F.country; lang.value = F.lang;
+  if (!page.isConnected) return;
   run();
-}
+};
 
 function pickFavSlot(s) {
   if (!S) return;
@@ -1985,7 +2195,7 @@ VIEWS.voice = page => {
   inp.addEventListener('input', () => { if (inp.value.trim() !== last) { run.disabled = true; } });
   const tryit = card('Перевірити фразу',
     h('div', { class: 'vh-try' }, inp, btn('Перевірити', 'check', check, 'acc'), run), out);
-  page.append(how, tryit, groups);
+  page.append(...(br === 'mac' ? [voicePermCard()] : []), how, tryit, groups);
 };
 
 /* ---------------------------------------------------------------- голос
@@ -1999,6 +2209,50 @@ function voiceBridge() {
   if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.voice) return 'mac';
   return '';
 }
+
+/*  Дозволи на Mac: стан питаємо в програми ('perm'), вона відповідає
+    potuzhneVoicePerm({mic, speech, device, language, available, ready}) — і сама
+    надсилає знову, коли людина повертається з «Системних параметрів».
+    Стара програма не відповідає — тоді підказка оновити її.  */
+const voicePost = m => { try { window.webkit.messageHandlers.voice.postMessage(m); } catch (e) {} };
+function voicePermCard() {
+  const box = h('div', null, h('p', { class: 'note', style: { margin: 0 } }, 'Питаю програму…'));
+  VOICE.permBox = box; VOICE.permGot = false;
+  voicePost('perm');
+  setTimeout(() => {
+    if (VOICE.permGot || !box.isConnected) return;
+    box.textContent = '';
+    box.append(h('p', { class: 'note', style: { margin: 0 } }, 'Ця версія програми для Mac не вміє перевіряти дозволи. Завантажте нову з GitHub (файл PotuzhneRadio-Mac.zip у розділі «Оновлення» → «З GitHub»).'));
+  }, 2500);
+  return card('Дозволи на цьому Mac', box, h('div', { class: 'bar', style: { marginTop: '12px' } },
+    btn('Перевірити знову', 'refresh', () => voicePost('perm'), 'sm'),
+    btn('Спитати дозвіл знову', 'mic', () => voicePost('askAgain'), 'sm ghost'),
+    btn('Вікно перевірки', 'info', () => voicePost('window'), 'sm ghost')),
+    h('p', { class: 'note' }, 'Дозволи macOS питає лише раз. Якщо колись натиснули «Не дозволяти» або програми немає в списку налаштувань — «Спитати дозвіл знову»: macOS забуде старе рішення й покаже запит.'));
+}
+window.potuzhneVoicePerm = p => {
+  VOICE.permGot = true;
+  const box = VOICE.permBox;
+  if (!box || !box.isConnected || !p) return;
+  const T = { granted: 'дозволено', denied: 'заборонено', restricted: 'заборонено політикою Mac', ask: 'ще не питали' };
+  const pill = (ok, text) => h('span', { class: 'pill ' + (ok ? 'ok' : 'bad') }, text);
+  const access = (a, pane) => a === 'granted' ? null : a === 'ask'
+    ? btn('Дозволити', 'check', () => voicePost('ask'), 'sm acc')
+    : btn('Відкрити налаштування', 'gear', () => voicePost('open:' + pane), 'sm acc');
+  const langOk = p.language && p.available;
+  box.textContent = '';
+  box.append(
+    h('p', { class: 'note', style: { marginTop: 0, color: p.ready ? 'var(--ok)' : 'var(--bad)' } },
+      p.ready ? 'Усе готово: натисніть кнопку з мікрофоном угорі сторінки й скажіть команду.' : 'Програмі бракує дозволу чи умови — кнопка в рядку веде просто в потрібні налаштування.'),
+    row('Мікрофон', p.mic === 'granted' ? null : 'Системні параметри → Приватність і безпека → Мікрофон → «ПОТУЖНЕ РАДІО»',
+      h('div', { class: 'bar' }, pill(p.mic === 'granted', T[p.mic] || p.mic), access(p.mic, 'mic'))),
+    row('Розпізнавання мовлення', p.speech === 'granted' ? null : 'Системні параметри → Приватність і безпека → Розпізнавання мовлення → «ПОТУЖНЕ РАДІО»',
+      h('div', { class: 'bar' }, pill(p.speech === 'granted', T[p.speech] || p.speech), access(p.speech, 'speech'))),
+    row('Пристрій запису', p.device || 'мікрофона не знайдено — під\'єднайте його чи виберіть у налаштуваннях звуку',
+      h('div', { class: 'bar' }, pill(!!p.device, p.device ? 'є' : 'немає'), btn('Налаштування звуку', null, () => voicePost('open:sound'), 'sm ' + (p.device ? 'ghost' : 'acc')))),
+    row('Українська мова', !p.language ? 'цей Mac її не розпізнає' : p.available ? 'розпізнає Apple через інтернет' : 'зараз недоступна: потрібен інтернет; якщо він є — увімкніть диктування',
+      h('div', { class: 'bar' }, pill(langOk, langOk ? 'доступна' : 'недоступна'), p.language && !p.available ? btn('Диктування', null, () => voicePost('open:dictation'), 'sm acc') : null)));
+};
 
 function voiceSetup() {
   const b = $('#voicebtn');
