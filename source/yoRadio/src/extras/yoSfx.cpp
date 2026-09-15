@@ -9,11 +9,11 @@
 YoSfx sfx;
 
 const uint16_t YoSfx::DEFAULT_MASK = (1 << SFX_START) | (1 << SFX_GESTURE) | (1 << SFX_CONNECT) |
-                                     (1 << SFX_ERROR) | (1 << SFX_TIMER) | (1 << SFX_ALARM);
+                                     (1 << SFX_ERROR) | (1 << SFX_TIMER) | (1 << SFX_ALARM) | (1 << SFX_LOWBAT);
 
-static const char* const IDS[SFX_N]    = { "start", "click", "gesture", "connect", "error", "timer", "alarm" };
+static const char* const IDS[SFX_N]    = { "start", "click", "gesture", "connect", "error", "timer", "alarm", "battery" };
 static const char* const TITLES[SFX_N] = { "Увімкнення", "Дотик до екрана", "Жест прийнято", "Мережа з'явилась",
-                                           "Мережа зникла", "Таймер сну", "Будильник" };
+                                           "Мережа зникла", "Таймер сну", "Будильник", "Батарея сідає" };
 
 const char* YoSfx::id(SfxEvent e)    { return e < SFX_N ? IDS[e] : ""; }
 const char* YoSfx::title(SfxEvent e) { return e < SFX_N ? TITLES[e] : ""; }
@@ -120,15 +120,41 @@ static uint32_t rd32(const uint8_t* b){ return b[0] | (b[1] << 8) | (b[2] << 16)
 static uint16_t rd16(const uint8_t* b){ return b[0] | (b[1] << 8); }
 
 /*  WAV: PCM 16 біт, моно чи стерео (стерео зводимо в моно), 8–48 кГц, до 5 с.  */
+/*  Двічі низхідний сигнал (880 → 660 Гц): розділу ресурсів на старих радіо може
+    не бути, а попередження мусить звучати й там.  */
+bool YoSfx::_synthLowBat(Clip& c){
+  const uint32_t rate = 22050;
+  const uint32_t n = rate * 62 / 100;
+  int16_t* pcm = (int16_t*)heap_caps_malloc(n * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if(!pcm) return false;
+  struct Tone { float t0, len, hz; };
+  static const Tone T[2] = { { 0.00f, 0.16f, 880.0f }, { 0.26f, 0.30f, 660.0f } };
+  for(uint32_t i = 0; i < n; i++){
+    const float t = (float)i / rate;
+    float v = 0;
+    for(const Tone& k : T){
+      const float u = t - k.t0;
+      if(u < 0 || u > k.len) continue;
+      float env = 1.0f;
+      if(u < 0.008f) env = u / 0.008f;
+      else if(u > k.len - 0.04f) env = (k.len - u) / 0.04f;
+      v += env * (sinf(2 * (float)M_PI * k.hz * u) + 0.25f * sinf(4 * (float)M_PI * k.hz * u));
+    }
+    pcm[i] = (int16_t)(v * 0.5f * 32767);
+  }
+  c.pcm = pcm; c.len = n; c.rate = rate;
+  return true;
+}
+
 bool YoSfx::_load(SfxEvent e){
   Clip& c = _clip[e];
   c.tried = true;
-  if(!_fsOk) return false;
+  if(!_fsOk) return e == SFX_LOWBAT && _synthLowBat(c);
   char path[40];
   snprintf(path, sizeof(path), "/snd/user/%s.wav", IDS[e]);
   File f = LittleFS.open(path, "r");
   if(!f){ snprintf(path, sizeof(path), "/snd/default/%s.wav", IDS[e]); f = LittleFS.open(path, "r"); }
-  if(!f) return false;
+  if(!f) return e == SFX_LOWBAT && _synthLowBat(c);
   uint8_t h[12];
   if(f.read(h, 12) != 12 || memcmp(h, "RIFF", 4) || memcmp(h + 8, "WAVE", 4)){ f.close(); return false; }
   uint16_t fmt = 0, ch = 0, bits = 0; uint32_t rate = 0, dataLen = 0;
@@ -197,6 +223,8 @@ void YoSfx::_run(){
     const Clip* c = _get(e);
     if(!c) continue;
     int32_t g = _gainQ15(e);
+    /*  попередження про батарею чути завжди — навіть коли гучність звуків на нулі  */
+    if(e == SFX_LOWBAT && g < 32767 * 40 * 40 / 10000) g = 32767 * 40 * 40 / 10000;
     if(!g) continue;
     if(player.isRunning()){
       /*  станція грає — домішує задача звуку  */

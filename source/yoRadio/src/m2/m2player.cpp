@@ -544,8 +544,49 @@ void Player::_drawPopup(Gfx& g){
   /*  тінь під карткою й сама картка  */
   g.fillA(0, 0, SW, SH, 0x0000, 90);
   g.box(r.x, r.y, r.w, r.h, 18, C_SURF);
-  g.frame(r.x, r.y, r.w, r.h, 18, _popup == 2 ? C_RED : C_ACC, 1);
+  g.frame(r.x, r.y, r.w, r.h, 18, (_popup == 2 || _popup == 3) ? C_RED : C_ACC, 1);
   char b[96];
+  if(_popup >= 3){
+    /*  батарея / зв'язок / картка / оновлення файлом — без кнопок, крім батареї  */
+    const bool bat = _popup == 3;
+    const uint16_t col = bat ? C_RED : C_ACC;
+    g.circle(r.x + 30, r.y + 32, 18, col);
+    if(bat){
+      /*  порожня батарея з одним «діленням»  */
+      g.frame(r.x + 18, r.y + 25, 22, 14, 3, 0xFFFF, 2);
+      g.box(r.x + 40, r.y + 29, 3, 6, 1, 0xFFFF);
+      g.box(r.x + 21, r.y + 28, 4, 8, 1, 0xFFFF);
+    }else icon(g, _popup == 4 ? IC_WIFI : (_popup == 5 ? IC_CARD : IC_REFRESH), r.x + 30, r.y + 32, C_ACCTXT, col);
+    const char* t1 = "", *t2 = "", *t3 = "";
+    if(bat){
+      t1 = "Батарея сідає";
+      snprintf(b, sizeof(b), "%d%% — під'єднайте зарядку", extras.batPct());
+      t2 = b; t3 = "нагадую щохвилини, поки не під'єднаєте";
+    }else if(_popup == 4){
+      t1 = "Немає зв'язку";
+      t2 = "радіо саме підключається до мережі…"; t3 = "торкніться — вибрати іншу мережу";
+    }else if(_popup == 5){
+      t1 = "Картка пам'яті";
+      if(_statusN >= 0){ snprintf(b, sizeof(b), "знайдено файлів: %ld", (long)_statusN); t2 = b; } else t2 = "читаю список треків…";
+      t3 = "за мить заграє";
+    }else{
+      t1 = "Оновлення"; t2 = "записую нову прошивку…"; t3 = "не вимикайте радіо";
+    }
+    g.text(r.x + 60, r.y + 39, t1, F_TITLE, C_TXT, AL_L, r.w - 74);
+    g.text(r.x + 16, r.y + 78, t2, F_ROW, bat ? C_TXT : C_TXT2, AL_L, r.w - 32);
+    g.text(r.x + 16, r.y + 98, t3, F_SM, C_TXT3, AL_L, r.w - 32);
+    if(bat){
+      const int16_t by = r.y + r.h - 46;
+      g.box(r.x + 14, by, r.w - 28, 34, 12, _popBtn >= 0 ? C_LINE : C_SURF2);
+      g.text(r.x + r.w / 2, by + 22, "Зрозуміло", F_ROWB, C_TXT, AL_C);
+    }else if(_popup != 5){
+      /*  іде робота — біжить крапка  */
+      const float a = fmodf(_frameT * 0.36f, 360.0f);
+      g.arc(r.x + r.w / 2, r.y + r.h - 28, 12, 3, C_SURF2);
+      g.arc(r.x + r.w / 2, r.y + r.h - 28, 12, 3, C_ACC, a, a + 90);
+    }
+    return;
+  }
   if(_popup == 1){
     g.circle(r.x + 30, r.y + 30, 16, C_ACC);
     icon(g, IC_DOWN, r.x + 30, r.y + 31, C_ACCTXT, C_ACC);
@@ -733,10 +774,16 @@ void Player::render(){
   /*  пропозиція оновитись / повідомлення, що не вдалося  */
   {
     int8_t want = 0;
-    if(ota.state() == OTA_ERROR && _otaWasInstalling) want = 2;
+    const uint32_t beat = extras.lowBatBeat();
+    if(beat != _lowSeen){ _lowSeen = beat; _lowUntil = now + 6000; }
+    if(_status) want = 3 + _status;                                   /* стан радіо важливіший за решту */
+    else if(_lowUntil && (int32_t)(now - _lowUntil) < 0 && extras.lowBattery()) want = 3;
+    else if(ota.state() == OTA_ERROR && _otaWasInstalling) want = 2;
     else if(ota.available() && !ota.installing() && strcmp(ota.latest(), _dismiss)) want = 1;
     if(ota.installing()) _otaWasInstalling = true;
     if(want != _popup){ _popup = want; invalAll(); }
+    else if(_popup == 4 || _popup == 6){ Rect pr = _popRect(); _mark(pr.x + pr.w / 2 - 20, pr.y + pr.h - 44, 40, 32); }   /* крутилка */
+    else if(_popup == 5){ static int32_t shownN = -2; if(_statusN != shownN){ shownN = _statusN; invalAll(); } }
   }
   if(_ripOn){
     if(_ripRel){
@@ -760,6 +807,7 @@ void Player::onPress(int16_t x, int16_t y){
     _zone = 20;
     _popBtn = -1;
     if(y >= r.y + r.h - 62 && y < r.y + r.h + 16) _popBtn = (_popup == 1 && x >= SW / 2) ? 1 : 0;
+    if(_popup >= 4) _popBtn = -1;                       /* стан радіо — без кнопок */
     _mark(r.x, r.y, r.w, r.h);
     return;
   }
@@ -831,6 +879,8 @@ void Player::onRelease(int16_t x, int16_t y){
       else strlcpy(_dismiss, ota.latest(), sizeof(_dismiss));
     }else if(b >= 0 && _popup == 2){
       _otaWasInstalling = false;
+    }else if(b >= 0 && _popup == 3){
+      _lowUntil = 0;
     }
     invalAll();
     return;

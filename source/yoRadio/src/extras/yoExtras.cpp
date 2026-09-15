@@ -12,6 +12,7 @@
 #include "../core/network.h"
 #include "../core/display.h"
 #include "../menu/yoMenu.h"
+#include "../m2/m2ui.h"
 #include <WiFi.h>
 #include <HWCDC.h>
 #include <Wire.h>
@@ -251,6 +252,7 @@ void YoExtras::loop(){
   _sleepLoop(now);
   _alarmLoop(now);
   _alarmWakeLoop(now);
+  _lowBatLoop(now);
   _screenLoop(now);
   _batLoop(now);
   _ledLoop(now);
@@ -634,15 +636,37 @@ void YoExtras::_alarmLoop(uint32_t now){
   _alarmStart();
 }
 
+/*  ---------- батарея сідає ----------
+    Поки заряд нижче 10 % і зарядника немає: раз на хвилину сигнал (звучить
+    навіть із вимкненими звуками подій) і картка на екрані; пригашений екран
+    на кілька секунд засвічується. Перше попередження — через 5 с після того,
+    як рівень упав (щоб не смикатись від одного виміру).  */
+void YoExtras::_lowBatLoop(uint32_t now){
+  if(!lowBattery() || s_alarmQuiet){ _lowSince = 0; _lowNext = 0; return; }
+  if(!_lowSince){ _lowSince = now; _lowNext = now + 5000; }
+  if((int32_t)(now - _lowNext) < 0) return;
+  _lowNext = now + 60000UL;
+  _lowBeat++;
+  _attnUntil = now + 8000;
+  _wakeUntil = now + 8000;                  /* уночі — теж на денну яскравість */
+  sfx.test(SFX_LOWBAT);
+  Serial.printf("##POWER#\tбатарея сідає: %d%%, %u мВ\n", batPct(), (unsigned)_batMv);
+#ifdef USE_YOMENU
+  if(m2::M.active()){ char b[64]; snprintf(b, sizeof(b), "батарея %d%% — під'єднайте зарядку", batPct()); m2::M.toast(b); }
+#endif
+}
+
 /*  ---------- екран ---------- */
 
 uint16_t YoExtras::pwmTarget(){
 #if BRIGHTNESS_PIN!=255
-  if(!config.store.dspon || _dark || _blank || s_alarmQuiet) return 0;
+  if(!config.store.dspon || _blank || s_alarmQuiet) return 0;
+  const bool attn = (int32_t)(_attnUntil - millis()) > 0;   /* попередження про батарею — екран світить, хоч би що */
+  if(_dark && !attn) return 0;
 #ifdef USE_YOMENU
-  if(_presDark && !yomenu.active()) return 0;        /* мікрофон: у кімнаті давно нікого не чути */
+  if(_presDark && !yomenu.active() && !attn) return 0;        /* мікрофон: у кімнаті давно нікого не чути */
 #else
-  if(_presDark) return 0;
+  if(_presDark && !attn) return 0;
 #endif
   uint16_t day = map(config.store.brightness, 0, 100, 0, 255);
   bool awake = (int32_t)(_wakeUntil - millis()) > 0;
@@ -659,7 +683,7 @@ uint16_t YoExtras::pwmTarget(){
   static const uint8_t SAVE_S[5] = { 0, 10, 15, 30, 60 };
   _saver = s.batSave && !s.noBat && _batMv >= 2800 && !onPower() &&
            (millis() - _lastTouch) > (uint32_t)SAVE_S[s.batSave] * 1000UL;
-  if(_saver && t > 6) t = 6;
+  if(_saver && t > 6 && !attn) t = 6;
   return t;
 #else
   return 255;

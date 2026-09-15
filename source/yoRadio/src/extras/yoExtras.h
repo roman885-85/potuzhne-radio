@@ -141,6 +141,7 @@ class YoExtras {
         без заставки, звуку, підсвітки й автостарту; далі або знову сон, або дзвінок.  */
     static bool wokeForAlarm();
     static bool alarmQuiet();            /* зараз тихе чекання будильника (екран темний, радіо «вимкнене») */
+    uint32_t lowBatBeat() const { return _lowBeat; }   /* росте з кожним попередженням про батарею (раз на хвилину) */
 
     /*  світлодіод  */
     void     ledTest(uint8_t r, uint8_t g, uint8_t b, uint16_t ms);
@@ -167,6 +168,9 @@ class YoExtras {
     int16_t  _lastAlarmKey = -1;       /* хвилина доби, коли вже дзвонили */
     void     _alarmLoop(uint32_t now);
     void     _alarmWakeLoop(uint32_t now);
+    void     _lowBatLoop(uint32_t now);
+    volatile uint32_t _lowBeat = 0;
+    uint32_t _lowSince = 0, _lowNext = 0, _attnUntil = 0;
     int64_t  _alarmSecs() const;       /* секунд до найближчого будильника за годинником системи; -1 — нема */
     int32_t  _alarmPassedSecs() const; /* скільки секунд тому був сьогоднішній будильник (якщо сьогодні день будильника), -1 */
     void     _alarmStart();

@@ -16,7 +16,7 @@
 
 #include <Arduino.h>
 
-enum SfxEvent : uint8_t { SFX_START, SFX_CLICK, SFX_GESTURE, SFX_CONNECT, SFX_ERROR, SFX_TIMER, SFX_ALARM, SFX_N };
+enum SfxEvent : uint8_t { SFX_START, SFX_CLICK, SFX_GESTURE, SFX_CONNECT, SFX_ERROR, SFX_TIMER, SFX_ALARM, SFX_LOWBAT, SFX_N };
 
 class YoSfx {
   public:
@@ -74,6 +74,7 @@ class YoSfx {
     void _run();
     const Clip* _get(SfxEvent e);
     bool _load(SfxEvent e);
+    bool _synthLowBat(Clip& c);          /* типовий звук «батарея сідає», якщо файлу немає */
     void _out(const Clip& c, int32_t gainQ15, uint64_t startPos = 0, SfxEvent ev = SFX_N);
     static int32_t _gainQ15(SfxEvent e);
 };

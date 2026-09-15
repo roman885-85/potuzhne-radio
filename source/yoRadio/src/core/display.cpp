@@ -822,7 +822,7 @@ void Display::_lowBat(){
   }
   if(!low){ nextAt = 0; return; }
   if(nextAt && (int32_t)(now - nextAt) < 0) return;
-  shownAt = now; nextAt = now + 300000UL;    /* повторюємо раз на п'ять хвилин */
+  shownAt = now; nextAt = now + 60000UL;     /* повторюємо щохвилини (разом зі звуком) */
   if(_sdctl) _sdctl->lock(true);
   if(_weathericon) _weathericon->lock(true);
   dsp.fillRect(66, 84, 254, 38, config.theme.background);
@@ -1228,8 +1228,20 @@ void Display::_swichMode(displayMode_e newmode) {
   _logoCrc = 1;                      /* логотип — теж */
   dsp.setScrollId(NULL);
 #if DSP_MODEL==DSP_ILI9341
+  /*  Новий вигляд: «немає зв'язку», «картка», «оновлення» — картка на головному
+      екрані, а не старий діалог yoRadio з жовтою смугою посередині.  */
+  const bool m2status = m2::P.on() && (newmode == LOST || newmode == SDCHANGE || newmode == UPDATING);
+  if (m2status) {
+    _pager->setPageKeep(_m2empty);
+    m2::P.setStatus(newmode == LOST ? 1 : (newmode == SDCHANGE ? 2 : 3));
+    m2::P.show();
+    m2::P.invalAll();
+    m2::P.render();
+    return;
+  }
   if (newmode != PLAYER) m2::P.hide();
   if (newmode == PLAYER && m2::P.on()) {
+    m2::P.setStatus(0);
     numOfNextStation = 0;
     config.isScreensaver = false;
     _pager->setPageKeep(_m2empty);
@@ -1450,7 +1462,7 @@ void Display::loop() {
       значок джерела в шапці. Перехід на радіо в changeMode() не має ні
       діалогу, ні повернення на плеєр, тож без цього пульт картки лишався
       на екрані радіо. Тут, після виходу для меню, щоб не малювати поверх нього.  */
-  bool m2p = (_mode == PLAYER && m2::P.shown());
+  bool m2p = ((_mode == PLAYER || _mode == LOST || _mode == SDCHANGE || _mode == UPDATING) && m2::P.shown());
   if(m2p){
     /*  новий головний екран малює себе сам; старі частини плеєра мовчать  */
     if(_redrawReq && !fading()){ _redrawReq = false; m2::P.invalAll(); }
@@ -1590,7 +1602,7 @@ void Display::loop() {
           break;
         }
         case SDFILEINDEX: {
-          if(_mode == SDCHANGE) _nums->setText(request.payload, "%d");
+          if(_mode == SDCHANGE){ _nums->setText(request.payload, "%d"); m2::P.setStatusCount(request.payload); }
           break;
         }
         case DSPRSSI: if(_rssi){ _setRSSI(request.payload); } if (_heapbar && config.store.audioinfo) _heapbar->setValue(player.isRunning()?player.inBufferFilled():0); break;

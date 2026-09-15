@@ -26,6 +26,9 @@ class Player {
     void render();                       /* задача дисплея, щооберта, поки плеєр на екрані */
     void invalAll(){ _mark(0, 0, SW, SH); }
     int16_t _cardH() const;              /* висота картки: з обкладинкою проповіді — більша */
+    /*  задача дисплея: стан замість старих діалогів yoRadio (жовта смуга посередині)  */
+    void setStatus(uint8_t st){ _status = st; _statusN = -1; }
+    void setStatusCount(int32_t n){ _statusN = n; }
     /*  головний цикл  */
     void onPress(int16_t x, int16_t y);
     void onDrag(int16_t x, int16_t y);
@@ -72,9 +75,12 @@ class Player {
     int16_t _rowMode = -1;               /* 0 рівень, 1 обране, 2 пульт */
     /*  пропозиція оновитись: показуємо, доки людина не вибере; «пізніше» — до наступного запуску  */
     char     _dismiss[32] = { 0 };
-    volatile int8_t _popup = 0;          /* 0 немає, 1 нова версія, 2 оновлення не вдалося */
+    volatile int8_t _popup = 0;          /* 0 немає, 1 нова версія, 2 оновлення не вдалося, 3 батарея сідає, 4 немає зв'язку, 5 картка, 6 оновлення файлом */
     volatile int8_t _popBtn = -1;        /* натиснута кнопка в картці */
     bool     _otaWasInstalling = false;
+    uint32_t _lowSeen = 0, _lowUntil = 0;  /* показ попередження про батарею (6 с на кожне) */
+    volatile uint8_t _status = 0;        /* стан радіо замість старих діалогів: 1 немає зв'язку, 2 картка, 3 оновлення */
+    volatile int32_t _statusN = -1;      /* лічильник (файли картки) */
     static Rect _popRect(){ return Rect(16, 44, SW - 32, 152); }
     void _drawPopup(Gfx& g);
 
