@@ -89,20 +89,21 @@ struct VoiceCheckView: View {
                 .font(.system(size: 12)).foregroundColor(Palette.dim).fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 10) {
-                Button { refresh() } label: { Label("Перевірити знову", systemImage: "arrow.clockwise") }
+                Button { refresh() } label: { Label("Перевірити знову", systemImage: "arrow.clockwise").lineLimit(1) }
                     .buttonStyle(PillButton(accent: false))
-                Button { busy = true; meter.stop(); VoiceCheck.askAgain { done($0) } } label: { Label("Спитати дозвіл знову", systemImage: "questionmark.circle") }
+                Button { busy = true; meter.stop(); VoiceCheck.askAgain { done($0) } } label: { Label("Спитати дозвіл знову", systemImage: "questionmark.circle").lineLimit(1) }
                     .buttonStyle(PillButton(accent: false)).disabled(busy)
-                Spacer()
+                Spacer(minLength: 6)
                 if check.ready && model.current != nil {
-                    Button { meter.stop(); close(); model.startVoice() } label: { Label("Сказати команду", systemImage: "mic.fill") }
+                    Button { meter.stop(); close(); model.startVoice() } label: { Label("Сказати команду", systemImage: "mic.fill").lineLimit(1) }
                         .buttonStyle(PillButton(accent: true))
                 }
                 Button("Закрити") { close() }.buttonStyle(PillButton(accent: false)).keyboardShortcut(.cancelAction)
             }
+            .fixedSize(horizontal: false, vertical: true)
         }
         .padding(20)
-        .frame(width: 600)
+        .frame(width: 740)
         .background(Palette.bg)
         .preferredColorScheme(.dark)
         .onAppear { if !preset { refresh() } }
@@ -173,7 +174,6 @@ enum VoiceSelfTest {
             var report: [String: Any] = ["check": VoiceCheck.now().json, "bundle": Bundle.main.bundleIdentifier ?? ""]
             report["micPeak"] = await micPeak(seconds: 2)
             if let audio { report["file"] = await recognize(URL(fileURLWithPath: audio)) }
-            if let render { snapshot(VoiceCheckView().environmentObject(model), render) }
             if let renderDenied {
                 let c = VoiceCheck(mic: .denied, speech: .ask, device: "Вбудований мікрофон", language: true, available: true)
                 snapshot(VoiceCheckView(preset: c).environmentObject(model), renderDenied)
@@ -184,6 +184,8 @@ enum VoiceSelfTest {
                 report["buffers4chMono"] = await recognizeBuffers(u, channels: 4, mono: true)
             }
             if let live { report["live"] = await liveRun(model: model, phrase: URL(fileURLWithPath: live)) }
+            // знімок — після --live: радіо вже підключене, видно й кнопку «Сказати команду»
+            if let render { snapshot(VoiceCheckView().environmentObject(model), render) }
             if let d = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) { try? d.write(to: out) }
             exit(0)
         }
