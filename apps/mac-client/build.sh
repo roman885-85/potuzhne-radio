@@ -16,6 +16,11 @@ OBJ="$(mktemp -d)"
 trap 'rm -rf "$OBJ"' EXIT
 
 command -v swiftc >/dev/null || { echo "swiftc не знайдено: xcode-select --install"; exit 1; }
+# Підмінити пакет під відкритою програмою не можна: macOS звіряє підпис запущеної копії з пакетом
+# на диску, не збігається — дозволи (мікрофон, розпізнавання мовлення) мовчки «заборонено».
+if pgrep -f "$APP/Contents/MacOS/radio" >/dev/null; then
+  echo "✗ «$APP_NAME» зараз відкрита з $OUT — закрийте її й запустіть збірку знову (або OUT=<інша тека>)"; exit 1
+fi
 rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/uk.lproj"
 
 SOURCES=(Sources/*.swift ../shared/Discovery.swift ../shared/Style.swift)
