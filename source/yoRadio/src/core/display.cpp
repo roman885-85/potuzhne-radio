@@ -1,5 +1,6 @@
 #include "Arduino.h"
 #include "options.h"
+#include "../extras/yoHang.h"
 #include "WiFi.h"
 #include "time.h"
 #include "config.h"
@@ -73,6 +74,8 @@ uint32_t yoDspWhatMs = 0;
 
 static void loopDspTask(void * pvParameters){
   while(true){
+    yoHbDsp++;                                   /* сторож зависань (extras/yoHang) */
+    if(yoHangTestMs){ uint32_t ms = yoHangTestMs; yoHangTestMs = 0; Serial.printf("##HANG#\tперевірка: задача екрана спить %u с\n", (unsigned)(ms / 1000)); vTaskDelay(pdMS_TO_TICKS(ms)); }
   #ifndef DUMMYDISPLAY
     if(displayQueue==NULL) break;
 #ifdef YO_DEBUG
@@ -1273,6 +1276,7 @@ void Display::_swichMode(displayMode_e newmode) {
     config.setDspOn(config.store.dspon, false);
     drawHeaderIcons();
     _applySdLayout();
+    if(timekeeper.weatherBuf && timekeeper.weatherBuf[0]) putRequest(NEWWEATHER);   /* погода, що прийшла, поки був новий вигляд */
     _layoutChange(player.status() == PLAYING);   /* покажчик рівня — за фактом, а не за загубленим PSTART */
     pm.on_display_player();
   }
@@ -1579,6 +1583,13 @@ void Display::loop() {
           break;
         }
         case NEWWEATHER: {
+#if DSP_MODEL==DSP_ILI9341
+          /*  Новий вигляд малює погоду сам (m2player). Старий рядок погоди в ньому
+              не замкнений і на setText одразу малює в екран поверх нового кадру —
+              прибрано разом із підозрою на «намертво» раз на пів години (оновлення
+              погоди). Старий вигляд отримає текст, коли на нього перемкнуть.  */
+          if(m2::P.on()) break;
+#endif
           if(_weather && timekeeper.weatherBuf) _weather->setText(timekeeper.weatherBuf);
           if(_weathericon){
             if(timekeeper.weatherHave)

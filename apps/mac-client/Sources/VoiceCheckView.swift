@@ -169,7 +169,7 @@ enum VoiceSelfTest {
         let out = URL(fileURLWithPath: a[i + 1])
         let audio = (i + 2 < a.count && !a[i + 2].hasPrefix("--")) ? a[i + 2] : nil
         func opt(_ k: String) -> String? { a.firstIndex(of: k).flatMap { $0 + 1 < a.count ? a[$0 + 1] : nil } }
-        let render = opt("--render"), renderDenied = opt("--render-denied"), live = opt("--live"), buffers = opt("--buffers")
+        let render = opt("--render"), renderDenied = opt("--render-denied"), live = opt("--live"), buffers = opt("--buffers"), eval = opt("--eval")
         Task { @MainActor in
             var report: [String: Any] = ["check": VoiceCheck.now().json, "bundle": Bundle.main.bundleIdentifier ?? ""]
             report["micPeak"] = await micPeak(seconds: 2)
@@ -183,6 +183,7 @@ enum VoiceSelfTest {
                 report["buffers4ch"] = await recognizeBuffers(u, channels: 4, mono: false)
                 report["buffers4chMono"] = await recognizeBuffers(u, channels: 4, mono: true)
             }
+            if let eval, let code = try? String(contentsOfFile: eval, encoding: .utf8) { report["eval"] = await evalRun(model: model, code: code) }
             if let live { report["live"] = await liveRun(model: model, phrase: URL(fileURLWithPath: live)) }
             // знімок — після --live: радіо вже підключене, видно й кнопку «Сказати команду»
             if let render { snapshot(VoiceCheckView().environmentObject(model), render) }
@@ -201,6 +202,21 @@ enum VoiceSelfTest {
 
     @MainActor private static func js(_ wv: WKWebView, _ code: String) async -> Any? {
         await withCheckedContinuation { c in wv.evaluateJavaScript(code) { r, _ in c.resume(returning: r) } }
+    }
+
+    /// --eval <файл.js>: дочекатися сторінки радіо й виконати сценарій (async-функція, повертає JSON-значення).
+    @MainActor private static func evalRun(model: AppModel, code: String) async -> Any {
+        for _ in 0..<180 {
+            if let wv = model.web, (await js(wv, "typeof voiceStart === 'function'")) as? Bool == true {
+                return await withCheckedContinuation { (c: CheckedContinuation<Any, Never>) in
+                    wv.callAsyncJavaScript(code, arguments: [:], in: nil, in: .page) { r in
+                        switch r { case .success(let v): c.resume(returning: v); case .failure(let e): c.resume(returning: "помилка: \(e)") }
+                    }
+                }
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        return "сторінка радіо не відкрилась"
     }
 
     @MainActor private static func liveRun(model: AppModel, phrase: URL) async -> [String: Any] {

@@ -20,6 +20,9 @@
 #include "yoOta.h"
 #include <LittleFS.h>
 #include "yoVersion.h"
+#include "yoHang.h"
+#include "esp_core_dump.h"
+#include "esp_flash.h"
 
 /*  ---------- JSON у готовий буфер ----------
     Буфери лежать у PSRAM і живуть весь час: відповідь іде з них без копії
@@ -143,6 +146,50 @@ static void onHello(AsyncWebServerRequest* r){
   r->send(resp);
 }
 
+/*  ---------- /api/crash: останнє зависання чи падіння ----------
+    Короткий зміст дампу — одразу; сам дамп (усі задачі зі стеками) — /api/crash.bin,
+    розшифровувати esp-coredump з ELF тієї ж збірки.  */
+static void onCrash(AsyncWebServerRequest* r){
+  char b[900];
+  JOut o(b, sizeof(b));
+  o.put('{');
+  o.ks("hang", YoHang::last()); o.kn("hangAt", YoHang::lastAt()); o.kn("thisBoot", YoHang::thisBoot());
+  o.ks("rst", YoExtras::resetReason());
+  size_t addr = 0, len = 0;
+  const bool have = esp_core_dump_image_check() == ESP_OK && esp_core_dump_image_get(&addr, &len) == ESP_OK;
+  o.kn("dump", have ? (long long)len : 0);
+  if(have){
+    esp_core_dump_summary_t* cs = (esp_core_dump_summary_t*)heap_caps_calloc(1, sizeof(esp_core_dump_summary_t), MALLOC_CAP_SPIRAM);
+    if(cs && esp_core_dump_get_summary(cs) == ESP_OK){
+      char t[24];
+      o.ks("task", cs->exc_task);
+      snprintf(t, sizeof(t), "0x%08lx", (unsigned long)cs->exc_pc); o.ks("pc", t);
+      o.ks("elf", (const char*)cs->app_elf_sha256);
+      o.arr("bt");
+      for(uint32_t i = 0; i < cs->exc_bt_info.depth && i < 16; i++){ snprintf(t, sizeof(t), "0x%08lx", (unsigned long)cs->exc_bt_info.bt[i]); o.sep(); o.str(t); }
+      o.put(']');
+    }
+    if(cs) free(cs);
+  }
+  o.put('}');
+  AsyncWebServerResponse* resp = r->beginResponse(200, "application/json", b);
+  resp->addHeader("Cache-Control", "no-store");
+  r->send(resp);
+}
+
+static void onCrashBin(AsyncWebServerRequest* r){
+  size_t addr = 0, len = 0;
+  if(esp_core_dump_image_check() != ESP_OK || esp_core_dump_image_get(&addr, &len) != ESP_OK || !len || len > 0x40000){ r->send(404, "text/plain", "дампу немає"); return; }
+  AsyncWebServerResponse* resp = r->beginResponse("application/octet-stream", len,
+    [addr, len](uint8_t* buf, size_t maxLen, size_t index) -> size_t {
+      if(index >= len) return 0;
+      size_t n = len - index; if(n > maxLen) n = maxLen; if(n > 4096) n = 4096;
+      return esp_flash_read(esp_flash_default_chip, buf, addr + index, n) == ESP_OK ? n : 0;
+    });
+  resp->addHeader("Content-Disposition", "attachment; filename=\"coredump.bin\"");
+  r->send(resp);
+}
+
 /*  ---------- /api/state ---------- */
 static void onState(AsyncWebServerRequest* r){
   JOut o(_stBuf, ST_CAP);
@@ -158,7 +205,9 @@ static void onState(AsyncWebServerRequest* r){
   o.kn("heapBlk", heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));   /* найбільший шматок — від нього залежить TLS */
   o.kn("psram", ESP.getFreePsram());
   o.kn("up", millis() / 1000);
-  o.ks("rst", YoExtras::resetReason());
+  o.ks("rst", YoHang::thisBoot() ? "ЗАВИСАННЯ — радіо перезапустилось само" : YoExtras::resetReason());
+  if(YoHang::last()[0]){ o.ks("hang", YoHang::last()); o.kn("hangAt", YoHang::lastAt()); }
+  o.kn("hb", (long long)yoHbLoop); o.kn("hbDsp", (long long)yoHbDsp);     /* оберти циклу й екрана: зовні видно, що стоїть */
   {
     char t[24];
     if(network.timeinfo.tm_year > 100){ strftime(t, sizeof(t), "%H:%M", &network.timeinfo); o.ks("time", t);
@@ -546,6 +595,8 @@ void yoWebApiBegin(AsyncWebServer& s){
   if(!_stBuf || !_bigBuf || !_recBuf) return;
   s.on("/api/hello",    HTTP_GET,  onHello);
   s.on("/api/state",    HTTP_GET,  onState);
+  s.on("/api/crash.bin",HTTP_GET,  onCrashBin);
+  s.on("/api/crash",    HTTP_GET,  onCrash);
   s.on("/api/set",      HTTP_ANY,  onSet);
   s.on("/api/eq",       HTTP_GET,  onEq);
   s.on("/api/sermons",  HTTP_GET,  onSermons);
@@ -604,6 +655,8 @@ static void apply(const WebCmd& c){
       else if(e >= 0 && e < (int)sizeof(s.sfxEvVol)) s.sfxEvVol[e] = g;
     }
   }
+  else if(!strcmp(k, "crashClear")) { YoHang::clear(); ext = false; }
+  else if(!strcmp(k, "hangTest"))   { yoHangTestMs = (uint32_t)clampi(v, 1, 180) * 1000UL; ext = false; }   /* перевірка сторожа: екран «зависне» на v с */
   else if(!strcmp(k, "sfxPlay"))    { int e = YoSfx::find(v); if(e >= 0) sfx.test((SfxEvent)e); ext = false; }
   else if(!strcmp(k, "sfxReset")){
     /*  свій звук прибрати — знову стандартний  */

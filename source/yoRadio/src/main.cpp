@@ -17,6 +17,7 @@
 #include "extras/yoDsp.h"
 #include "extras/yoSfx.h"
 #include "extras/yoOta.h"
+#include "extras/yoHang.h"
 #ifdef USE_NEXTION
 #include "displays/nextion.h"
 #endif
@@ -77,6 +78,7 @@ void setupOTA(){
 void setup() {
   YoExtras::earlyBoot();      /* після сну «вимкнено»: зняти фіксацію виводів, доки їх ніхто не чіпав */
   Serial.begin(115200);
+  YoHang::boot();             /* чи не зависання спричинило цей старт — до того, як будь-що перезапише запис */
   if(REAL_LEDBUILTIN!=255) pinMode(REAL_LEDBUILTIN, OUTPUT);
   if (yoradio_on_setup) yoradio_on_setup();
   pm.on_setup();
@@ -95,6 +97,7 @@ void setup() {
     initControls();
     display.putRequest(DSP_START);
     while(!display.ready()) delay(10);
+    YoHang::begin();
     return;
   }
   if(SDC_CS!=255) {
@@ -119,6 +122,7 @@ void setup() {
     player.sendCommand({PR_PLAY, config.lastStation()});
   }
   pm.on_end_setup();
+  YoHang::begin();            /* сторож зависань: головний цикл і задача екрана */
 }
 
 #ifdef YO_DEBUG
@@ -141,6 +145,7 @@ static inline void yoSlow(const char* what, uint32_t t0){
 #endif
 
 void loop() {
+  yoHbLoop++;
 #ifdef YO_DEBUG
   {
     static uint32_t prev = 0;
