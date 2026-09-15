@@ -30,6 +30,7 @@ struct PotuzhneRadioApp: App {
                     .disabled(model.current == nil)
                 Button("Голосові команди") { model.showVoiceHelp() }
                     .disabled(model.current == nil)
+                Button("Дозволи для голосових команд…") { model.voiceCheckShown = true }
                 Divider()
                 Button("Відкрити в браузері") { model.openInBrowser() }
                     .disabled(model.current == nil)
@@ -37,6 +38,7 @@ struct PotuzhneRadioApp: App {
             CommandGroup(replacing: .help) {
                 Button("Голосові команди") { model.showVoiceHelp() }
                     .disabled(model.current == nil)
+                Button("Дозволи для голосових команд…") { model.voiceCheckShown = true }
             }
         }
     }
@@ -52,6 +54,7 @@ final class AppModel: ObservableObject {
     @Published var message: String?
     @Published var notice: String?
     @Published var tryingSaved = false
+    @Published var voiceCheckShown = false      // вікно «Голосові команди на цьому Mac»
     let finder = RadioFinder()
     weak var web: WKWebView?
 
@@ -68,6 +71,8 @@ final class AppModel: ObservableObject {
         watch = finder.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.maybeAutoConnect() }
         }
+        VoiceListener.shared.showCheck = { [weak self] in self?.voiceCheckShown = true }
+        _ = VoiceSelfTest.runIfAsked(model: self)          // --voice-check: самоперевірка голосу (див. VoiceCheckView.swift)
         Task { await start() }
     }
 
@@ -128,6 +133,8 @@ final class AppModel: ObservableObject {
     func reload() { web?.reload() }
     /// Інструкція з голосових команд — розділ самої сторінки радіо.
     func showVoiceHelp() { web?.evaluateJavaScript("location.hash = '#/voice'", completionHandler: nil) }
+    /// Та сама кнопка з мікрофоном, що вгорі сторінки радіо.
+    func startVoice() { web?.evaluateJavaScript("typeof voiceStart === 'function' && voiceStart()", completionHandler: nil) }
     func openInBrowser() { if let r = current, let u = URL(string: "http://\(r.ip)/") { NSWorkspace.shared.open(u) } }
 
     func show(notice text: String) {
@@ -159,5 +166,8 @@ struct RootView: View {
         }
         .background(Palette.bg)
         .animation(.easeInOut(duration: 0.2), value: model.notice)
+        .sheet(isPresented: $model.voiceCheckShown) {
+            VoiceCheckView(close: { model.voiceCheckShown = false }).environmentObject(model)
+        }
     }
 }

@@ -11,6 +11,7 @@ enum Palette {
     static let dim = Color(red: 0x8c/255, green: 0x8c/255, blue: 0x8c/255)
     static let acc = Color(red: 0xe6/255, green: 0xd2/255, blue: 0x5a/255)
     static let bad = Color(red: 0xef/255, green: 0x5b/255, blue: 0x5b/255)
+    static let ok = Color(red: 0x5c/255, green: 0xc9/255, blue: 0x7b/255)
 }
 
 struct PillButton: ButtonStyle {

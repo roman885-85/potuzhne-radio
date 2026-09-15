@@ -10,7 +10,7 @@ APP_NAME="ПОТУЖНЕ РАДІО"
 BUNDLE_ID="ua.potuzhne.macos.radio"
 VERSION="$(tr -d ' \n\r' < "$ROOT/firmware/VERSION" 2>/dev/null || echo 1.0)"
 MIN_MACOS="13.0"
-OUT="$ROOT/Програми"
+OUT="${OUT:-$ROOT/Програми}"             # OUT=<тека> — зібрати деінде (перевірки)
 APP="$OUT/$APP_NAME.app"
 OBJ="$(mktemp -d)"
 trap 'rm -rf "$OBJ"' EXIT
