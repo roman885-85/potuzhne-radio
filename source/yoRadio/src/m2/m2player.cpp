@@ -50,7 +50,6 @@ static uint32_t crcs(const char* s){
 }
 static uint32_t mixs(uint32_t h, const char* s){ if(s) for(; *s; s++) h = (h ^ (uint8_t)*s) * 16777619UL; return h; }
 
-bool Player::on() const { return !extras.s.menuClassic; }
 
 void Player::_mark(int16_t x, int16_t y, int16_t w, int16_t h){
   if(w <= 0 || h <= 0) return;

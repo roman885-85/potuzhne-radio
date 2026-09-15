@@ -17,7 +17,6 @@
 #include <SPIFFS.h>
 #include "../ES8311/yoES8311.h"
 #include "yoMenu.h"
-#include "uicanvas.h"
 #include "../m2/m2pages.h"
 #include "../extras/yoOta.h"
 #include "../extras/yoVersion.h"
@@ -39,9 +38,6 @@ static uint8_t vuBarMin = 255, vuBarMax = 0;   /* те саме, але вже �
 
 /*  Перевірка анімації гучності: знімаємо, де насправді стоїть смуга, кожні
     20 мс. Без затримок у циклі — інакше зупиниться звук.  */
-static uint8_t  slideLeft = 0;
-static uint32_t slideTick = 0;
-static uint8_t  slideBack = 0;
 
 /*  Приймання файлу в SPIFFS порядково, шістнадцятковим текстом. Потрібне,
     щоб оновити сторінки веб-інтерфейсу, не стираючи розділ цілком: поруч
@@ -106,14 +102,7 @@ static void addStation(const char* name, const char* url){
 
 void yodbgLoop(){
   /*  Вибірка рівня: один відлік за оберт головного циклу, без затримок.  */
-  if(slideLeft && millis() - slideTick >= 20){
-    slideTick = millis();
-    Serial.printf("  смуга=%u\n", (unsigned)display.volbarShown());
-    if(--slideLeft == 0){
-      player.setVol(slideBack);            /* повертаємо як було */
-      Serial.println("гучність повернуто");
-    }
-  }
+
   if(vuSampleLeft && millis() - vuTick >= 40){
     vuTick = millis();
     uint16_t v = player.get_VUlevel(100);
@@ -293,16 +282,6 @@ void yodbgLoop(){
                     config.store.weatherlat, config.store.weatherlon);
       Serial.printf("  рядок: \"%s\"\n", timekeeper.weatherBuf ? timekeeper.weatherBuf : "(не виділено)");
       Serial.printf("  значок за умовою: %d\n", (int)timekeeper.weatherIcon);
-      display.dbgWeather();
-    }
-    else if(!strcmp(buf,"slide")){
-      /*  Зсуваємо гучність і дивимось, як смуга доїжджає. Через 0.5 с
-          повертаємо попереднє значення.  */
-      slideBack = config.store.volume;
-      uint8_t to = slideBack > 120 ? slideBack - 60 : slideBack + 60;
-      Serial.printf("гучність %u -> %u, стежу за смугою\n", slideBack, to);
-      player.setVol(to);
-      slideLeft = 25; slideTick = 0;
     }
     else if(!strcmp(buf,"sdindex")){
       /*  Пересобрати плейлист картки: після зміни правил відбору файлів
@@ -541,8 +520,7 @@ void yodbgLoop(){
       if(yoSlowMs) Serial.printf("найдовший крок циклу: %s %u мс\n", yoSlowWhat, (unsigned)yoSlowMs);
       else         Serial.println("довгих кроків циклу не було");
       yoSlowMs = 0; yoSlowWhat[0] = 0;
-      Serial.printf("сторінка меню=%d активне=%d | режим екрана=%d\n",
-        (int)yomenu.page(), yomenu.active()?1:0, (int)display.mode());
+      Serial.printf("меню відкрите=%d | режим екрана=%d\n", yomenu.active()?1:0, (int)display.mode());
       Serial.printf("пошук: іде=%d знайдено=%u scanComplete=%d режим=%d\n",
         yomenu.scanning()?1:0, (unsigned)yomenu.scanCount(), (int)WiFi.scanComplete(), (int)WiFi.getMode());
       Serial.printf("мережа: статус=%d втрачено=%d спроби спинено=%d спроб=%u status()=%d ssid='%s'\n",
@@ -552,13 +530,9 @@ void yodbgLoop(){
     else if(!strcmp(buf,"menu"))   yomenu.open();
     else if(!strcmp(buf,"mwifi"))  yomenu.openWifi(false);   /* без замка: це перевірка, а не режим точки доступу */
     else if(!strcmp(buf,"mclose")) yomenu.close();
-    else if(!strcmp(buf,"mkbd"))   yomenu.openKbdTest();
-    else if(!strcmp(buf,"kbtext")) Serial.printf("KBTEXT '%s'\n", yomenu.kbdTest());
     else if(!strncmp(buf,"tdown ",6)){ int x=0,y=0; if(sscanf(buf+6,"%d %d",&x,&y)==2){ touchscreen.injectBegin(x,y); touchscreen.loop(); Serial.println("TDOWN"); } }
     else if(!strncmp(buf,"tmove ",6)){ int x=0,y=0; if(sscanf(buf+6,"%d %d",&x,&y)==2){ touchscreen.injectMove(x,y); touchscreen.loop(); Serial.println("TMOVE"); } }
     else if(!strcmp(buf,"tup"))    { touchscreen.injectEnd(); touchscreen.loop(); Serial.println("TUP"); }
-    else if(!strncmp(buf,"mpage ",6)) yomenu.openPage((int8_t)atoi(buf+6));
-    else if(!strncmp(buf,"menuclassic ",12)){ extras.s.menuClassic = atoi(buf+12) ? 1 : 0; extras.changed(); Serial.printf("меню: %s\n", extras.s.menuClassic ? "класичне" : "нове"); }
     else if(!strncmp(buf,"m2 ",3)){
       /*  нове меню одразу на сторінці: m2 <номер> (0 меню, 1 параметри, 2 екран, 3 будильник, 4 обране, 5 проповіді,
           6 про радіо, 7 живлення, 8 пояс, 9 еквалайзер, 10 обробка, 11 кімната, 12 мікрофон, 13 жести, 14 присутність,
@@ -648,7 +622,9 @@ void yodbgLoop(){
       /*  Імітація дотику: дозволяє перевірити меню без людини біля екрана. */
       char* sp = strchr(buf+4,' ');
       if(sp){ *sp=0; uint16_t x=atoi(buf+4), y=atoi(sp+1);
-              Serial.printf("tap %d,%d\n", x, y); yomenu.onRelease(x,y); }
+              Serial.printf("tap %d,%d\n", x, y);
+              touchscreen.injectBegin(x,y); touchscreen.loop(); delay(80); touchscreen.loop();
+              touchscreen.injectEnd(); touchscreen.loop(); delay(50); touchscreen.loop(); }
     }
     else if(!strncmp(buf,"list",4)) display.putRequest(NEWMODE, STATIONS);
     else if(!strncmp(buf,"drag ",5)){
@@ -673,7 +649,6 @@ void yodbgLoop(){
     else if(!strncmp(buf,"sdown ",6)){ int x=0,y=0; if(sscanf(buf+6, "%d %d", &x,&y)==2){ touchscreen.injectBegin(x,y); Serial.printf("палець %d,%d тримає\n", x, y); } }
     else if(!strncmp(buf,"smove ",6)){ int x=0,y=0; if(sscanf(buf+6, "%d %d", &x,&y)==2) touchscreen.injectMove(x,y); }
     else if(!strcmp(buf,"sup")){ touchscreen.injectEnd(); Serial.println("палець відпущено"); }
-    else if(!strncmp(buf,"uifx ",5)){ int a = atoi(buf+5); ui.fxFreeze((int16_t)a); Serial.printf("UIFX хвиля %s %d мс\n", a >= 0 ? "стоїть на" : "жива", a); }
     else if(!strncmp(buf,"stap ",5)){
       int x=0,y=0;
       if(sscanf(buf+5, "%d %d", &x,&y)==2){
@@ -734,26 +709,7 @@ void yodbgLoop(){
       int r=0,g=0,b=0;
       if(sscanf(buf+4, "%d %d %d", &r,&g,&b)==3){ extras.ledTest(r,g,b,3000); Serial.println("світлодіод 3 с"); }
     }
-    else if(!strcmp(buf,"sfps")){
-      extern uint32_t yoPlRender, yoPlBlit;
-      yoPlRender = yoPlBlit = 0;
-      uint32_t el = display.plBenchmark(40);
-      Serial.printf("з них складання рядків %.1f мс/кадр, вивід у дисплей %.1f мс/кадр\n",
-                    yoPlRender/40000.0f, yoPlBlit/40000.0f);
-      if(el) Serial.printf("плавна відмальовка: %u мс на 40 кадрів = %.1f мс/кадр = %.0f кадрів/с\n",
-                           (unsigned)el, el/40.0f, 40000.0f/el);
-      else Serial.println("sfps: недоступно");
-    }
     else if(!strcmp(buf,"plstate")) touchscreen.dbgState();
-    else if(!strcmp(buf,"fps")){
-      /*  Скільки перемальовок списку встигає екран за секунду.  */
-      if(display.mode()!=STATIONS){ Serial.println("fps: спершу відкрийте список"); }
-      else{
-        uint32_t t0=millis(); int n=0;
-        while(millis()-t0 < 1000){ display.putRequest(DRAWPLAYLIST, display.currentPlItem); n++; delay(5); }
-        Serial.printf("fps: запитів за секунду %d\n", n);
-      }
-    }
     else if(!strcmp(buf,"reboot")) ESP.restart();
     else Serial.printf("DBG: невідома команда '%s'\n", buf);
   }

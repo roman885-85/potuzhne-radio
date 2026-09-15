@@ -194,8 +194,9 @@ void encodersLoop(yoEncoder *enc, bool first){
           if(encoderDelta > 0) player.next(); else player.prev();
           return;
         }
-        display.putRequest(NEWMODE, STATIONS);
-        while(display.mode() != STATIONS) {delay(10);}
+        /*  Список станцій — сторінка меню: енкодером по ньому не ходять, лише станції підряд.  */
+        if(encoderDelta > 0) player.next(); else player.prev();
+        return;
       }
       controlsEvent(encoderDelta > 0, encoderDelta);
     }

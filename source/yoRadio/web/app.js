@@ -1388,12 +1388,10 @@ VIEWS.screen = page => {
         row('Перевернути екран', null, sw(+C.flip, v => send('flipscreen=' + (v ? 1 : 0)))),
         row('Інверсія кольорів', null, sw(+C.inv, v => send('invertdisplay=' + (v ? 1 : 0)))),
         row('Перевернути сенсор', 'якщо дотики потрапляють не туди', sw(+C.tsf, v => send('fliptouch=' + (v ? 1 : 0)))),
-        row('Заставка, коли не грає', 'годинник на весь екран', sw(+C.scre, v => send('screensaverenabled=' + (v ? 1 : 0)))),
+        row('Гасити екран, коли не грає', 'дотик засвітить', sw(+C.scre, v => send('screensaverenabled=' + (v ? 1 : 0)))),
         row('— через, секунд', null, num('scrt', 'screensavertimeout', 5, 65520)),
-        row('— порожній екран замість годинника', null, sw(+C.scrb, v => send('screensaverblank=' + (v ? 1 : 0)))),
-        row('Заставка під час відтворення', null, sw(+C.scrpe, v => send('screensaverplayingenabled=' + (v ? 1 : 0)))),
-        row('— через, хвилин', null, num('scrpt', 'screensaverplayingtimeout', 1, 1080)),
-        row('— порожній екран', null, sw(+C.scrpb, v => send('screensaverplayingblank=' + (v ? 1 : 0)))));
+        row('Гасити екран під час відтворення', null, sw(+C.scrpe, v => send('screensaverplayingenabled=' + (v ? 1 : 0)))),
+        row('— через, хвилин', null, num('scrpt', 'screensaverplayingtimeout', 1, 1080)));
     }
   });
 };
@@ -1715,7 +1713,6 @@ VIEWS.system = page => {
     const md = h('input', { type: 'text', value: C.mdns, maxlength: 24, style: { width: '180px' } });
     box.append(
       row('Грати після ввімкнення', 'продовжити станцію, якщо радіо грало, коли його вимкнули', sw(+C.sst, v => send('smartstart=' + (v ? 1 : 0)))),
-      row('Показник рівня', 'стрілки VU на екрані плеєра', sw(+C.vu, v => send('vumeter=' + (v ? 1 : 0)))),
       row('Подробиці потоку в журналі', 'для діагностики через USB', sw(+C.aif, v => send('audioinfo=' + (v ? 1 : 0)))),
       row('Точка доступу, якщо мережі немає', 'через стільки хвилин (0 — одразу)', sa),
       row('Ім\'я в мережі', `відкривається як http://${C.mdns || 'potuzhne'}.local`, h('div', { class: 'bar' }, md, btn('Змінити', null, () => { send('mdnsname=' + md.value.trim()); send('rebootmdns=1'); toast('Радіо перезавантажується з новим ім\'ям'); }, 'sm'))),
@@ -1988,6 +1985,8 @@ VIEWS.about = page => {
       ['Файлова система', `${size(S.fs.u)} з ${size(S.fs.t)}`],
       ['Аудіовихід', DACS[S.dev.dac].n],
     ];
+    /*  Сторож зависань (extras/yoHang): радіо перезапустилось саме — що саме стояло й коли.  */
+    if (S.hang) rows.push(['Останнє зависання', `${S.hang}${S.hangAt ? ' · ' + new Date(S.hangAt * 1000).toLocaleString('uk-UA', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : ''} — радіо перезапустилось саме`]);
     kv.textContent = '';
     rows.forEach(([a, b]) => kv.append(h('dt', null, a), h('dd', null, b)));
   });

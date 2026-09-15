@@ -312,8 +312,6 @@ static Item s_setItems[] = {
           [](int32_t v){ config.saveValue(&config.store.smartstart, static_cast<uint8_t>(v ? 1 : 2)); }),
   iSwitch("Інфо про потік", IC_INFO, C_TEAL, [](){ return (int32_t)config.store.audioinfo; },
           [](int32_t v){ config.saveValue(&config.store.audioinfo, static_cast<bool>(v)); }),
-  iSwitch("Класичне меню", IC_MENU, C_GREY, [](){ return (int32_t)extras.s.menuClassic; },
-          [](int32_t v){ extras.s.menuClassic = v ? 1 : 0; extras.changed(); if(v){ M.toast("далі — класичне меню"); M.close(); } }),
   iSection("РАДІО"),
   iNav("Оновлення", IC_REFRESH, C_BLUE, vUpd, [](){ M.push(&pgUpdate); }),
   iNav("Про радіо", IC_INFO, C_GREY, vVer, [](){ M.push(&pgInfo); }),
