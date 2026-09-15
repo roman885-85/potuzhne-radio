@@ -42,15 +42,32 @@ static ListPage s_dev("Розробник", s_devItems, sizeof(s_devItems) / siz
 Page& pgDev = s_dev;
 
 /*  =================== «Заставка й звуки» =================== */
+/*  Повзунок гучності події: під час руху — пробний звук (не частіше ніж раз на 0,7 с).  */
+static void sfxHear(SfxEvent e){
+  static uint32_t t = 0;
+  if(millis() - t < 700) return;
+  t = millis();
+  sfx.test(e);
+}
+#define SFX_EV_SLIDER(label, ev) iSlider(label, 0, 100, [](){ return (int32_t)extras.s.sfxEvVol[ev]; }, \
+  [](int32_t v){ extras.s.sfxEvVol[ev] = (uint8_t)v; extras.changed(); sfxHear(ev); }, "%")
 static Item s_dsItems[] = {
   iSection("ЗАСТАВКА"),
   iSwitch("Анімована заставка", IC_SPLASH, C_PINK, [](){ return (int32_t)!extras.s.splashOff; }, [](int32_t v){ extras.s.splashOff = !v; extras.changed(); }),
-  iSlider("Звук заставки", 0, 100, [](){ return (int32_t)extras.s.splashVol; }, [](int32_t v){ extras.s.splashVol = v; extras.changed(); }, "%"),
+  iSlider("Привітання (звук заставки)", 0, 100, [](){ return (int32_t)extras.s.splashVol; }, [](int32_t v){ extras.s.splashVol = v; extras.changed(); sfxHear(SFX_START); }, "%"),
   iButton("Показати заставку", IC_PLAY, [](){ afterClose = 2; M.close(); }),
   iSection("ЗВУКИ ПОДІЙ"),
   iSwitch("Звуки подій", IC_BELL, C_PINK, [](){ return (int32_t)extras.s.sfxOn; }, [](int32_t v){ extras.s.sfxOn = v; extras.changed(); }),
-  iSlider("Гучність", 0, 100, [](){ return (int32_t)extras.s.sfxVol; }, [](int32_t v){ extras.s.sfxVol = v; extras.changed(); sfx.test(SFX_GESTURE); }, "%"),
-  iNote([](){ return "свої звуки й вибір подій —\nна сторінці радіо, «Розробник»"; }, 36),
+  iSlider("Загальна гучність", 0, 100, [](){ return (int32_t)extras.s.sfxVol; }, [](int32_t v){ extras.s.sfxVol = v; extras.changed(); sfxHear(SFX_GESTURE); }, "%"),
+  iSection("ГУЧНІСТЬ КОЖНОГО ЗВУКУ"),
+  SFX_EV_SLIDER("Дотик до екрана", SFX_CLICK),
+  SFX_EV_SLIDER("Жест прийнято", SFX_GESTURE),
+  SFX_EV_SLIDER("Мережа з'явилась", SFX_CONNECT),
+  SFX_EV_SLIDER("Мережа зникла", SFX_ERROR),
+  SFX_EV_SLIDER("Таймер сну", SFX_TIMER),
+  SFX_EV_SLIDER("Будильник", SFX_ALARM),
+  SFX_EV_SLIDER("Батарея сідає", SFX_LOWBAT),
+  iNote([](){ return "свій звук (MP3 чи WAV) і які події озвучувати —\nна сторінці радіо: Розробник › Звуки подій"; }, 36),
 };
 static ListPage s_devSnd("Заставка й звуки", s_dsItems, sizeof(s_dsItems) / sizeof(s_dsItems[0]));
 Page& pgDevSnd = s_devSnd;

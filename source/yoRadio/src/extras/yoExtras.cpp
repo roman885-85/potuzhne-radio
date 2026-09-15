@@ -75,6 +75,8 @@ void YoExtras::_load(){
   }
   if(s.sfxVol > 100) s.sfxVol = 60;
   if(!s.splashInit){ s.splashInit = 1; s.splashVol = 70; }
+  if(!s.sfxEvInit){ s.sfxEvInit = 1; for(uint8_t i = 0; i < sizeof(s.sfxEvVol); i++) s.sfxEvVol[i] = 100; }
+  for(uint8_t i = 0; i < sizeof(s.sfxEvVol); i++) if(s.sfxEvVol[i] > 100) s.sfxEvVol[i] = 100;
   if(s.splashVol > 100) s.splashVol = 70;
   if(!s.eqInit){
     s.eqInit = 1; s.eqOn = 1; s.eqGuard = 1; s.eqLoud = 0; s.vbass = 0; s.eqPreset = 0;

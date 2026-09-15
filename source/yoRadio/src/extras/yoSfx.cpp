@@ -102,8 +102,11 @@ uint32_t YoSfx::clipMs(SfxEvent e){
 
 /*  Гучність звуків — своя, від 0 до 100, квадратом: на слух рівніше.  */
 int32_t YoSfx::_gainQ15(SfxEvent e){
+  /*  Привітання (заставка) — своя гучність; решта — загальна гучність звуків,
+      помножена на гучність саме цієї події.  */
   uint32_t v = e == SFX_START ? extras.s.splashVol : extras.s.sfxVol;
   if(v > 100) v = 100;
+  if(e != SFX_START && e < sizeof(extras.s.sfxEvVol)){ uint32_t ev = extras.s.sfxEvVol[e]; if(ev > 100) ev = 100; v = v * ev / 100; }
   return (int32_t)(32767UL * v * v / 10000UL);
 }
 
@@ -119,7 +122,7 @@ const YoSfx::Clip* YoSfx::_get(SfxEvent e){
 static uint32_t rd32(const uint8_t* b){ return b[0] | (b[1] << 8) | (b[2] << 16) | ((uint32_t)b[3] << 24); }
 static uint16_t rd16(const uint8_t* b){ return b[0] | (b[1] << 8); }
 
-/*  WAV: PCM 16 біт, моно чи стерео (стерео зводимо в моно), 8–48 кГц, до 5 с.  */
+/*  WAV: PCM 16 біт, моно чи стерео (стерео зводимо в моно), 8–48 кГц, до 10 с.  */
 /*  Двічі низхідний сигнал (880 → 660 Гц): розділу ресурсів на старих радіо може
     не бути, а попередження мусить звучати й там.  */
 bool YoSfx::_synthLowBat(Clip& c){
@@ -179,7 +182,7 @@ bool YoSfx::_load(SfxEvent e){
     f.close(); return false;
   }
   uint32_t frames = dataLen / (2U * ch);
-  if(frames > rate * 5) frames = rate * 5;
+  if(frames > rate * 10) frames = rate * 10;              /* свій звук — до 10 с */
   if(frames < 2){ f.close(); return false; }
   int16_t* pcm = (int16_t*)heap_caps_malloc(frames * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if(!pcm){ f.close(); return false; }

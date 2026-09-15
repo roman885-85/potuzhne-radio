@@ -1787,6 +1787,7 @@ VIEWS.about = page => {
    Файли живуть на радіо в розділі ресурсів. Свій звук сторінка готує сама:
    будь-який файл, який уміє браузер, → моно 22 кГц, до 5 с, вирівняна
    гучність → WAV. Радіо не мусить уміти MP3 чи OGG для таких дрібниць.  */
+const SFX_MAX_SEC = 10, SFX_MAX_FILE = 20 * 1024 * 1024;   /* свій звук: до 10 с після перетворення; вихідний файл до 20 МБ */
 const SFX_SUB = {
   start: 'коли радіо вмикається', click: 'клацання під пальцем; типово вимкнено', gesture: 'хлопки чи стук розпізнано',
   connect: 'радіо повернулось у мережу', error: 'зв\'язок із мережею зник', timer: 'таймер сну спрацював', alarm: 'на початку будильника, перед станцією',
@@ -1853,15 +1854,18 @@ function sfxSection() {
       const f = pick.files[0]; if (!f) return;
       try {
         toast('Готую звук…');
-        const w = await sfxToWav(f, 5);
+        if (f.size > SFX_MAX_FILE) throw new Error(`файл ${size(f.size)} — завеликий (до ${size(SFX_MAX_FILE)})`);
+        const w = await sfxToWav(f, SFX_MAX_SEC);
         const fd = new FormData(); fd.append('file', w.blob, e.id + '.wav');
         await api('/api/sfx?e=' + e.id, { method: 'POST', body: fd });
-        toast(`«${e.t}»: свій звук, ${w.secs.toFixed(1)} с${w.cut ? ' (обрізано до 5 с)' : ''}`);
+        toast(`«${e.t}»: свій звук, ${w.secs.toFixed(1)} с${w.cut ? ` (обрізано до ${SFX_MAX_SEC} с)` : ''}`);
         setTimeout(() => { setx({ sfxPlay: e.id }); reload(); }, 400);
       } catch (err) { toast('Не вдалося: ' + err.message, true); }
       pick.value = '';
     });
-    return [btn('Свій', 'upload', () => pick.click(), 'sm'), pick];
+    const b = btn('Свій', 'upload', () => pick.click(), 'sm');
+    b.title = `MP3 або WAV (також OGG, M4A, FLAC), до ${size(SFX_MAX_FILE)}; звучить перші ${SFX_MAX_SEC} с`;
+    return [b, pick];
   }
   const durTxt = e => e.ms ? (e.ms < 1000 ? e.ms + ' мс' : (e.ms / 1000).toFixed(1) + ' с') : '';
   function draw() {
@@ -1874,14 +1878,19 @@ function sfxSection() {
         mine ? btn('Стандартний', 'refresh', () => { setx({ sfxReset: e.id }); setTimeout(reload, 600); }, 'sm ghost') : null);
       tail.firstChild.title = 'Прослухати';
       const sub = `${mine ? 'свій звук' : 'стандартний'}${durTxt(e) ? ', ' + durTxt(e) : ''}`;
+      /*  гучність саме цього звуку (привітання — своя; решта — від загальної)  */
+      const vb = volBox(v => { setx({ sfxEvVol: `${e.id}:${v}` }); setTimeout(() => setx({ sfxPlay: e.id }), 300); });
+      vb.set(e.vol == null ? 100 : e.vol);
       if (e.id === 'start') {
-        rowsSplash.append(row('Звук заставки', 'грає разом з анімацією · ' + sub, tail));
+        rowsSplash.append(row('Привітання (звук заставки)', 'грає разом з анімацією · ' + sub, tail));
+        rowsSplash.append(row('Гучність привітання', '0 — без звуку', vb));
       } else {
-        tail.append(sw(!!(mask & bit), v => setx({ sfxMask: v ? (mask | bit) : (mask & ~bit) })));
+        if (e.id !== 'battery') tail.append(sw(!!(mask & bit), v => setx({ sfxMask: v ? (mask | bit) : (mask & ~bit) })));
         rowsEv.append(row(e.t, `${SFX_SUB[e.id] || ''} · ${sub}`, tail));
+        rowsEv.append(row('', `гучність «${e.t.toLowerCase()}» — від загальної`, vb));
       }
     });
-    space.textContent = list.fs ? `Розділ ресурсів: зайнято ${size(list.used)} з ${size(list.total)}. Свій звук — будь-який звуковий файл: сторінка сама переведе його у формат радіо (моно 22 кГц, до 5 с, вирівняна гучність).` : '';
+    space.textContent = list.fs ? `Розділ ресурсів: зайнято ${size(list.used)} з ${size(list.total)}.` : '';
   }
   async function reload() { try { list = await api('/api/sfx'); draw(); } catch (e) {} }
   reload();
@@ -1890,7 +1899,14 @@ function sfxSection() {
       row('Гучність звуку заставки', '0 — заставка без звуку', splashVol), rowsSplash,
       h('div', { class: 'bar', style: { marginTop: '10px' } }, btn('Показати на радіо', 'play', () => { setx({ splashDemo: 7000 }); toast('Дивіться на екран радіо'); }, 'sm'))),
     card('Звуки подій', row('Звуки подій', 'короткі сигнали: жест прийнято, мережа, таймер сну, будильник', sfxSw),
-      row('Гучність', 'своя — не залежить від гучності станції; під час звуку станція ненадовго стишується', sfxVol), rowsEv, space, noFs),
+      row('Загальна гучність', 'своя — не залежить від гучності станції; під час звуку станція ненадовго стишується', sfxVol), rowsEv,
+      h('div', { class: 'note', style: { marginTop: '12px' } },
+        h('b', null, 'Свій звук — кнопка «Свій». '),
+        `Підходять MP3 і WAV (також OGG, M4A, FLAC — усе, що відкриває браузер), файл до ${size(SFX_MAX_FILE)}. `,
+        `Сторінка сама переводить звук у формат радіо: WAV, моно, 22 050 Гц, 16 біт, до ${SFX_MAX_SEC} с (≈ 440 КБ), `,
+        'вирівнює гучність (пік −3 дБ) і м\'яко гасить кінець. Довший звук обрізається. Якість — як у телефонного дзвінка, ',
+        'але повнішого: для сигналів і коротких фраз досить; музика довша за 10 с не підходить.'),
+      space, noFs),
   ];
   const upd = () => {
     if (!S || !S.sfx) return;

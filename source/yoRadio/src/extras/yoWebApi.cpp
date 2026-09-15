@@ -473,6 +473,7 @@ static void onSfxList(AsyncWebServerRequest* r){
     o.sep(); o.obj();
     o.ks("id", YoSfx::id((SfxEvent)i)); o.ks("t", YoSfx::title((SfxEvent)i));
     o.kn("user", (sfx.userMask() >> i) & 1); o.kn("ms", sfx.clipMs((SfxEvent)i));
+    o.kn("vol", i == SFX_START ? extras.s.splashVol : (i < sizeof(extras.s.sfxEvVol) ? extras.s.sfxEvVol[i] : 100));
     o.put('}');
   }
   o.put(']');
@@ -484,7 +485,7 @@ static File _sfFile;
 static int  _sfEvent = -1;
 static size_t _sfLen = 0;
 static const char* _sfErr = nullptr;
-static const size_t SFX_MAX_BYTES = 512 * 1024;   /* 5 с моно 48 кГц — з запасом */
+static const size_t SFX_MAX_BYTES = 1024 * 1024;  /* сторінка шле моно 22 кГц 16 біт до 10 с (≈ 440 КБ); запас на свій WAV */
 
 static void onSfxUpload(AsyncWebServerRequest* r, String filename, size_t index, uint8_t* data, size_t len, bool final){
   if(!index){
@@ -496,7 +497,7 @@ static void onSfxUpload(AsyncWebServerRequest* r, String filename, size_t index,
     if(!_sfFile){ _sfErr = "не вдалося записати файл"; return; }
   }
   if(_sfErr) return;
-  if(_sfLen + len > SFX_MAX_BYTES){ _sfErr = "файл завеликий (до 500 КБ)"; _sfFile.close(); LittleFS.remove("/snd/user/up.tmp"); return; }
+  if(_sfLen + len > SFX_MAX_BYTES){ _sfErr = "файл завеликий (до 1 МБ після перетворення)"; _sfFile.close(); LittleFS.remove("/snd/user/up.tmp"); return; }
   if(_sfFile && len) _sfLen += _sfFile.write(data, len);
   if(final && _sfFile){
     _sfFile.close();
@@ -593,6 +594,16 @@ static void apply(const WebCmd& c){
   else if(!strcmp(k, "otaInstall")) { ota.install(); ext = false; }
   else if(!strcmp(k, "sfxVol"))     s.sfxVol = clampi(v, 0, 100);
   else if(!strcmp(k, "sfxMask"))    s.sfxMask = clampi(v, 0, 0xFFFF);
+  else if(!strcmp(k, "sfxEvVol")){
+    /*  «подія:гучність», напр. «alarm:80»  */
+    char id[16] = {0}; const char* c = strchr(v, ':');
+    if(c && c - v < (int)sizeof(id)){
+      memcpy(id, v, c - v);
+      int e = YoSfx::find(id), g = clampi(c + 1, 0, 100);
+      if(e == SFX_START) s.splashVol = g;
+      else if(e >= 0 && e < (int)sizeof(s.sfxEvVol)) s.sfxEvVol[e] = g;
+    }
+  }
   else if(!strcmp(k, "sfxPlay"))    { int e = YoSfx::find(v); if(e >= 0) sfx.test((SfxEvent)e); ext = false; }
   else if(!strcmp(k, "sfxReset")){
     /*  свій звук прибрати — знову стандартний  */
