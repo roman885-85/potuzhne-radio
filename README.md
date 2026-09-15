@@ -182,6 +182,7 @@ Wi-Fi (пошук мереж, пароль на екранній клавіат�
 <p>
 <img src="media/rozrobnyk.png" width="320" alt="Розробник">
 <img src="media/zvuky.png" width="320" alt="Заставка й звуки">
+<img src="media/zvuky-hucnist.png" width="320" alt="Гучність кожного звуку й кнопка «прослухати»">
 <img src="media/audiovykhid.png" width="320" alt="Аудіовихід">
 </p>
 
