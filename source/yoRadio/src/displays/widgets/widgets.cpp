@@ -184,8 +184,17 @@ void FillWidget::init(FillConfig conf, uint16_t bgcolor){
   
 }
 
+#if DSP_MODEL==DSP_ILI9341
+bool yoM2On();                               /* core/display.cpp: вибрано новий вигляд */
+#endif
 void FillWidget::_draw(){
   if(!_active) return;
+#if DSP_MODEL==DSP_ILI9341
+  /*  Жовті смуги старого вигляду (під назвою станції, у діалогах, під поточним
+      рядком списку) — лише для старого вигляду. У новому їх немає зовсім: на
+      прохання власника, вони вилазили посередині екрана при підключенні до мережі.  */
+  if(yoM2On()) return;
+#endif
   dsp.fillRect(_config.left, _config.top, _width, _height, _bgcolor);
 }
 

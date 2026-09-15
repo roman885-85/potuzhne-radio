@@ -95,6 +95,9 @@ void Config::init() {
   BOOTLOG("CONFIG_VERSION\t%d", store.version);
   store.play_mode = store.play_mode & 0b11;
   if(store.play_mode>1) store.play_mode=PM_WEB;
+  /*  Погода частіше ніж раз на 15 хв — лише для перевірок (сторінка менше не дає):
+      повертаємо звичні 30, щоб не забитись у ліміт ключа й не смикати мережу.  */
+  if(store.weatherSyncInterval < 15) saveValue(&store.weatherSyncInterval, (uint16_t)30);
   _initHW();
   if (!SPIFFS.begin(true)) {
     Serial.println("##[ERROR]#\tSPIFFS Mount Failed");

@@ -317,7 +317,7 @@ void Display::_buildPager(){
   pages[PG_SCREENSAVER]->addWidget(_clock);
   pages[PG_PLAYER]->addPage(_footer);
 
-  if(_metabackground) pages[PG_DIALOG]->addWidget( _metabackground);
+  if(_metabackground) pages[PG_DIALOG]->addWidget( _metabackground);   /* у новому вигляді не малюється (FillWidget::_draw) */
   pages[PG_DIALOG]->addWidget(_meta);
   pages[PG_DIALOG]->addWidget(_nums);
   
@@ -344,6 +344,10 @@ void Display::_buildPager(){
 /*  Мережі немає. Власної точки доступу радіо більше не піднімає, тож і
     окремого «вікна підключення» з її назвою й паролем не треба: одразу
     список мереж, у ньому людина й вибирає свою.  */
+#if DSP_MODEL==DSP_ILI9341
+bool yoM2On(){ return m2::P.on(); }
+#endif
+
 void Display::_noNetScreen() {
   if(_boot){ _pager->removePage(_boot); _boot = nullptr; }
   dsp.fillScreen(config.theme.background);
@@ -1210,6 +1214,12 @@ void Display::_swichMode(displayMode_e newmode) {
     //nextion.swichMode(newmode);
     nextion.putRequest({NEWMODE, newmode});
   #endif
+#if DSP_MODEL==DSP_ILI9341
+  /*  Новий вигляд не показує старих діалогів yoRadio (гучність, сон, номер станції,
+      «налаштування»): лишається головний екран — усе це він показує сам.  */
+  if (m2::P.on() && (newmode == VOL || newmode == SLEEPING || newmode == NUMBERS || newmode == INFO ||
+                     newmode == SETTINGS || newmode == TIMEZONE || newmode == WIFI)) newmode = PLAYER;
+#endif
   if (newmode == _mode || (network.status != CONNECTED && network.status != SDREADY)) return;
   if (!_ensurePlayer()) return;
   /*  Зв'язок може зникнути ще на заставці завантаження, а віджети плеєра
