@@ -32,9 +32,6 @@
   #endif
   #include <XPT2046_Touchscreen.h>
   XPT2046_Touchscreen ts(TS_CS);
-#elif TS_MODEL==TS_MODEL_GT911
-  #include "../GT911_Touchscreen/TAMC_GT911.h"
-  TAMC_GT911 ts = TAMC_GT911(TS_SDA, TS_SCL, TS_INT, TS_RST, 0, 0);
 #elif TS_MODEL==TS_MODEL_FT6336
   #include "../FT6336_Touchscreen/yoFT6336.h"
   YoFT6336 ts = YoFT6336(TS_SDA, TS_SCL, TS_INT, TS_RST);
@@ -48,8 +45,6 @@ void TouchScreen::init(uint16_t w, uint16_t h){
   #else
     ts.begin();
   #endif
-#elif TS_MODEL==TS_MODEL_GT911
-  ts.begin();
 #elif TS_MODEL==TS_MODEL_FT6336
   /*  Тачскрину — той самий номер повороту, що й дисплею: він сам переведе
       портретні координати панелі в екранні.  */
@@ -58,7 +53,7 @@ void TouchScreen::init(uint16_t w, uint16_t h){
   _width  = w;
   _height = h;
   flip();
-#if TS_MODEL==TS_MODEL_GT911 || TS_MODEL==TS_MODEL_FT6336
+#if TS_MODEL==TS_MODEL_FT6336
   ts.setResolution(_width, _height);
 #endif
 }
@@ -66,8 +61,6 @@ void TouchScreen::init(uint16_t w, uint16_t h){
 void TouchScreen::flip(){
 #if TS_MODEL==TS_MODEL_XPT2046
   ts.setRotation(config.store.fliptouch?3:1);
-#elif TS_MODEL==TS_MODEL_GT911
-  ts.setRotation(config.store.fliptouch?0:2);
 #elif TS_MODEL==TS_MODEL_FT6336
   ts.setRotation(config.store.fliptouch?1:3);
 #endif
@@ -89,7 +82,7 @@ void TouchScreen::loop(){
   static bool wastouched = true;
   if(millis() - _touchdelay <= 10) return;       /* 100 разів на секунду: швидкий тик інакше губиться */
   _touchdelay = millis();
-#if TS_MODEL==TS_MODEL_GT911 || TS_MODEL==TS_MODEL_FT6336
+#if TS_MODEL==TS_MODEL_FT6336
   ts.read();
 #endif
   const bool istouched = _istouched();
