@@ -19,6 +19,7 @@ static uint8_t cpOf(uint32_t u){
     case 0x2022: return 0x95; case 0x2026: return 0x85; case 0x2116: return 0xB9; case 0x20AC: return 0x88;
     case 0x2122: return 0x99;
     case 0x2192: return 0xBB;                  /* → — у CP1251 немає, показуємо «»» */
+    case 0x203A: return 0xBB; case 0x2039: return 0xAB;   /* › ‹ — показуємо » « */
   }
   return '?';
 }

@@ -1882,8 +1882,7 @@ function sfxSection() {
       const vb = volBox(v => { setx({ sfxEvVol: `${e.id}:${v}` }); setTimeout(() => setx({ sfxPlay: e.id }), 300); });
       vb.set(e.vol == null ? 100 : e.vol);
       if (e.id === 'start') {
-        rowsSplash.append(row('Привітання (звук заставки)', 'грає разом з анімацією · ' + sub, tail));
-        rowsSplash.append(row('Гучність привітання', '0 — без звуку', vb));
+        rowsSplash.append(row('Привітання (звук заставки)', 'грає разом з анімацією · ' + sub, tail));   /* гучність — повзунок splashVol вище */
       } else {
         if (e.id !== 'battery') tail.append(sw(!!(mask & bit), v => setx({ sfxMask: v ? (mask | bit) : (mask & ~bit) })));
         rowsEv.append(row(e.t, `${SFX_SUB[e.id] || ''} · ${sub}`, tail));
@@ -1896,7 +1895,7 @@ function sfxSection() {
   reload();
   const els = [
     card('Заставка', row('Анімована заставка', 'при увімкненні, поки радіо шукає мережу', splashSw),
-      row('Гучність звуку заставки', '0 — заставка без звуку', splashVol), rowsSplash,
+      row('Гучність привітання', 'звук заставки при увімкненні; 0 — без звуку', splashVol), rowsSplash,
       h('div', { class: 'bar', style: { marginTop: '10px' } }, btn('Показати на радіо', 'play', () => { setx({ splashDemo: 7000 }); toast('Дивіться на екран радіо'); }, 'sm'))),
     card('Звуки подій', row('Звуки подій', 'короткі сигнали: жест прийнято, мережа, таймер сну, будильник', sfxSw),
       row('Загальна гучність', 'своя — не залежить від гучності станції; під час звуку станція ненадовго стишується', sfxVol), rowsEv,
