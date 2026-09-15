@@ -98,6 +98,7 @@ Item iSection(const char* label);
 Item iNav(const char* label, uint8_t icon, uint16_t badge, TextFn value, ActFn act);
 Item iSwitch(const char* label, uint8_t icon, uint16_t badge, GetFn get, SetFn set);
 Item iSlider(const char* label, int16_t lo, int16_t hi, GetFn get, SetFn set, const char* unit = nullptr);
+Item iSliderPlay(const char* label, int16_t lo, int16_t hi, GetFn get, SetFn set, const char* unit, ActFn play);   /* з кнопкою ▶ «прослухати» */
 Item iSeg(const char* label, const char* const* opts, uint8_t n, GetFn get, SetFn set);
 Item iButton(const char* label, uint8_t icon, ActFn act, uint16_t color = 0);
 Item iInfo(const char* label, TextFn value);
@@ -127,6 +128,7 @@ class ListPage : public Page {
     int16_t  _dragId = -1;            /* повзунок під пальцем: показуємо його значення, доки цикл не збереже */
     float    _dragV = 0;
     uint32_t _dragHold = 0;
+    bool     _onPlay = false;          /* останній hit() влучив у кнопку ▶ повзунка */
     void _layout();
     void _drawItem(Gfx& g, Item& it);
     uint32_t _sigOf(Item& it);

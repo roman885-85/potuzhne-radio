@@ -89,6 +89,11 @@ Item iSection(const char* label){ Item i; i.type = IT_SECTION; i.label = label; 
 Item iNav(const char* label, uint8_t ic, uint16_t badge, TextFn value, ActFn act){ Item i; i.type = IT_NAV; i.label = label; i.icon = ic; i.badge = badge; i.text = value; i.act = act; return i; }
 Item iSwitch(const char* label, uint8_t ic, uint16_t badge, GetFn get, SetFn set){ Item i; i.type = IT_SWITCH; i.label = label; i.icon = ic; i.badge = badge; i.get = get; i.set = set; return i; }
 Item iSlider(const char* label, int16_t lo, int16_t hi, GetFn get, SetFn set, const char* unit){ Item i; i.type = IT_SLIDER; i.label = label; i.lo = lo; i.hi = hi; i.get = get; i.set = set; i.unit = unit; return i; }
+Item iSliderPlay(const char* label, int16_t lo, int16_t hi, GetFn get, SetFn set, const char* unit, ActFn play){ Item i = iSlider(label, lo, hi, get, set, unit); i.act = play; return i; }
+/*  кнопка ▶ повзунка: праворуч у рядку підпису; дотик ловимо ширше за саму кнопку  */
+static const int16_t PLAY_W = 34, PLAY_H = 24, PLAY_ZONE = 56, PLAY_LINE = 34;
+static Rect playRect(const Item& it){ return Rect(MX + CWID - 12 - PLAY_W, it.y + 6, PLAY_W, PLAY_H); }
+static bool onPlay(const Item& it, int16_t x, int16_t y){ return it.act && y < it.y + PLAY_LINE && x >= MX + CWID - PLAY_ZONE; }
 Item iSeg(const char* label, const char* const* opts, uint8_t n, GetFn get, SetFn set){ Item i; i.type = IT_SEG; i.label = label; i.opts = opts; i.nopts = n; i.get = get; i.set = set; return i; }
 Item iButton(const char* label, uint8_t ic, ActFn act, uint16_t color){ Item i; i.type = IT_BUTTON; i.label = label; i.icon = ic; i.act = act; i.color = color; return i; }
 Item iInfo(const char* label, TextFn value){ Item i; i.type = IT_INFO; i.label = label; i.text = value; return i; }
@@ -264,8 +269,15 @@ void ListPage::_drawItem(Gfx& g, Item& it){
       char b[20];
       int32_t iv = (_dragId >= 0 && &_it[_dragId] == &it && millis() < _dragHold) ? (int32_t)_dragV : (it.get ? it.get() : 0);
       snprintf(b, sizeof(b), "%d%s", (int)iv, it.unit ? it.unit : "");
-      int16_t vw = g.text(x + w - 14, y + 22, b, F_ROWB, tc, AL_R);
-      g.text(x + 14, y + 22, it.label, F_ROW, tc, AL_L, w - 40 - vw);
+      int16_t vx = x + w - 14;
+      if(it.act){
+        Rect pr = playRect(it);
+        g.box(pr.x, pr.y, pr.w, pr.h, pr.h / 2, en ? C_SURF2 : C_SURF);
+        icon(g, IC_PLAY, pr.x + pr.w / 2 + 1, pr.y + pr.h / 2, en ? C_ACC : C_TXT2, C_SURF2);
+        vx = pr.x - 8;
+      }
+      int16_t vw = g.text(vx, y + 22, b, F_ROWB, tc, AL_R);
+      g.text(x + 14, y + 22, it.label, F_ROW, tc, AL_L, vx - vw - x - 26);
       float frac = (v - it.lo) / (float)(it.hi - it.lo);
       float zero = (it.lo < 0 && it.hi > 0) ? (0 - it.lo) / (float)(it.hi - it.lo) : -1;
       drawSlider(g, x + 12, y + 40, w - 24, frac, en, zero);
@@ -297,6 +309,8 @@ int16_t ListPage::hit(int16_t x, int16_t y, Rect& r, uint8_t& radius){
       int16_t sy = it.y + ((it.label && it.label[0]) ? 30 : 8);
       r = Rect(MX + 8, sy, CWID - 16, 30); radius = 9;
     }
+    _onPlay = it.type == IT_SLIDER && onPlay(it, x, y);
+    if(_onPlay){ r = playRect(it); radius = PLAY_H / 2; }
     return i;
   }
   return -1;
@@ -304,7 +318,7 @@ int16_t ListPage::hit(int16_t x, int16_t y, Rect& r, uint8_t& radius){
 
 uint8_t ListPage::grab(int16_t id){
   if(id < 0 || id >= _n) return 0;
-  return _it[id].type == IT_SLIDER ? 1 : 0;
+  return _it[id].type == IT_SLIDER && !_onPlay ? 1 : 0;   /* з кнопки ▶ повзунок не тягнемо */
 }
 
 int32_t ListPage::_sliderAt(const Item& it, int16_t x) const {
@@ -346,7 +360,10 @@ void ListPage::tap(int16_t id, int16_t x, int16_t y){
       it.set(i);
       break;
     }
-    case IT_SLIDER: if(it.set) it.set(_sliderAt(it, x)); break;
+    case IT_SLIDER:
+      if(onPlay(it, x, y)){ it.act(); break; }
+      if(it.set) it.set(_sliderAt(it, x));
+      break;
     default: break;
   }
 }

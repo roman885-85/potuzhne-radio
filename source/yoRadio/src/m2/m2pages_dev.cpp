@@ -49,12 +49,20 @@ static void sfxHear(SfxEvent e){
   t = millis();
   sfx.test(e);
 }
-#define SFX_EV_SLIDER(label, ev) iSlider(label, 0, 100, [](){ return (int32_t)extras.s.sfxEvVol[ev]; }, \
-  [](int32_t v){ extras.s.sfxEvVol[ev] = (uint8_t)v; extras.changed(); sfxHear(ev); }, "%")
+/*  Кнопка ▶ «прослухати»: грає звук події зараз, навіть коли звуки подій вимкнено.  */
+static void sfxListen(SfxEvent e){
+  const ExtStore& s = extras.s;
+  uint32_t v = e == SFX_START ? s.splashVol : (uint32_t)s.sfxVol * s.sfxEvVol[e] / 100;
+  if(!v && e != SFX_LOWBAT){ M.toast(e == SFX_START || !s.sfxVol ? "гучність 0 — звуку не буде" : "гучність цього звуку 0"); return; }
+  sfx.test(e);
+}
+#define SFX_EV_SLIDER(label, ev) iSliderPlay(label, 0, 100, [](){ return (int32_t)extras.s.sfxEvVol[ev]; }, \
+  [](int32_t v){ extras.s.sfxEvVol[ev] = (uint8_t)v; extras.changed(); sfxHear(ev); }, "%", [](){ sfxListen(ev); })
 static Item s_dsItems[] = {
   iSection("ЗАСТАВКА"),
   iSwitch("Анімована заставка", IC_SPLASH, C_PINK, [](){ return (int32_t)!extras.s.splashOff; }, [](int32_t v){ extras.s.splashOff = !v; extras.changed(); }),
-  iSlider("Привітання (звук заставки)", 0, 100, [](){ return (int32_t)extras.s.splashVol; }, [](int32_t v){ extras.s.splashVol = v; extras.changed(); sfxHear(SFX_START); }, "%"),
+  iSliderPlay("Привітання (звук заставки)", 0, 100, [](){ return (int32_t)extras.s.splashVol; }, [](int32_t v){ extras.s.splashVol = v; extras.changed(); sfxHear(SFX_START); }, "%",
+              [](){ sfxListen(SFX_START); }),
   iButton("Показати заставку", IC_PLAY, [](){ afterClose = 2; M.close(); }),
   iSection("ЗВУКИ ПОДІЙ"),
   iSwitch("Звуки подій", IC_BELL, C_PINK, [](){ return (int32_t)extras.s.sfxOn; }, [](int32_t v){ extras.s.sfxOn = v; extras.changed(); }),
@@ -67,7 +75,7 @@ static Item s_dsItems[] = {
   SFX_EV_SLIDER("Таймер сну", SFX_TIMER),
   SFX_EV_SLIDER("Будильник", SFX_ALARM),
   SFX_EV_SLIDER("Батарея сідає", SFX_LOWBAT),
-  iNote([](){ return "свій звук (MP3 чи WAV) і які події озвучувати —\nна сторінці радіо: Розробник › Звуки подій"; }, 36),
+  iNote([](){ return "кнопка з трикутником — прослухати звук;\nсвій звук (MP3 чи WAV) і які події озвучувати —\nна сторінці радіо: Розробник › Звуки подій"; }, 50),
 };
 static ListPage s_devSnd("Заставка й звуки", s_dsItems, sizeof(s_dsItems) / sizeof(s_dsItems[0]));
 Page& pgDevSnd = s_devSnd;

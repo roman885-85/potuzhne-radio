@@ -1874,9 +1874,9 @@ function sfxSection() {
     list.ev.forEach((e, i) => {
       const bit = 1 << i, mine = !!(user & bit);
       const tail = h('div', { class: 'bar', style: { gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' } },
-        btn('', 'play', () => setx({ sfxPlay: e.id }), 'sm ico'), ...uploadBtn(e),
+        btn('Прослухати', 'play', () => { setx({ sfxPlay: e.id }); toast(`«${e.t}» звучить на радіо`); }, 'sm'), ...uploadBtn(e),
         mine ? btn('Стандартний', 'refresh', () => { setx({ sfxReset: e.id }); setTimeout(reload, 600); }, 'sm ghost') : null);
-      tail.firstChild.title = 'Прослухати';
+      tail.firstChild.title = 'Програти цей звук на радіо з поточною гучністю';
       const sub = `${mine ? 'свій звук' : 'стандартний'}${durTxt(e) ? ', ' + durTxt(e) : ''}`;
       /*  гучність саме цього звуку (привітання — своя; решта — від загальної)  */
       const vb = volBox(v => { setx({ sfxEvVol: `${e.id}:${v}` }); setTimeout(() => setx({ sfxPlay: e.id }), 300); });
