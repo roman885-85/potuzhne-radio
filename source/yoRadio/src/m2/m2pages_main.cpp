@@ -9,6 +9,7 @@
 #include "../core/network.h"
 #include "../core/timekeeper.h"
 #include "../extras/yoExtras.h"
+#include "../extras/yoDlna.h"
 #include "../extras/yoRecorder.h"
 #include "../extras/yoSermons.h"
 #include "../extras/yoLogos.h"
@@ -312,6 +313,9 @@ static Item s_setItems[] = {
           [](int32_t v){ config.saveValue(&config.store.smartstart, static_cast<uint8_t>(v ? 1 : 2)); }),
   iSwitch("Інфо про потік", IC_INFO, C_TEAL, [](){ return (int32_t)config.store.audioinfo; },
           [](int32_t v){ config.saveValue(&config.store.audioinfo, static_cast<bool>(v)); }),
+  iSwitch("Бездротова колонка", IC_SPEAKER, C_BLUE, [](){ return (int32_t)(dlna.on() ? 1 : 0); },
+          [](int32_t v){ dlna.setOn(v != 0); M.toast(v ? "радіо видно в мережі як колонку" : "колонку вимкнено"); }),
+  iNote([](){ return "DLNA: телефон чи комп'ютер надсилає радіо доріжку\n(BubbleUPnP, VLC, «Передати на пристрій»)"; }, 36),
   iSection("РАДІО"),
   iNav("Оновлення", IC_REFRESH, C_BLUE, vUpd, [](){ M.push(&pgUpdate); }),
   iNav("Про радіо", IC_INFO, C_GREY, vVer, [](){ M.push(&pgInfo); }),

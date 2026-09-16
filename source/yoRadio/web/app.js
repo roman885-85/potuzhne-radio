@@ -1714,6 +1714,8 @@ VIEWS.system = page => {
     box.append(
       row('Грати після ввімкнення', 'продовжити станцію, якщо радіо грало, коли його вимкнули', sw(+C.sst, v => send('smartstart=' + (v ? 1 : 0)))),
       row('Подробиці потоку в журналі', 'для діагностики через USB', sw(+C.aif, v => send('audioinfo=' + (v ? 1 : 0)))),
+      row('Бездротова колонка (DLNA)', 'радіо видно в мережі як колонку: телефон чи комп\'ютер надсилає йому доріжку — BubbleUPnP, Hi-Fi Cast, VLC, «Передати на пристрій» у Windows',
+        sw(S && S.dlna, v => setx({ dlna: v ? 1 : 0 }))),
       row('Точка доступу, якщо мережі немає', 'через стільки хвилин (0 — одразу)', sa),
       row('Ім\'я в мережі', `відкривається як http://${C.mdns || 'potuzhne'}.local`, h('div', { class: 'bar' }, md, btn('Змінити', null, () => { send('mdnsname=' + md.value.trim()); send('rebootmdns=1'); toast('Радіо перезавантажується з новим ім\'ям'); }, 'sm'))),
       row('Telnet', 'керування через telnet у локальній мережі', sw(+C.telnet, v => send('telnet=' + (v ? 1 : 0)))),

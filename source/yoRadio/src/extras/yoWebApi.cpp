@@ -21,6 +21,7 @@
 #include <LittleFS.h>
 #include "yoVersion.h"
 #include "yoHang.h"
+#include "yoDlna.h"
 #include "esp_core_dump.h"
 #include "esp_flash.h"
 
@@ -208,6 +209,7 @@ static void onState(AsyncWebServerRequest* r){
   o.ks("rst", YoHang::thisBoot() ? "ЗАВИСАННЯ — радіо перезапустилось само" : YoExtras::resetReason());
   if(YoHang::last()[0]){ o.ks("hang", YoHang::last()); o.kn("hangAt", YoHang::lastAt()); }
   o.kn("hb", (long long)yoHbLoop); o.kn("hbDsp", (long long)yoHbDsp);     /* оберти циклу й екрана: зовні видно, що стоїть */
+  o.kn("dlna", extras.s.dlnaOn ? 1 : 0);                                  /* бездротова колонка */
   {
     char t[24];
     if(network.timeinfo.tm_year > 100){ strftime(t, sizeof(t), "%H:%M", &network.timeinfo); o.ks("time", t);
@@ -656,6 +658,7 @@ static void apply(const WebCmd& c){
     }
   }
   else if(!strcmp(k, "crashClear")) { YoHang::clear(); ext = false; }
+  else if(!strcmp(k, "dlna"))       { dlna.setOn(clampi(v, 0, 1) != 0); ext = false; }
   else if(!strcmp(k, "hangTest"))   { yoHangTestMs = (uint32_t)clampi(v, 1, 180) * 1000UL; ext = false; }   /* перевірка сторожа: екран «зависне» на v с */
   else if(!strcmp(k, "sfxPlay"))    { int e = YoSfx::find(v); if(e >= 0) sfx.test((SfxEvent)e); ext = false; }
   else if(!strcmp(k, "sfxReset")){

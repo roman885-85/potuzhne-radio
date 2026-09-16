@@ -9,6 +9,7 @@
 #include "config.h"
 #include "telnet.h"
 #include "netserver.h"
+#include "../extras/yoDlna.h"
 #include "player.h"
 #include "../extras/yoVersion.h"
 #include "../extras/yoSfx.h"
@@ -471,6 +472,7 @@ void MyNetwork::_staUp(){
     if (network_on_connect) network_on_connect();
     pm.on_connect();
   }
+  dlna.begin();                      /* мережа з'явилась — колонку видно в ній */
   display.putRequest(NEWIP, 0);
   display.putRequest(NEWMODE, PLAYER);
 }

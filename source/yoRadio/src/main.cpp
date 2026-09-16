@@ -18,6 +18,7 @@
 #include "extras/yoSfx.h"
 #include "extras/yoOta.h"
 #include "extras/yoHang.h"
+#include "extras/yoDlna.h"
 #ifdef USE_NEXTION
 #include "displays/nextion.h"
 #endif
@@ -116,6 +117,7 @@ void setup() {
   #if USE_OTA
     setupOTA();
   #endif
+  dlna.begin();               /* бездротова колонка (DLNA), якщо увімкнена */
   if (config.getMode()==PM_SDCARD) player.initHeaders(config.station.url);
   player.lockOutput=false;
   if (config.store.smartstart == 1 && !YoExtras::wokeForAlarm()) {     /* будильник сам увімкне станцію */
