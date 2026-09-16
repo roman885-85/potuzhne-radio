@@ -129,31 +129,43 @@ static void b64enc(const uint8_t* in, size_t n, char* out, size_t max){
 
 static int rng(void*, unsigned char* b, size_t n){ esp_fill_random(b, n); return 0; }
 
-/*  sign: підписати виклик (PKCS#1 v1.5); інакше — розшифрувати ключ AES (OAEP, SHA-1).  */
+/*  Розібраний ключ тримаємо готовим: розбір 2048-бітного ключа з PEM коштує
+    сотні мілісекунд, а раніше він робився на КОЖЕН запит RTSP (двічі за
+    рукопожаття). Під навантаженням (грає станція) це виходило за таймаут
+    пристрою Apple — AirPlay не запускався. Тепер розбираємо один раз.  */
+static mbedtls_pk_context s_pk;
+static volatile bool s_pkOk = false;
+static bool ensurePk(){
+  if(s_pkOk) return true;
+  if(!keyPem || !keyLen) return false;
+  mbedtls_pk_init(&s_pk);
+  int r = mbedtls_pk_parse_key(&s_pk, (const unsigned char*)keyPem, keyLen + 1, nullptr, 0, rng, nullptr);
+  if(r == 0 && mbedtls_pk_get_type(&s_pk) == MBEDTLS_PK_RSA){ s_pkOk = true; return true; }
+  Serial.printf("##AIRPLAY#\tRSA: ключ не розібрався -0x%04X\n", (unsigned)-r);
+  mbedtls_pk_free(&s_pk);
+  return false;
+}
+
+/*  sign: підписати виклик (PKCS#1 v1.5); інакше — розшифрувати ключ AES (OAEP, SHA-1).
+    Кличеться лише із задачі airplay (RTSP), тож спільний s_pk без блокувань.  */
 static int rsaApply(bool sign, const uint8_t* in, size_t inLen, uint8_t* out, size_t outMax){
-  if(!keyPem || !keyLen) return -1;
-  mbedtls_pk_context pk;
-  mbedtls_pk_init(&pk);
-  int len = -1;
-  int r = mbedtls_pk_parse_key(&pk, (const unsigned char*)keyPem, keyLen + 1, nullptr, 0, rng, nullptr);
-  if(r == 0 && mbedtls_pk_get_type(&pk) == MBEDTLS_PK_RSA){
-    mbedtls_rsa_context* rsa = mbedtls_pk_rsa(pk);
-    if(sign){
-      mbedtls_rsa_set_padding(rsa, MBEDTLS_RSA_PKCS_V15, MBEDTLS_MD_NONE);
-      const size_t kl = mbedtls_rsa_get_len(rsa);
-      if(kl <= outMax){
-        r = mbedtls_rsa_pkcs1_sign(rsa, rng, nullptr, MBEDTLS_MD_NONE, (unsigned)inLen, in, out);
-        if(r == 0) len = (int)kl;
-      }
-    }else{
-      mbedtls_rsa_set_padding(rsa, MBEDTLS_RSA_PKCS_V21, MBEDTLS_MD_SHA1);
-      size_t ol = 0;
-      r = mbedtls_rsa_pkcs1_decrypt(rsa, rng, nullptr, &ol, in, out, outMax);
-      if(r == 0) len = (int)ol;
+  if(!ensurePk()) return -1;
+  mbedtls_rsa_context* rsa = mbedtls_pk_rsa(s_pk);
+  int len = -1, r = 0;
+  if(sign){
+    mbedtls_rsa_set_padding(rsa, MBEDTLS_RSA_PKCS_V15, MBEDTLS_MD_NONE);
+    const size_t kl = mbedtls_rsa_get_len(rsa);
+    if(kl <= outMax){
+      r = mbedtls_rsa_pkcs1_sign(rsa, rng, nullptr, MBEDTLS_MD_NONE, (unsigned)inLen, in, out);
+      if(r == 0) len = (int)kl;
     }
+  }else{
+    mbedtls_rsa_set_padding(rsa, MBEDTLS_RSA_PKCS_V21, MBEDTLS_MD_SHA1);
+    size_t ol = 0;
+    r = mbedtls_rsa_pkcs1_decrypt(rsa, rng, nullptr, &ol, in, out, outMax);
+    if(r == 0) len = (int)ol;
   }
   if(r) Serial.printf("##AIRPLAY#\tRSA: помилка -0x%04X\n", (unsigned)-r);
-  mbedtls_pk_free(&pk);
   return len;
 }
 
@@ -304,7 +316,7 @@ void YoAirplay::_keyTask(void* arg){
       Preferences p;
       if(p.begin("yoAirplay", false)){ p.putBytes("key", pem, n); p.end(); }
       if(!keyPem) keyPem = (char*)heap_caps_calloc(1, KEY_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-      if(keyPem){ memcpy(keyPem, pem, n); keyPem[n] = 0; keyLen = n; ok = true; }
+      if(keyPem){ memcpy(keyPem, pem, n); keyPem[n] = 0; keyLen = n; s_pkOk = false; ok = true; }
     }else{
       snprintf(self->_keyErr, sizeof(self->_keyErr), n ? "ключ не збігся (SHA-256)" : "ключа у файлі не знайдено");
     }
@@ -459,6 +471,7 @@ void YoAirplay::begin(){
   if(!ok){ Serial.println("##AIRPLAY#\tне вистачило пам'яті"); return; }
   if(!aesInit){ mbedtls_aes_init(&aes); aesInit = true; }
   _loadKey();
+  if(_keyOk) ensurePk();            /* розібрати ключ заздалегідь — перше підключення не гальмує */
   rawHead = rawTail = 0;
   stopReq = false;
   TaskHandle_t h = nullptr;
