@@ -856,9 +856,15 @@ void Menu::_flush(){
   memcpy(rows, _dirty, sizeof(rows));
   memset(_dirty, 0, sizeof(_dirty));
   portEXIT_CRITICAL(&_mux);
-  bool any = false;
-  for(int r = 0; r < 15; r++) if(rows[r]){ any = true; break; }
+  bool any = false; uint8_t dirtyRows = 0;
+  for(int r = 0; r < 15; r++) if(rows[r]){ any = true; dirtyRows++; }
   if(!any) return;
+  /*  Повний перемальовок (перехід меню↔плеєр) копіює ~150 КБ тла з PSRAM —
+      суцільним потоком це відбирало шину в декодера звуку на іншому ядрі й
+      давало провал. Розриваємо його короткими уступками: тло темне (перехід
+      іде при згаслій підсвітці), тож зайві мілісекунди непомітні.  */
+  const bool bigRedraw = dirtyRows >= 8;
+  uint8_t stripN = 0;
   /*  Спільний буфер ділимо навпіл: смуга по 16 рядків малюється в одну
       половину, поки попередня йде шиною з другої. Шина (40 МГц) — найдовша
       частина кадру, і малювання раніше чекало на неї без діла.  */
@@ -897,6 +903,7 @@ void Menu::_flush(){
       dsp.setAddrWindow(x0, y0, w, h);
       if(dma && spidmaStart(buf, n * 2)){ pending = true; hi ^= 1; }
       else dsp.writePixels(buf, n, true, true);
+      if(bigRedraw && (++stripN % 3) == 0){ if(pending){ spidmaWait(); pending = false; } vTaskDelay(1); }
       pfDrawUs += (uint32_t)(u1 - u0); pfXferUs += (uint32_t)(esp_timer_get_time() - u1); pfStrips++;
     }
   }
