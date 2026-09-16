@@ -717,10 +717,16 @@ void Menu::_processTouch(){
     }else if(t.kind == T_DRAG){
       if(_tm == TM_UNDECIDED){
         int16_t dx = t.x - _px0, dy = t.y - _py0;
-        if(abs(dy) > 8 && abs(dy) >= abs(dx) && p->scrollable() && _maxScroll(p) > 0){
+        /*  Під пальцем повзунок — прокрутка забирає жест лише тоді, коли рух
+            угору-вниз явно переважає (вдвічі). Інакше на ялозі панелі поперечний
+            рух ловився як прокрутка: повзунок не рухався, список їхав і
+            пружинив назад.  */
+        const uint8_t gr = _pressId >= 0 ? p->grab(_pressId) : 0;
+        const int16_t need = gr == 1 ? (int16_t)(abs(dx) * 2) : (int16_t)abs(dx);
+        if(abs(dy) > 8 && abs(dy) >= need && p->scrollable() && _maxScroll(p) > 0){
           _tm = TM_SCROLL; _py0 = t.y; _scroll0 = p->scroll; _ripOn = false;
           if(_pressId >= 0) inval(_rip);
-        }else if(abs(dx) > 5 && _pressId >= 0 && p->grab(_pressId) == 1){
+        }else if(abs(dx) > 5 && gr == 1){
           _tm = TM_GRAB; _ripUp = true; _ripUpT = t.t;
         }else if(abs(dx) > 14 || abs(dy) > 14){
           _tm = TM_DEAD; if(_ripOn){ _ripUp = true; _ripUpT = t.t; }
@@ -856,15 +862,9 @@ void Menu::_flush(){
   memcpy(rows, _dirty, sizeof(rows));
   memset(_dirty, 0, sizeof(_dirty));
   portEXIT_CRITICAL(&_mux);
-  bool any = false; uint8_t dirtyRows = 0;
-  for(int r = 0; r < 15; r++) if(rows[r]){ any = true; dirtyRows++; }
+  bool any = false;
+  for(int r = 0; r < 15; r++) if(rows[r]){ any = true; break; }
   if(!any) return;
-  /*  Повний перемальовок (перехід меню↔плеєр) копіює ~150 КБ тла з PSRAM —
-      суцільним потоком це відбирало шину в декодера звуку на іншому ядрі й
-      давало провал. Розриваємо його короткими уступками: тло темне (перехід
-      іде при згаслій підсвітці), тож зайві мілісекунди непомітні.  */
-  const bool bigRedraw = dirtyRows >= 6;
-  uint8_t stripN = 0;
   /*  Спільний буфер ділимо навпіл: смуга по 16 рядків малюється в одну
       половину, поки попередня йде шиною з другої. Шина (40 МГц) — найдовша
       частина кадру, і малювання раніше чекало на неї без діла.  */
@@ -903,7 +903,6 @@ void Menu::_flush(){
       dsp.setAddrWindow(x0, y0, w, h);
       if(dma && spidmaStart(buf, n * 2)){ pending = true; hi ^= 1; }
       else dsp.writePixels(buf, n, true, true);
-      if(bigRedraw && (++stripN % 2) == 0){ if(pending){ spidmaWait(); pending = false; } vTaskDelay(1); }
       pfDrawUs += (uint32_t)(u1 - u0); pfXferUs += (uint32_t)(esp_timer_get_time() - u1); pfStrips++;
     }
   }
