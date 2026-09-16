@@ -37,6 +37,10 @@ static Item s_devItems[] = {
     display.forceLogo();
   }),
   iNote([](){ return "для станцій, де минулого разу не знайшлося"; }, 22),
+  iSection("СЕНСОР"),
+  iButton("Калібрування сенсора", IC_HAND, [](){ M.calibStart(); }),
+  iNote([](){ return "якщо дотик б'є мимо: торкніться чотирьох позначок по кутах"; }, 22),
+  iButton("Скинути калібрування", IC_RESTART, [](){ M.calibReset(); }),
 };
 static ListPage s_dev("Розробник", s_devItems, sizeof(s_devItems) / sizeof(s_devItems[0]));
 Page& pgDev = s_dev;

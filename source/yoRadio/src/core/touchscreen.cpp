@@ -3,6 +3,7 @@
 #include "Arduino.h"
 #include "touchscreen.h"
 #include "../m2/m2player.h"
+#include "../m2/m2ui.h"
 #include "config.h"
 #include "display.h"
 #include "network.h"
@@ -66,6 +67,22 @@ void TouchScreen::flip(){
 #endif
 }
 
+void TouchScreen::_applyCalib(uint16_t& x, uint16_t& y){
+  const ExtStore& s = extras.s;
+  const int dx = (int)s.tsCalXR - (int)s.tsCalXL;
+  const int dy = (int)s.tsCalYB - (int)s.tsCalYT;
+  if(dx > 8){
+    long nx = (long)TS_CAL_LO + (long)((int)x - (int)s.tsCalXL) * (TS_CAL_XHI - TS_CAL_LO) / dx;
+    if(nx < 0) nx = 0; if(nx > _width - 1) nx = _width - 1;
+    x = (uint16_t)nx;
+  }
+  if(dy > 8){
+    long ny = (long)TS_CAL_LO + (long)((int)y - (int)s.tsCalYT) * (TS_CAL_YHI - TS_CAL_LO) / dy;
+    if(ny < 0) ny = 0; if(ny > _height - 1) ny = _height - 1;
+    y = (uint16_t)ny;
+  }
+}
+
 void TouchScreen::_point(uint16_t& x, uint16_t& y){
   if(_inject){ x = _injX; y = _injY; return; }
 #if TS_MODEL==TS_MODEL_XPT2046
@@ -76,6 +93,9 @@ void TouchScreen::_point(uint16_t& x, uint16_t& y){
   x = ts.points[0].x;
   y = ts.points[0].y;
 #endif
+  /*  Під час калібрування працюємо з «сирими» координатами — тоді навіть
+      зіпсована поправка не заважає перекалібруватись.  */
+  if(!m2::M.calibActive()) _applyCalib(x, y);
 }
 
 volatile bool yoTouchLog = false;   /* команда touchlog: друкувати координати кожного дотику */
@@ -88,6 +108,16 @@ void TouchScreen::loop(){
   ts.read();
 #endif
   const bool istouched = _istouched();
+
+  /*  Калібрування сенсора забирає дотики собі: по одній позначці за раз,
+      координати некалібровані (див. _point).  */
+  if(m2::M.calibActive()){
+    uint16_t cx = _x, cy = _y;
+    if(istouched) _point(cx, cy);
+    if(istouched && !wastouched){ sfx.play(SFX_CLICK); m2::M.calibDown(cx, cy); }
+    wastouched = istouched;
+    return;
+  }
 #if TS_MODEL==TS_MODEL_FT6336
   if(yoTouchLog && istouched && !wastouched && !_inject){
     uint16_t lx = ts.points[0].x, ly = ts.points[0].y;

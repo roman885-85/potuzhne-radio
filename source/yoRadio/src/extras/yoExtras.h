@@ -26,6 +26,14 @@
 
 enum extLed_e : uint8_t { LED_OFF = 0, LED_STATUS = 1, LED_MUSIC = 2 };
 
+/*  Калібрування сенсора: позначки стоять за 24 пікселі від країв екрана.
+    Типові значення полів tsCal* — самі координати позначок, тож поправка
+    тотожна, поки калібрування не зроблено.  */
+#define TS_CAL_INSET  24
+#define TS_CAL_LO     (TS_CAL_INSET)
+#define TS_CAL_XHI    (320 - 1 - TS_CAL_INSET)
+#define TS_CAL_YHI    (240 - 1 - TS_CAL_INSET)
+
 struct ExtStore {
   uint8_t  ver;
   uint8_t  alarmOn, alarmH, alarmM, alarmDays;   /* days: 0 щодня, 1 будні */
@@ -68,6 +76,8 @@ struct ExtStore {
   uint8_t  dlnaInit;                             /* 1 — типове значення колонки вже виставлено */
   uint8_t  airplayOn;                            /* 1 — колонка AirPlay увімкнена */
   uint8_t  airplayInit;                          /* 1 — типове значення AirPlay уже виставлено */
+  int16_t  tsCalXL, tsCalXR, tsCalYT, tsCalYB;   /* калібрування сенсора: виміряні екранні координати чотирьох позначок */
+  uint8_t  tsCalInit;                            /* 1 — калібрування вже виставлено (типово — тотожне) */
 };
 /*  Зовнішній ЦАП I2S — на вільні виводи роз'єму розширення  */
 #define DAC_BCLK  14

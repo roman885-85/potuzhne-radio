@@ -160,6 +160,15 @@ class Menu {
 
     void render();                        /* задача дисплея */
     void loop();                          /* головний цикл */
+
+    /*  Калібрування сенсора: показує позначки по кутах, збирає дотики
+        «сирими» координатами (не залежить від поточної поправки — зіпсувати
+        так, щоб не можна було перекалібрувати, неможливо), перевіряє й
+        зберігає. calibDown — з циклу дотику; calibActive/render — задача дисплея.  */
+    void calibStart();
+    void calibReset();
+    bool calibActive() const;
+    void calibDown(int16_t x, int16_t y);
     void onPress(uint16_t x, uint16_t y);
     void onDrag(uint16_t x, uint16_t y);
     void onRelease(uint16_t x, uint16_t y);
@@ -237,6 +246,7 @@ class Menu {
     void _drawScene(Gfx& g);
     void _drawPage(Gfx& g, Page* p, int16_t dx, bool overlays);
     void _drawHeader(Gfx& g, Page* p);
+    void _drawCalib(Gfx& g);
     void _markRaw(int16_t x, int16_t y, int16_t w, int16_t h);
     void _post(uint8_t kind, Page* p, int16_t id, int16_t x, int16_t y, int32_t v);
     void _cmdPush(uint8_t op, Page* p);

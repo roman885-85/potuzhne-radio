@@ -78,6 +78,7 @@ void YoExtras::_load(){
   if(!s.sfxEvInit){ s.sfxEvInit = 1; for(uint8_t i = 0; i < sizeof(s.sfxEvVol); i++) s.sfxEvVol[i] = 100; }
   if(!s.dlnaInit){ s.dlnaInit = 1; s.dlnaOn = 1; }      /* бездротова колонка — одразу увімкнена */
   if(!s.airplayInit){ s.airplayInit = 1; s.airplayOn = 1; }   /* і AirPlay теж */
+  if(!s.tsCalInit){ s.tsCalInit = 1; s.tsCalXL = TS_CAL_LO; s.tsCalXR = TS_CAL_XHI; s.tsCalYT = TS_CAL_LO; s.tsCalYB = TS_CAL_YHI; }
   for(uint8_t i = 0; i < sizeof(s.sfxEvVol); i++) if(s.sfxEvVol[i] > 100) s.sfxEvVol[i] = 100;
   if(s.splashVol > 100) s.splashVol = 70;
   if(!s.eqInit){

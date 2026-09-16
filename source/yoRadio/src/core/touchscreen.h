@@ -24,6 +24,7 @@ class TouchScreen {
     uint16_t _injX = 0, _injY = 0;
     bool _istouched();
     void _point(uint16_t& x, uint16_t& y);
+    void _applyCalib(uint16_t& x, uint16_t& y);   /* поправка калібрування (екранні координати) */
 };
 
 extern TouchScreen touchscreen;

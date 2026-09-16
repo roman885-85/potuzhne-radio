@@ -5,6 +5,7 @@
 #include "../displays/dspcore.h"
 #include "../displays/tools/spidma.h"
 #include "m2pages.h"
+#include "../extras/yoExtras.h"
 
 extern DspCore dsp;
 
@@ -13,6 +14,19 @@ volatile uint32_t g_m2Frames = 0;
 namespace m2 {
 
 Menu M;
+
+/*  ---------- калібрування сенсора ----------
+    Чотири позначки по кутах (за 24 пікселі від краю). Дотики збираються
+    «сирими» координатами; далі — перевірка й лінійна поправка по кожній осі.  */
+static const int16_t CAL_TX[4] = { TS_CAL_LO, TS_CAL_XHI, TS_CAL_XHI, TS_CAL_LO };   /* ЛВ, ПВ, ПН, ЛН */
+static const int16_t CAL_TY[4] = { TS_CAL_LO, TS_CAL_LO,  TS_CAL_YHI, TS_CAL_YHI };
+struct CalibState {
+  bool     active = false;
+  uint8_t  step = 0;               /* скільки позначок уже торкнулись (0..4) */
+  int16_t  mx[4] = {0}, my[4] = {0};
+  uint32_t lastT = 0;
+  uint8_t  err = 0;                /* показати підказку про невдачу */
+} s_cal;
 
 /*  з m2menu.cpp: стан мережі й час для шапки  */
 int8_t  bridgeRssi();
@@ -499,6 +513,11 @@ void Menu::onRelease(uint16_t x, uint16_t y){
 
 /*  =================== головний цикл =================== */
 void Menu::loop(){
+  if(s_cal.active){
+    if(millis() - s_cal.lastT > 45000UL){ s_cal.active = false; toast("Калібрування скасовано"); invalAll(); }
+    _lastTouch = millis();                        /* меню не закривати під час калібрування */
+    return;
+  }
   stationsPoll();
   /*  меню закрилось (задача дисплея вже погасила й намалювала плеєр) — прибираємо сторінки  */
   if(s_ld && !_open && !_openReq){
@@ -953,6 +972,7 @@ void Menu::_drawPage(Gfx& g, Page* p, int16_t dx, bool overlays){
 }
 
 void Menu::_drawScene(Gfx& g){
+  if(s_cal.active){ _drawCalib(g); return; }
   Page* p = top();
   if(_tDir && _from){
     float e = easeOut(_tPos);
@@ -987,6 +1007,82 @@ void Menu::_drawScene(Gfx& g){
     g.box((SW - tw) / 2, ty, tw, 32, 16, C_SURF2);
     g.text(SW / 2, ty + 20, _toast, F_ROW, C_TXT, AL_C, tw - 20);
   }
+}
+
+
+/*  ---------- калібрування: реалізація ---------- */
+
+bool Menu::calibActive() const { return s_cal.active; }
+
+void Menu::calibStart(){
+  s_cal.active = true; s_cal.step = 0; s_cal.err = 0;
+  s_cal.lastT = millis(); _lastTouch = millis();
+  invalAll();
+}
+
+void Menu::calibReset(){
+  ExtStore& s = extras.s;
+  s.tsCalXL = TS_CAL_LO; s.tsCalXR = TS_CAL_XHI;
+  s.tsCalYT = TS_CAL_LO; s.tsCalYB = TS_CAL_YHI;
+  s.tsCalInit = 1; extras.changed();
+  toast("Калібрування скинуто");
+}
+
+void Menu::calibDown(int16_t x, int16_t y){
+  if(!s_cal.active || s_cal.step >= 4) return;
+  s_cal.lastT = millis(); _lastTouch = millis();
+  s_cal.err = 0;
+  s_cal.mx[s_cal.step] = x; s_cal.my[s_cal.step] = y;
+  s_cal.step++;
+  if(s_cal.step < 4){ invalAll(); return; }
+
+  /*  Зібрали чотири точки — рахуємо середні по краях і перевіряємо.  */
+  const int16_t XL = (s_cal.mx[0] + s_cal.mx[3]) / 2;   /* ліві позначки */
+  const int16_t XR = (s_cal.mx[1] + s_cal.mx[2]) / 2;   /* праві */
+  const int16_t YT = (s_cal.my[0] + s_cal.my[1]) / 2;   /* верхні */
+  const int16_t YB = (s_cal.my[2] + s_cal.my[3]) / 2;   /* нижні */
+  const int spanX = XR - XL, spanY = YB - YT;
+  /*  Пари з одного краю мають збігатися; розкид — некалібрувати.  */
+  const bool pairOk = abs(s_cal.mx[0] - s_cal.mx[3]) < 70 && abs(s_cal.mx[1] - s_cal.mx[2]) < 70 &&
+                      abs(s_cal.my[0] - s_cal.my[1]) < 70 && abs(s_cal.my[2] - s_cal.my[3]) < 70;
+  const bool spanOk = spanX >= 80 && spanX <= 500 && spanY >= 60 && spanY <= 400;
+  if(pairOk && spanOk){
+    ExtStore& s = extras.s;
+    s.tsCalXL = XL; s.tsCalXR = XR; s.tsCalYT = YT; s.tsCalYB = YB;
+    s.tsCalInit = 1; extras.changed();
+    s_cal.active = false;
+    toast("Калібрування збережено");
+    Serial.printf("##TOUCH#\tкалібр: X %d..%d  Y %d..%d\n", XL, XR, YT, YB);
+  }else{
+    /*  Невдало — старе калібрування лишаємо, просимо повторити.  */
+    s_cal.step = 0; s_cal.err = 1;
+    toast("Неточно — почніть спочатку");
+    Serial.printf("##TOUCH#\tкалібр невдало: spanX=%d spanY=%d pairOk=%d\n", spanX, spanY, (int)pairOk);
+  }
+  invalAll();
+}
+
+static void calibTarget(Gfx& g, int16_t cx, int16_t cy, uint16_t c){
+  g.line(cx - 12, cy, cx + 12, cy, 2.0f, c);
+  g.line(cx, cy - 12, cx, cy + 12, 2.0f, c);
+  g.circle(cx, cy, 9, c);
+  g.circle(cx, cy, 6, C_BG);
+  g.circle(cx, cy, 2.5f, c);
+}
+
+void Menu::_drawCalib(Gfx& g){
+  g.origin(0, 0);
+  g.fill(0, 0, SW, SH, C_BG);
+  /*  завершені позначки — тьмяні зелені  */
+  for(uint8_t i = 0; i < s_cal.step && i < 4; i++) calibTarget(g, CAL_TX[i], CAL_TY[i], C_GREEN);
+  /*  поточна — яскрава жовта  */
+  if(s_cal.step < 4) calibTarget(g, CAL_TX[s_cal.step], CAL_TY[s_cal.step], C_ACC);
+  /*  підказка по центру  */
+  g.text(SW / 2, SH / 2 - 14, "Калібрування сенсора", F_TITLE, C_TXT, AL_C);
+  char b[40];
+  snprintf(b, sizeof(b), "Торкніться позначки  %u/4", (unsigned)(s_cal.step < 4 ? s_cal.step + 1 : 4));
+  g.text(SW / 2, SH / 2 + 12, b, F_ROW, C_TXT2, AL_C);
+  if(s_cal.err) g.text(SW / 2, SH / 2 + 34, "Торкайтесь точно центру позначки", F_SMB, C_ACC, AL_C);
 }
 
 }  // namespace m2
