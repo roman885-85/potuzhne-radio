@@ -123,8 +123,13 @@ const char SINK[] =
   "http-get:*:audio/flac:*,http-get:*:audio/x-flac:*,http-get:*:audio/wav:*,http-get:*:audio/x-wav:*,"
   "http-get:*:audio/wave:*,http-get:*:audio/vnd.wave:*,http-get:*:audio/L16:*,http-get:*:application/ogg:*";
 
-char* bigBuf = nullptr;                 /* тіло запиту (DIDL буває довгий) — у PSRAM */
-const size_t BIG = 8192;
+/*  Великі буфери — у PSRAM, а не на стеку задачі: стек тут спільний із
+    мережею (lwIP + Wi-Fi ідуть просто з цієї задачі), і масиви на кілька
+    кілобайтів валили її разом із радіо.  */
+char* bigBuf = nullptr;                 /* тіло запиту (DIDL буває довгий) */
+char* outBuf = nullptr;                 /* відповідь */
+char* hdrBuf = nullptr;                 /* заголовки запиту */
+const size_t BIG = 8192, OUT = 6144, HDR = 1536;
 
 /*  Значення тега без урахування простору імен: <dc:title>…</dc:title>.  */
 bool tagValue(const char* body, const char* tag, char* out, size_t cap){
@@ -202,8 +207,8 @@ void sendBody(WiFiClient& c, int code, const char* ctype, const char* body, cons
 
 /*  Відповідь SOAP: тіло дії всередині конверта.  */
 void soapOk(WiFiClient& c, const char* svc, const char* action, const char* args){
-  char* b = bigBuf;
-  snprintf(b, BIG,
+  char* b = outBuf;
+  snprintf(b, OUT,
     "<?xml version=\"1.0\"?>"
     "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">"
     "<s:Body><u:%sResponse xmlns:u=\"urn:schemas-upnp-org:service:%s:1\">%s</u:%sResponse></s:Body></s:Envelope>",
@@ -255,9 +260,11 @@ void YoDlna::begin(){
              (unsigned)((mac >> 24) & 0xFF), (unsigned)((mac >> 32) & 0xFF), (unsigned)((mac >> 40) & 0xFF));
   }
   if(!bigBuf) bigBuf = (char*)ps_malloc(BIG);
-  if(!bigBuf){ Serial.println("##DLNA#\tне вистачило пам'яті"); return; }
+  if(!outBuf) outBuf = (char*)ps_malloc(OUT);
+  if(!hdrBuf) hdrBuf = (char*)ps_malloc(HDR);
+  if(!bigBuf || !outBuf || !hdrBuf){ Serial.println("##DLNA#\tне вистачило пам'яті"); return; }
   TaskHandle_t h = nullptr;
-  if(xTaskCreatePinnedToCore(yoDlnaTask, "dlna", 6144, this, 1, &h, 0) != pdPASS){
+  if(xTaskCreatePinnedToCore(yoDlnaTask, "dlna", 8192, this, 1, &h, 0) != pdPASS){
     Serial.println("##DLNA#\tзадача не створилась");
     return;
   }
@@ -386,10 +393,10 @@ void YoDlna::_http(){
 
 void YoDlna::_client(WiFiClient& c){
   /*  заголовки  */
-  char head[1024]; size_t hn = 0;
+  char* head = hdrBuf; size_t hn = 0;
   uint32_t t0 = millis();
   bool done = false;
-  while(millis() - t0 < 3000 && hn < sizeof(head) - 1){
+  while(millis() - t0 < 3000 && hn < HDR - 1){
     if(!c.connected() && !c.available()) break;
     int r = c.read();
     if(r < 0){ vTaskDelay(pdMS_TO_TICKS(2)); continue; }
@@ -446,8 +453,8 @@ void YoDlna::_client(WiFiClient& c){
 
   if(!strcmp(method, "GET") || !strcmp(method, "HEAD")){
     if(!strcmp(path, "/desc.xml")){
-      char* b = bigBuf;
-      snprintf(b, BIG, DESC, friendlyOf(), prVersion(), _uuid, _uuid);
+      char* b = outBuf;
+      snprintf(b, OUT, DESC, friendlyOf(), prVersion(), _uuid, _uuid);
       sendBody(c, 200, "text/xml; charset=\"utf-8\"", b);
       return;
     }
@@ -489,11 +496,12 @@ void YoDlna::_avt(WiFiClient& c, const char* action, const char* body){
       unescape(uri);
       strlcpy(_uri, uri, sizeof(_uri));
       _title[0] = 0;
-      char meta[2048] = {0};
-      if(tagValue(body, "CurrentURIMetaData", meta, sizeof(meta))){
-        unescape(meta);
+      /*  Опис доріжки приходить екранованим; розбираємо його в буфері відповіді,
+          щоб не тримати кілька кілобайтів на стеку.  */
+      if(tagValue(body, "CurrentURIMetaData", outBuf, OUT)){
+        unescape(outBuf);
         char t[96] = {0};
-        if(tagValue(meta, "dc:title", t, sizeof(t)) || tagValue(meta, "title", t, sizeof(t))) strlcpy(_title, t, sizeof(_title));
+        if(tagValue(outBuf, "dc:title", t, sizeof(t)) || tagValue(outBuf, "title", t, sizeof(t))) strlcpy(_title, t, sizeof(_title));
       }
     }
     soapOk(c, "AVTransport", action, "");
@@ -515,7 +523,7 @@ void YoDlna::_avt(WiFiClient& c, const char* action, const char* body){
     return;
   }
   if(!strcmp(action, "GetPositionInfo") || !strcmp(action, "GetMediaInfo")){
-    char uri[600]; escape(_uri, uri, sizeof(uri));
+    char uri[560]; escape(_uri, uri, sizeof(uri));      /* невеликі — на стеку можна */
     char args[900];
     if(!strcmp(action, "GetPositionInfo"))
       snprintf(args, sizeof(args),
@@ -583,9 +591,11 @@ void YoDlna::_rc(WiFiClient& c, const char* action, const char* body){
 void YoDlna::_cm(WiFiClient& c, const char* action, const char* body){
   (void)body;
   if(!strcmp(action, "GetProtocolInfo")){
-    char* b = bigBuf;
-    snprintf(b, BIG, "<Source></Source><Sink>%s</Sink>", SINK);
+    char* b = (char*)malloc(strlen(SINK) + 48);
+    if(!b){ soapErr(c, 501, "no memory"); return; }
+    sprintf(b, "<Source></Source><Sink>%s</Sink>", SINK);
     soapOk(c, "ConnectionManager", action, b);
+    free(b);
     return;
   }
   if(!strcmp(action, "GetCurrentConnectionIDs")){ soapOk(c, "ConnectionManager", action, "<ConnectionIDs>0</ConnectionIDs>"); return; }
