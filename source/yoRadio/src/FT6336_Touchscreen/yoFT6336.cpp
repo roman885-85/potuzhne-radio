@@ -75,6 +75,7 @@ void YoFT6336::read() {
     uint16_t rx = (uint16_t)((d[0] & 0x0F) << 8) | d[1];
     uint16_t ry = (uint16_t)((d[2] & 0x0F) << 8) | d[3];
     points[i].id = d[2] >> 4;
+    if(i == 0){ rawX = rx; rawY = ry; }
     _map(rx, ry, points[i]);
   }
 }

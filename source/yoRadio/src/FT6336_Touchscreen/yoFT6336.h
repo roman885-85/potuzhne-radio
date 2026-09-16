@@ -24,7 +24,8 @@ class YoFT6336 {
   public:
     YoFT6336(int8_t sda, int8_t scl, int8_t intPin, int8_t rstPin);
     bool begin(uint8_t addr = 0x38);
-    void setRotation(uint8_t displayRotation);   /* 1 или 3, как у Adafruit_GFX */
+    uint16_t rawX = 0, rawY = 0;      /* останній сирий дотик панелі (для калібрування) */
+  void setRotation(uint8_t displayRotation);   /* 1 или 3, как у Adafruit_GFX */
     void setResolution(uint16_t w, uint16_t h);
     void read();
 

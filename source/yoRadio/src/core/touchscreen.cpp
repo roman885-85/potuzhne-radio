@@ -78,6 +78,8 @@ void TouchScreen::_point(uint16_t& x, uint16_t& y){
 #endif
 }
 
+volatile bool yoTouchLog = false;   /* команда touchlog: друкувати координати кожного дотику */
+
 void TouchScreen::loop(){
   static bool wastouched = true;
   if(millis() - _touchdelay <= 10) return;       /* 100 разів на секунду: швидкий тик інакше губиться */
@@ -86,6 +88,12 @@ void TouchScreen::loop(){
   ts.read();
 #endif
   const bool istouched = _istouched();
+#if TS_MODEL==TS_MODEL_FT6336
+  if(yoTouchLog && istouched && !wastouched && !_inject){
+    uint16_t lx = ts.points[0].x, ly = ts.points[0].y;
+    Serial.printf("##TOUCH#\tсирий rx=%u ry=%u -> екран x=%u y=%u\n", ts.rawX, ts.rawY, lx, ly);
+  }
+#endif
 
   /*  Дотик до погаслого екрана (ніч, кінець таймера сну, заставка) лише будить
       його і далі, до відпускання, нічого не натискає: людина не бачить, куди
