@@ -47,6 +47,7 @@ class YoDlna {
     void _cm(WiFiClient& c, const char* action, const char* body);
     void _play();
     volatile bool _playing = false;
+    uint32_t _startMs = 0;           /* коли почали: поки з'єднується, «грає» не знімаємо */
     char _uri[512] = {0};
     char _title[96] = {0};
     char _device[32] = {0};

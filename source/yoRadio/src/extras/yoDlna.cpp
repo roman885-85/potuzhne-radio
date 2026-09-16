@@ -297,7 +297,8 @@ void YoDlna::_run(){
     _ssdp();
     _http();
     if(millis() - alive > 600000UL){ alive = millis(); _notify(true); }   /* раз на 10 хв нагадуємо про себе */
-    if(_playing && !player.isRunning() && player.status() != PLAYING) _playing = false;
+    /*  З'єднання з файлом триває кілька секунд — раніше не вважаємо, що доріжка скінчилась.  */
+    if(_playing && millis() - _startMs > 12000 && !player.isRunning() && player.status() != PLAYING) _playing = false;
     vTaskDelay(pdMS_TO_TICKS(20));
   }
 }
@@ -484,7 +485,7 @@ void YoDlna::_play(){
   /*  Колонка після доріжки не вмикає станцію сама: далі керує той, хто надіслав.  */
   player.burlResumeRadio = 0;
   if(player.status() == PLAYING) player.sendCommand({PR_STOP, 0});
-  _playing = true;
+  _playing = true; _startMs = millis();
   player.sendCommand({PR_BURL, 0});
   Serial.printf("##DLNA#\tграю: %s (%s)\n", _title[0] ? _title : "без назви", _device[0] ? _device : "?");
 }

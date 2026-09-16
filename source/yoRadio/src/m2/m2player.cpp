@@ -268,7 +268,7 @@ void Player::_drawTop(Gfx& g, uint32_t now){
   const int16_t nx = 42, nw = x - 8 - nx;
   const char* name = config.station.name;
   if(player.remoteStationName && sermons.playing() >= 0 && sermons.at(sermons.playing())) name = "Проповідь";
-  else if(dlna.playing()) name = dlna.title()[0] ? dlna.title() : "Бездротова колонка";
+  else if(dlna.playing()) name = "Бездротова колонка";        /* назва доріжки — у картці нижче */
   int16_t tw = Gfx::textW(name, F_TITLE);
   Rect s = g.narrow(nx, 0, nw, TOP_H);
   if(tw <= nw) g.text(nx, 25, name, F_TITLE, C_TXT);
