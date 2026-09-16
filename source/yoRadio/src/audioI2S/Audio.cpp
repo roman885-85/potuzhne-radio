@@ -220,7 +220,7 @@ Audio::Audio(bool internalDAC /* = false */, uint8_t channelEnabled /* = I2S_DAC
         Шістнадцять на кожен бік з'їдали внутрішню пам'ять, і радіо падало;
         вісім на бік — стільки ж, скільки раніше займала сама передача
         (≈93 мс запасу звуку на 44,1 кГц, як у бібліотеці без PSRAM).  */
-    m_i2s_config.dma_buf_count        = 8;
+    m_i2s_config.dma_buf_count        = 10;   /* ≈116 мс запасу звуку: короткі провали на важкій перемальовці не чутно */
   #else
     m_i2s_config.dma_buf_count        = psramInit()?16:DMA_BUFCOUNT;
   #endif

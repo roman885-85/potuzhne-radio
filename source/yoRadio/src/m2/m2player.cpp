@@ -645,7 +645,7 @@ void Player::_flush(){
       суцільним потоком це відбирало шину в декодера звуку на іншому ядрі й
       давало провал. Розриваємо його короткими уступками: тло темне (перехід
       іде при згаслій підсвітці), тож зайві мілісекунди непомітні.  */
-  const bool bigRedraw = dirtyRows >= 8;
+  const bool bigRedraw = dirtyRows >= 6;
   uint8_t stripN = 0;
   /*  як у меню: половина буфера малюється, поки друга йде шиною  */
   uint16_t* scr = (uint16_t*)spidmaScratch((size_t)STRIP * 2);
@@ -686,7 +686,7 @@ void Player::_flush(){
       dsp.setAddrWindow(x0, y0, w, h);
       if(dma && spidmaStart(buf, n * 2)){ pending = true; hi ^= 1; }
       else dsp.writePixels(buf, n, true, true);
-      if(bigRedraw && (++stripN % 3) == 0){ if(pending){ spidmaWait(); pending = false; } vTaskDelay(1); }
+      if(bigRedraw && (++stripN % 2) == 0){ if(pending){ spidmaWait(); pending = false; } vTaskDelay(1); }
     }
   }
   if(pending) spidmaWait();

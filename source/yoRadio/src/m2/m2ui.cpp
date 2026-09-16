@@ -863,7 +863,7 @@ void Menu::_flush(){
       суцільним потоком це відбирало шину в декодера звуку на іншому ядрі й
       давало провал. Розриваємо його короткими уступками: тло темне (перехід
       іде при згаслій підсвітці), тож зайві мілісекунди непомітні.  */
-  const bool bigRedraw = dirtyRows >= 8;
+  const bool bigRedraw = dirtyRows >= 6;
   uint8_t stripN = 0;
   /*  Спільний буфер ділимо навпіл: смуга по 16 рядків малюється в одну
       половину, поки попередня йде шиною з другої. Шина (40 МГц) — найдовша
@@ -903,7 +903,7 @@ void Menu::_flush(){
       dsp.setAddrWindow(x0, y0, w, h);
       if(dma && spidmaStart(buf, n * 2)){ pending = true; hi ^= 1; }
       else dsp.writePixels(buf, n, true, true);
-      if(bigRedraw && (++stripN % 3) == 0){ if(pending){ spidmaWait(); pending = false; } vTaskDelay(1); }
+      if(bigRedraw && (++stripN % 2) == 0){ if(pending){ spidmaWait(); pending = false; } vTaskDelay(1); }
       pfDrawUs += (uint32_t)(u1 - u0); pfXferUs += (uint32_t)(esp_timer_get_time() - u1); pfStrips++;
     }
   }

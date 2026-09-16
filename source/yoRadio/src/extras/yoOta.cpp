@@ -249,8 +249,11 @@ static uint8_t* fetchSmall(const char* url, size_t& len, char* err, size_t errCa
 }
 
 bool YoOta::_doInstall(){
-  /*  1. тиша: і процесор, і мережа — для завантаження  */
+  /*  1. тиша: і процесор, і мережа — для завантаження. lockOutput=true, щоб
+      зупинка не скидала «автостарт»: якщо радіо грало до оновлення, після
+      перезавантаження воно має заграти саме (інакше після кожного апдейта тиша).  */
   Serial.printf("##OTA#\tвстановлюю %s\n", _tag);
+  player.lockOutput = true;
   player.sendCommand({PR_STOP, 0});
   vTaskDelay(pdMS_TO_TICKS(900));
 
