@@ -56,6 +56,8 @@ class Page {
     virtual bool scrollable(){ return true; }
     /*  прокрутка зупиняється рівно на рядку, з пружиною (як у старому списку): крок у пікселях, 0 — де зупинилась  */
     virtual int16_t snapStep(){ return 0; }
+    /*  Службове (консоль «items»): перелік елементів для автоматичної перевірки.  */
+    virtual void dump(){}
     int16_t scroll = 0;
 };
 
@@ -114,6 +116,7 @@ class ListPage : public Page {
     void tick(uint32_t now) override;
     int16_t height() override { return _h; }
     void draw(Gfx& g) override;
+    void dump() override;
     int16_t hit(int16_t x, int16_t y, Rect& r, uint8_t& radius) override;
     uint8_t grab(int16_t id) override;
     void drag(int16_t id, int16_t x, int16_t y, bool end) override;
@@ -169,6 +172,10 @@ class Menu {
     void calibReset();
     bool calibActive() const;
     void calibDown(int16_t x, int16_t y);
+
+    /*  Автоматична перевірка: перелік елементів верхньої сторінки й пряма прокрутка.  */
+    void dumpTop();
+    void setScroll(int16_t s);
     void onPress(uint16_t x, uint16_t y);
     void onDrag(uint16_t x, uint16_t y);
     void onRelease(uint16_t x, uint16_t y);

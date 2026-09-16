@@ -535,6 +535,8 @@ void yodbgLoop(){
     else if(!strcmp(buf,"mwifi"))  yomenu.openWifi(false);   /* без замка: це перевірка, а не режим точки доступу */
     else if(!strcmp(buf,"mclose")) yomenu.close();
     else if(!strncmp(buf,"touchlog ",9)){ extern volatile bool yoTouchLog; yoTouchLog = atoi(buf+9) != 0; Serial.printf("TOUCHLOG %d\n", (int)yoTouchLog); }
+    else if(!strcmp(buf,"items")){ m2::M.dumpTop(); }
+    else if(!strncmp(buf,"scroll ",7)){ m2::M.setScroll((int16_t)atoi(buf+7)); Serial.printf("SCROLL %d\n", atoi(buf+7)); }
     else if(!strcmp(buf,"calib")){ if(!m2::M.active()) m2::M.open(&m2::pgDev); m2::M.calibStart(); Serial.println("калібрування: торкніться чотирьох позначок"); }
     else if(!strcmp(buf,"calibreset")){ m2::M.calibReset(); Serial.println("калібрування скинуто"); }
     else if(!strncmp(buf,"tdown ",6)){ int x=0,y=0; if(sscanf(buf+6,"%d %d",&x,&y)==2){ touchscreen.injectBegin(x,y); touchscreen.loop(); Serial.println("TDOWN"); } }

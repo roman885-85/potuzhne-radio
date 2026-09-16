@@ -1091,4 +1091,53 @@ void Menu::_drawCalib(Gfx& g){
   if(s_cal.err) g.text(SW / 2, SH / 2 + 34, "Торкайтесь точно центру позначки", F_SMB, C_ACC, AL_C);
 }
 
+
+/*  ---------- службове: перелік елементів і пряма прокрутка (консоль) ---------- */
+
+static const char* itName(uint8_t t){
+  switch(t){
+    case IT_SECTION: return "section";
+    case IT_NAV:     return "nav";
+    case IT_SWITCH:  return "switch";
+    case IT_SLIDER:  return "slider";
+    case IT_SEG:     return "seg";
+    case IT_BUTTON:  return "button";
+    case IT_INFO:    return "info";
+    case IT_NOTE:    return "note";
+    case IT_CUSTOM:  return "custom";
+    default:         return "gap";
+  }
+}
+
+void ListPage::dump(){
+  for(uint8_t i = 0; i < _n; i++){
+    Item& it = _it[i];
+    if(!it.vis) continue;
+    long v = it.get ? (long)it.get() : 0;
+    Serial.printf("ITEM\t%u\t%s\t%d\t%d\t%ld\t%ld\t%ld\t%d\t%s\n",
+                  (unsigned)i, itName(it.type), (int)it.y, (int)it.hh,
+                  it.get ? v : (long)0, (long)it.lo, (long)it.hi,
+                  (it.enabled && !it.enabled()) ? 0 : 1,
+                  it.label ? it.label : "");
+  }
+}
+
+void Menu::dumpTop(){
+  Page* p = top();
+  if(!p){ Serial.println("PAGE\t-\t0\t0"); return; }
+  Serial.printf("PAGE\t%s\t%d\t%d\n", p->title(), (int)p->scroll, (int)p->height());
+  p->dump();
+  Serial.println("ENDPAGE");
+}
+
+void Menu::setScroll(int16_t s){
+  Page* p = top();
+  if(!p) return;
+  const int16_t mx = _maxScroll(p);
+  if(s < 0) s = 0;
+  if(s > mx) s = mx;
+  p->scroll = s; _scrollF = s; _fling = false; _spring = false;
+  invalAll();
+}
+
 }  // namespace m2

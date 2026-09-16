@@ -147,7 +147,11 @@ void TouchScreen::loop(){
   if(yomenu.active()){
     if(istouched){
       if(!wastouched){ _x = x; _y = y; _t0 = millis(); yomenu.onPress(x, y); }
-      else yomenu.onDrag(x, y);
+      /*  Запам'ятовуємо КОЖНУ точку ведення: при відпусканні меню отримує
+          останню, а не ту, де палець почав. Через це вертикальний повзунок
+          (смуга еквалайзера) стрибав назад на початок жесту — тягнеш, а
+          відпускаєш, і значення повертається.  */
+      else { _x = x; _y = y; yomenu.onDrag(x, y); }
     }else if(wastouched){
       yomenu.onRelease(_x, _y, millis() - _t0);
     }

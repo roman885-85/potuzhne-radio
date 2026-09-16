@@ -25,6 +25,12 @@ class EqPage : public Page {
     void drag(int16_t id, int16_t x, int16_t y, bool end) override;
     void tap(int16_t id, int16_t x, int16_t y) override;
     void value(int16_t id, int32_t v) override;
+    /*  службове (консоль «items»): геометрія смуг для автоперевірки  */
+    void dump() override {
+      Serial.printf("EQGEO\t%d\t%d\t%d\t%d\n", (int)CY0, (int)CHH, (int)zeroY(), (int)(T1 - T0));
+      for(uint8_t b = 0; b < 10; b++)
+        Serial.printf("BAND\t%u\t%d\t%d\t%d\n", (unsigned)b, (int)colX(b), (int)extras.s.eq[b], (int)lroundf(yOf(extras.s.eq[b])));
+    }
   private:
     static const int16_t CY0 = 62, CHH = 110, T0 = 76, T1 = 150;
     float _anim[10] = { 0 };
