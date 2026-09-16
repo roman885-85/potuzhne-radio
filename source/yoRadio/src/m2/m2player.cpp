@@ -219,7 +219,7 @@ void Player::_drawTop(Gfx& g, uint32_t now){
   if(!g.visible(0, 0, SW, TOP_H)) return;
   /*  джерело  */
   g.circle(20, 19, 14, C_SURF);
-  uint8_t src = dlna.playing() ? IC_SPEAKER : (player.remoteStationName ? IC_CROSS : (config.getMode() == PM_SDCARD ? IC_CARD : IC_RADIO));
+  uint8_t src = (dlna.playing() || player.extOn) ? IC_SPEAKER : (player.remoteStationName ? IC_CROSS : (config.getMode() == PM_SDCARD ? IC_CARD : IC_RADIO));
   icon(g, src, 20, 19, C_ACC, C_SURF);
   /*  меню  */
   g.circle(300, 19, 14, C_SURF);
@@ -268,6 +268,7 @@ void Player::_drawTop(Gfx& g, uint32_t now){
   const int16_t nx = 42, nw = x - 8 - nx;
   const char* name = config.station.name;
   if(player.remoteStationName && sermons.playing() >= 0 && sermons.at(sermons.playing())) name = "Проповідь";
+  else if(player.extOn) name = "AirPlay";                     /* хто грає і що — у картці нижче */
   else if(dlna.playing()) name = "Бездротова колонка";        /* назва доріжки — у картці нижче */
   int16_t tw = Gfx::textW(name, F_TITLE);
   Rect s = g.narrow(nx, 0, nw, TOP_H);

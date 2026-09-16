@@ -19,6 +19,7 @@
 #include "extras/yoOta.h"
 #include "extras/yoHang.h"
 #include "extras/yoDlna.h"
+#include "extras/yoAirplay.h"
 #ifdef USE_NEXTION
 #include "displays/nextion.h"
 #endif
@@ -118,6 +119,7 @@ void setup() {
     setupOTA();
   #endif
   dlna.begin();               /* бездротова колонка (DLNA), якщо увімкнена */
+  airplay.begin();            /* і AirPlay */
   if (config.getMode()==PM_SDCARD) player.initHeaders(config.station.url);
   player.lockOutput=false;
   if (config.store.smartstart == 1 && !YoExtras::wokeForAlarm()) {     /* будильник сам увімкне станцію */
@@ -174,6 +176,7 @@ void loop() {
   STEP(loopControls());
 #ifdef USE_YOMENU
   STEP(ota.loop());               /* оновлення з GitHub: автоперевірка двічі на добу */
+  STEP(airplay.loop());           /* AirPlay: ключ і оголошення в мережі */
   STEP(yomenu.wifiTick());        /* пошук мереж — тут, а не в задачі дисплея */
   STEP(yoDsp.roomTick());         /* налаштування під кімнату: тони, замір, поправка */
   STEP(mic.loop());               /* мікрофон: дії на хлопки й стук, присутність, сон */

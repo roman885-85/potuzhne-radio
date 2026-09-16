@@ -8,6 +8,8 @@
 #include "timekeeper.h"
 #include "../extras/yoExtras.h"
 #include "../extras/yoDsp.h"
+#include "../extras/yoAirplay.h"
+#include "../extras/yoDlna.h"
 #include "../displays/tools/l10n.h"
 #include "../pluginsManager/pluginsManager.h"
 #if I2S_ES8311
@@ -113,6 +115,7 @@ void Player::setError(const char *e){
 
 void Player::_stop(bool alreadyStopped, bool keepAmp){
   log_i("%s called", __func__);
+  _extRelease(true);
   if(remoteStationName && _status == PLAYING){   /* запам'ятати місце в проповіді */
     uint32_t p = posSec();
     burlResume = (burlDur && p + 5 >= burlDur) ? 0 : p;
@@ -166,7 +169,7 @@ void resetPlayer(){
 void Player::loop() {
   if(playerQueue==NULL) return;
   playerRequestParams_t requestP;
-  if(xQueueReceive(playerQueue, &requestP, isRunning()?PL_QUEUE_TICKS:PL_QUEUE_TICKS_ST)){
+  if(xQueueReceive(playerQueue, &requestP, (isRunning() || _extData)?PL_QUEUE_TICKS:PL_QUEUE_TICKS_ST)){
     switch (requestP.type){
       case PR_STOP: _fadeOutWait(); _stop(); break;
       case PR_PLAY: {
@@ -203,6 +206,11 @@ void Player::loop() {
         if(config.vuThreshold>10) config.vuThreshold -=10;
         break;
       }
+      case PR_EXT: {
+        if(requestP.payload) _extStart();
+        else if(extOn){ _extRelease(false); _stop(); }
+        break;
+      }
       case PR_BURL: {
       #if defined(MQTT_ROOT_TOPIC) || defined(YO_BROWSEURL)
         if(strlen(burl)>0){
@@ -217,9 +225,10 @@ void Player::loop() {
     }
   }
   Audio::loop();
+  if(extOn) _extPump();
   /*  Розмір файлу проповіді — із першого, повного з'єднання  */
   if(remoteStationName && !burlRanged && !burlSize && yoContentLen()) burlSize = yoContentLen();
-  if(!isRunning() && _status==PLAYING) _stop(true);
+  if(!isRunning() && _status==PLAYING && !extOn) _stop(true);
   if(_volTimer){
     if((millis()-_volTicks)>3000){
       config.saveVolume();
@@ -245,10 +254,66 @@ void Player::setOutputPins(bool isPlaying) {
     і лише тоді обривається. Новий потік (станція, трек, проповідь) наростає
     за 0,7 с від першого відліку.  */
 void Player::_fadeOutWait(){
-  if(_status != PLAYING || !isRunning()) return;
+  if(_status != PLAYING || (!isRunning() && !extOn)) return;
   yoDsp.fadeOut(300);
   uint32_t t0 = millis();
-  while(!yoDsp.faded() && millis() - t0 < 500){ Audio::loop(); vTaskDelay(1); }
+  while(!yoDsp.faded() && millis() - t0 < 500){ if(extOn) _extPump(); else Audio::loop(); vTaskDelay(1); }
+}
+
+/*  ---------- AirPlay ----------
+    Звук приходить уже готовими відліками (extras/yoAirplay): тут лише
+    перемкнути плеєр і подавати їх у ту саму обробку, що й потоки.  */
+void Player::_extStart(){
+  if(extOn) return;
+  if(_status == PLAYING){ _fadeOutWait(); _stop(false, true); }   /* підсилювач лишаємо — не клацне */
+  else if(isRunning()) stopSong();
+  remoteStationName = false;
+  _hasError = false;
+  extFormat(44100);
+  _loadVol(config.store.volume);
+  yoDsp.fadeIn(300);
+  extOn = true;
+  _extData = false;
+  _status = PLAYING;
+  dlna.stopped();                         /* колонку DLNA теж замінено */
+  config.setDspOn(1);
+  char t[160];
+  if(!airplay.takeTitle(t, sizeof(t))) strlcpy(t, airplay.device()[0] ? airplay.device() : "AirPlay", sizeof(t));
+  config.setTitle(t);
+  netserver.requestOnChange(MODE, 0);
+  setOutputPins(true);
+  display.putRequest(PSTART);
+  if (player_on_start_play) player_on_start_play();
+  pm.on_start_play();
+  Serial.printf("##AIRPLAY#\tграє з «%s»\n", airplay.device());
+}
+
+void Player::_extRelease(bool byRadio){
+  if(!extOn) return;
+  _fadeOutWait();
+  extOn = false;
+  _extData = false;
+  if(byRadio) airplay.released();
+}
+
+void Player::_extPump(){
+  /*  Скільки пакетів за раз: поки I2S бере без очікування (буфер драйвера
+      ще не повний) — більше, щойно запис почав чекати — досить.  */
+  static int16_t buf[(352 + 4) * 2];
+  _extData = false;
+  const uint32_t t0 = millis();
+  for(uint8_t k = 0; k < 6; k++){
+    const size_t n = airplay.read(buf, 353);
+    if(!n) break;
+    _extData = true;
+    for(size_t i = 0; i < n; i++){
+      int16_t s[2] = { buf[i * 2], buf[i * 2 + 1] };
+      extSample(s);
+    }
+    if(millis() - t0 > 6) break;
+  }
+  char t[160];
+  if(airplay.takeTitle(t, sizeof(t))) config.setTitle(t);
 }
 
 void Player::fadeStop(){
@@ -259,6 +324,7 @@ void Player::fadeStop(){
 
 void Player::_play(uint16_t stationId) {
   log_i("%s called, stationId=%d", __func__, stationId);
+  _extRelease(true);                      /* грав AirPlay — станція забирає звук собі */
   yoDsp.fadeIn(700);
   _hasError=false;
   setDefaults();
@@ -295,6 +361,7 @@ void Player::_play(uint16_t stationId) {
 
 #if defined(MQTT_ROOT_TOPIC) || defined(YO_BROWSEURL)
 void Player::browseUrl(){
+  _extRelease(true);
   yoDsp.fadeIn(700);
   _hasError=false;
   /*  Перемотка всередині проповіді — теж новий запит; тоді «що грало до

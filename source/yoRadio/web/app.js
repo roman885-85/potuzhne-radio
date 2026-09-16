@@ -1716,6 +1716,9 @@ VIEWS.system = page => {
       row('Подробиці потоку в журналі', 'для діагностики через USB', sw(+C.aif, v => send('audioinfo=' + (v ? 1 : 0)))),
       row('Бездротова колонка (DLNA)', 'радіо видно в мережі як колонку: телефон чи комп\'ютер надсилає йому доріжку — BubbleUPnP, Hi-Fi Cast, VLC, «Передати на пристрій» у Windows',
         sw(S && S.dlna, v => setx({ dlna: v ? 1 : 0 }))),
+      row('Колонка AirPlay', 'iPhone, iPad і Mac грають на радіо будь-який свій звук: «Звук» у Пункті керування чи кнопка AirPlay у програмі' +
+        (S && S.airplay && S.ap && !S.ap.key ? ' — радіо ще отримує ключ AirPort' + (S.ap.err ? ' (' + S.ap.err + ')' : '') : ''),
+        sw(S && S.airplay, v => setx({ airplay: v ? 1 : 0 }))),
       row('Точка доступу, якщо мережі немає', 'через стільки хвилин (0 — одразу)', sa),
       row('Ім\'я в мережі', `відкривається як http://${C.mdns || 'potuzhne'}.local`, h('div', { class: 'bar' }, md, btn('Змінити', null, () => { send('mdnsname=' + md.value.trim()); send('rebootmdns=1'); toast('Радіо перезавантажується з новим ім\'ям'); }, 'sm'))),
       row('Telnet', 'керування через telnet у локальній мережі', sw(+C.telnet, v => send('telnet=' + (v ? 1 : 0)))),

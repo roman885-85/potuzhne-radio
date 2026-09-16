@@ -66,6 +66,8 @@ struct ExtStore {
   uint8_t  sfxEvInit;                            /* 1 — гучності подій виставлено */
   uint8_t  dlnaOn;                               /* 1 — бездротова колонка (DLNA) увімкнена */
   uint8_t  dlnaInit;                             /* 1 — типове значення колонки вже виставлено */
+  uint8_t  airplayOn;                            /* 1 — колонка AirPlay увімкнена */
+  uint8_t  airplayInit;                          /* 1 — типове значення AirPlay уже виставлено */
 };
 /*  Зовнішній ЦАП I2S — на вільні виводи роз'єму розширення  */
 #define DAC_BCLK  14

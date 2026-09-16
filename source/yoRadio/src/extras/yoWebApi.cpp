@@ -22,6 +22,7 @@
 #include "yoVersion.h"
 #include "yoHang.h"
 #include "yoDlna.h"
+#include "yoAirplay.h"
 #include "esp_core_dump.h"
 #include "esp_flash.h"
 
@@ -138,7 +139,7 @@ static void onHello(AsyncWebServerRequest* r){
   o.ks("build", prBuild());
   o.ks("host", config.store.mdnsname);
   o.ks("ip", WiFi.localIP().toString().c_str());
-  o.ks("station", player.remoteStationName && sermons.playing() >= 0 ? "проповідь" : config.station.name);
+  o.ks("station", player.extOn ? "AirPlay" : player.remoteStationName && sermons.playing() >= 0 ? "проповідь" : config.station.name);
   o.kn("play", player.status() == PLAYING);
   o.put('}');
   AsyncWebServerResponse* resp = r->beginResponse(200, "application/json", b);
@@ -210,6 +211,9 @@ static void onState(AsyncWebServerRequest* r){
   if(YoHang::last()[0]){ o.ks("hang", YoHang::last()); o.kn("hangAt", YoHang::lastAt()); }
   o.kn("hb", (long long)yoHbLoop); o.kn("hbDsp", (long long)yoHbDsp);     /* оберти циклу й екрана: зовні видно, що стоїть */
   o.kn("dlna", extras.s.dlnaOn ? 1 : 0);                                  /* бездротова колонка */
+  o.kn("airplay", extras.s.airplayOn ? 1 : 0);                            /* колонка AirPlay */
+  o.k("ap"); o.put('{'); o.kn("key", airplay.ready()); o.ks("err", airplay.keyState());
+  o.kn("sess", airplay.session()); o.kn("on", player.extOn); o.ks("dev", airplay.device()); o.put('}');
   {
     char t[24];
     if(network.timeinfo.tm_year > 100){ strftime(t, sizeof(t), "%H:%M", &network.timeinfo); o.ks("time", t);
@@ -218,7 +222,7 @@ static void onState(AsyncWebServerRequest* r){
   o.kn("mode", config.getMode());
   o.kn("play", player.status() == PLAYING);
   o.kn("idx", config.lastStation());
-  o.ks("name", config.station.name);
+  o.ks("name", player.extOn ? "AirPlay" : config.station.name);
   o.ks("title", config.station.title);
   o.ks("url", config.station.url);
   o.kn("vol", config.store.volume);
@@ -659,6 +663,7 @@ static void apply(const WebCmd& c){
   }
   else if(!strcmp(k, "crashClear")) { YoHang::clear(); ext = false; }
   else if(!strcmp(k, "dlna"))       { dlna.setOn(clampi(v, 0, 1) != 0); ext = false; }
+  else if(!strcmp(k, "airplay"))    { airplay.setOn(clampi(v, 0, 1) != 0); ext = false; }
   else if(!strcmp(k, "hangTest"))   { yoHangTestMs = (uint32_t)clampi(v, 1, 180) * 1000UL; ext = false; }   /* перевірка сторожа: екран «зависне» на v с */
   else if(!strcmp(k, "sfxPlay"))    { int e = YoSfx::find(v); if(e >= 0) sfx.test((SfxEvent)e); ext = false; }
   else if(!strcmp(k, "sfxReset")){

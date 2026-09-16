@@ -28,6 +28,7 @@
 #include "../extras/yoSfx.h"
 #include "../extras/yoDsp.h"
 #include "../extras/yoSpectrum.h"
+#include "../extras/yoAirplay.h"
 
 extern DspCore dsp;
 
@@ -413,6 +414,9 @@ void yodbgLoop(){
     else if(!strncmp(buf,"micon ",6)){
       extras.s.micOn = atoi(buf+6) ? 1 : 0; extras.changed(); mic.apply();
       Serial.printf("мікрофон %s\n", extras.s.micOn ? "увімкнено" : "вимкнено");
+    }
+    else if(!strcmp(buf,"airplay")){
+      airplay.stat();
     }
     else if(!strcmp(buf,"tasks")){
       /*  Хто скільки процесора з'їв: список задач FreeRTOS від самого ядра.  */

@@ -232,6 +232,9 @@ public:
     const char *getCodecname() {return codecname[m_codec];}
     /*  частота тактів поза потоком — для самоперевірки звуку, коли плеєр стоїть  */
     void     forceSampleRate(uint32_t hz) { setSampleRate(hz); }
+    /*  Готові відліки ззовні (AirPlay): 16 біт стерео і та сама обробка, що в потоків.  */
+    void     extFormat(uint32_t hz) { setBitsPerSample(16); setChannels(2); setSampleRate(hz); }
+    bool     extSample(int16_t s[2]) { return playSample(s); }
 private:
 
     #ifndef ESP_ARDUINO_VERSION_VAL

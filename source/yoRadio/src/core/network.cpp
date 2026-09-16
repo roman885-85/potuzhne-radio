@@ -10,6 +10,7 @@
 #include "telnet.h"
 #include "netserver.h"
 #include "../extras/yoDlna.h"
+#include "../extras/yoAirplay.h"
 #include "player.h"
 #include "../extras/yoVersion.h"
 #include "../extras/yoSfx.h"
@@ -473,6 +474,7 @@ void MyNetwork::_staUp(){
     pm.on_connect();
   }
   dlna.begin();                      /* мережа з'явилась — колонку видно в ній */
+  airplay.begin();
   display.putRequest(NEWIP, 0);
   display.putRequest(NEWMODE, PLAYER);
 }
