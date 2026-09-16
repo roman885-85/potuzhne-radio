@@ -54,6 +54,7 @@ uint32_t yoDspWhatMs = 0;
 static void loopDspTask(void * pvParameters){
   while(true){
     yoHbDsp++;                                   /* сторож зависань (extras/yoHang) */
+    timekeeper.loop0();                          /* хід годинника, RSSI, перевірка картки — ядро 0 (загубилось при переписуванні екрана) */
     if(yoHangTestMs){ uint32_t ms = yoHangTestMs; yoHangTestMs = 0; Serial.printf("##HANG#\tперевірка: задача екрана спить %u с\n", (unsigned)(ms / 1000)); vTaskDelay(pdMS_TO_TICKS(ms)); }
     if(displayQueue==NULL) break;
 #ifdef YO_DEBUG

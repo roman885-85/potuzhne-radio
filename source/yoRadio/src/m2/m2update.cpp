@@ -89,16 +89,24 @@ static void drawOta(Gfx& g){
   /*  кільце ходу  */
   const float cx = SW / 2, cy = 120;
   OtaState st = ota.state();
-  uint8_t pct = st == OTA_FIRMWARE ? ota.progress() : (st == OTA_VERIFY || st == OTA_DONE ? 100 : 0);
-  g.arc(cx, cy, 38, 7, C_SURF2);
-  if(st == OTA_FIRMWARE || st == OTA_VERIFY || st == OTA_DONE){
-    if(pct) g.arc(cx, cy, 38, 7, st == OTA_DONE ? C_TEAL : C_ACC, 0, 3.6f * pct);
-    snprintf(b, sizeof(b), "%u%%", pct);
-    g.text((int16_t)cx, (int16_t)cy + 8, b, F_MID, C_TXT, AL_C);
-  }else{
-    float a = fmodf(millis() * 0.36f, 360.0f);
-    g.arc(cx, cy, 38, 7, C_ACC, a, a + 90);
+  /*  Один суцільний хід по всіх фазах, а не окреме кільце, що крутиться:
+      підготовка й завантаження веб-файлів ідуть по мережі (ядро 0 зайняте
+      Wi-Fi/TLS), і кільце, що оберталось за часом, смикалось на кожному
+      пропущеному кадрі. Визначений відсоток, що лише наростає, читається як
+      хід, а не як ривки.  */
+  const uint8_t p = ota.progress();
+  int overall;
+  switch(st){
+    case OTA_WEB:      overall = 3 + p * 12 / 100; break;    /* 3..15 */
+    case OTA_FIRMWARE: overall = 15 + p * 81 / 100; break;   /* 15..96 */
+    case OTA_VERIFY:   overall = 98; break;
+    case OTA_DONE:     overall = 100; break;
+    default:           overall = 3; break;                   /* OTA_PREPARE тощо */
   }
+  g.arc(cx, cy, 38, 7, C_SURF2);
+  g.arc(cx, cy, 38, 7, st == OTA_DONE ? C_TEAL : C_ACC, 0, 3.6f * overall);
+  snprintf(b, sizeof(b), "%d%%", overall);
+  g.text((int16_t)cx, (int16_t)cy + 8, b, F_MID, C_TXT, AL_C);
   g.text(SW / 2, 186, ota.stepName(), F_ROW, C_TXT, AL_C, SW - 20);
   if(st == OTA_FIRMWARE && ota.total()){
     snprintf(b, sizeof(b), "%.1f з %.1f МБ · %u КБ/с", ota.done() / 1048576.0f, ota.total() / 1048576.0f, (unsigned)(ota.speed() / 1024));
@@ -110,7 +118,7 @@ static void drawOta(Gfx& g){
 void otaViewRender(){
   s_was = true;
   OtaState st = ota.state();
-  uint32_t sig = (uint32_t)st * 1000 + ota.progress() + (st != OTA_FIRMWARE ? (millis() / 60) * 7 : 0) + (ota.speed() / 4096) * 131;
+  uint32_t sig = (uint32_t)st * 1000 + ota.progress() + (ota.speed() / 4096) * 131;
   if(sig == s_sig) return;
   s_sig = sig;
   /*  підсвітка — повна: людина має бачити, що йде  */

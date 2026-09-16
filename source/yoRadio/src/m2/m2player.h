@@ -68,6 +68,7 @@ class Player {
     struct { bool on, rel; int16_t x, y; uint32_t t0, up; } _rf = { false, false, 0, 0, 0, 0 };
     volatile bool _down = false;
     volatile int16_t _volDrag = -1;       /* гучність під пальцем (0..254) */
+    float _volShownF = -1;                /* показана гучність: плавно наздоганяє ціль */
     uint32_t _volSent = 0; int16_t _volLast = -1;
     volatile float _seek = -1;           /* пульт: куди перемотає */
     volatile int8_t _btn = -1;           /* пульт: натиснута кнопка */

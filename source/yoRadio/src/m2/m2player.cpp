@@ -516,7 +516,7 @@ void Player::_drawRow(Gfx& g){
 
 void Player::_drawVol(Gfx& g){
   if(!g.visible(0, VOL_Y, SW, VOL_H)) return;
-  int v = _volDrag >= 0 ? _volDrag : config.store.volume;
+  int v = _volShownF >= 0 ? (int)lroundf(_volShownF) : (_volDrag >= 0 ? _volDrag : (int)config.store.volume);
   const int16_t cy = VOL_Y + 14;
   icon(g, IC_SPEAKER, 22, cy, C_TXT2, C_BG);
   drawSlider(g, 40, cy, SW - 40 - 56, v / 254.0f);
@@ -729,6 +729,16 @@ void Player::render(){
     if(r != _sRow || m != _rowMode){ _sRow = r; _rowMode = m; _mark(0, ROW_Y, SW, ROW_H); }
     /*  гучність  */
     if((uint32_t)config.store.volume != _sVol){ _sVol = config.store.volume; _mark(0, VOL_Y, SW, VOL_H); }
+  }
+  /*  плавна гучність: показане значення наздоганяє ціль (палець, енкодер, веб)  */
+  {
+    float target = _volDrag >= 0 ? (float)_volDrag : (float)config.store.volume;
+    if(_volShownF < 0) _volShownF = target;
+    if(fabsf(target - _volShownF) > 0.5f){
+      _volShownF += (target - _volShownF) * 0.35f;
+      if(fabsf(target - _volShownF) <= 0.5f) _volShownF = target;
+      _mark(0, VOL_Y, SW, VOL_H);
+    }
   }
   /*  біжучі рядки  */
   if(now - _mqT >= 25){
