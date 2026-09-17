@@ -22,7 +22,7 @@
 Display display;
 
 #ifndef CORE_STACK_SIZE
-  #define CORE_STACK_SIZE  1024*4
+  #define CORE_STACK_SIZE  1024*5   /* було 4К: у задачі екрана лишалось 924 Б запасу — замало */
 #endif
 #ifndef DSP_TASK_PRIORITY
   #define DSP_TASK_PRIORITY  4
