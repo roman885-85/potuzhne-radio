@@ -18,6 +18,10 @@ import os, sys, re, time, json, glob, argparse, urllib.request, termios, fcntl, 
 PORT = os.environ.get("PORT") or (sorted(glob.glob("/dev/cu.usbmodem*")) or ["/dev/cu.usbmodem1442401"])[0]
 HDR = 40                      # висота шапки меню
 SW, SH = 320, 240
+MX, CWID = 10, 300            # поля й ширина картки (m2theme.h)
+SL_Y = 40                     # доріжка повзунка — на цьому зсуві в рядку (вище неї підпис і кнопка ▶)
+SL_X0, SL_W = MX + 12 + 9 + 6, CWID - 24 - 18 - 12   # відрізок, на якому значення від lo до hi
+SW_X = MX + CWID - 52 + 20    # центр перемикача
 
 PAGES = {                     # номер команди m2 -> назва
     0: "Меню", 1: "Параметри", 2: "Екран", 3: "Будильник", 4: "Обране",
@@ -58,6 +62,16 @@ class Port:
                 if until and until in buf.decode('utf-8', 'replace'): break
         return buf.decode('utf-8', 'replace')
     def close(self): os.close(self.fd)
+
+ARGS = None
+
+def setapi(ip, body):
+    try:
+        req = urllib.request.Request("http://%s/api/set" % ip, data=body.encode(), method="POST")
+        with urllib.request.urlopen(req, timeout=4) as r: r.read()
+        return True
+    except Exception:
+        return False
 
 def api(ip, path="/api/state", tries=3):
     for _ in range(tries):
@@ -143,9 +157,8 @@ def test_page(p, n, quick):
         check(got is not None and abs(got - target) <= 2,
               "смуга %s: значення лишилось після відпускання" % band["b"],
               "тягнув до %d дБ, стало %s (було %d)" % (target, got, old))
-        # повернути як було
-        oy = geo["zero"] - old * geo["span"] // 24 + HDR
-        drag(p, band["x"], (got if got is None else geo["zero"] - got * geo["span"] // 24) + HDR, band["x"], oy, steps=6)
+        # повернути як було — точно, через API (перетягуванням не влучиш у бал)
+        setapi(ARGS.ip, "eqBand=%d:%d" % (band["b"], old))
 
     # --- елементи списку ---
     for it in items:
@@ -158,20 +171,23 @@ def test_page(p, n, quick):
         if y < HDR + 6 or y > SH - 6: continue
         old = it["val"]
         if it["type"] == "switch":
-            tap(p, SW - 44, y)
+            tap(p, SW_X, y)
             _, items2, _, _ = parse_items(p.cmd("items", until="ENDPAGE", tmax=3.0))
             now = next((q["val"] for q in items2 if q["i"] == it["i"]), None)
             check(now is not None and now != old, "перемикач «%s» спрацював" % lbl,
                   "було %s, стало %s" % (old, now))
-            tap(p, SW - 44, y)                      # повернути
+            tap(p, SW_X, y)                      # повернути
         else:
             lo, hi = it["lo"], it["hi"]
             if hi <= lo: continue
-            x0, x1 = 40, SW - 60
+            # доріжка нижча за підпис із кнопкою ▶ — тиснемо саме в неї
+            ty = it["y"] + SL_Y + HDR - page["scroll"]
+            if ty < HDR + 6 or ty > SH - 6: continue
             frac = (old - lo) / float(hi - lo)
-            cur = int(x0 + (x1 - x0) * frac)
+            cur = int(SL_X0 + SL_W * frac)
             target = lo + (hi - lo) * (3 if frac > 0.5 else 7) // 10
-            tx = int(x0 + (x1 - x0) * (target - lo) / float(hi - lo))
+            tx = int(SL_X0 + SL_W * (target - lo) / float(hi - lo))
+            y = ty
             drag(p, cur, y, tx, y, steps=8, jitter=4)
             _, items2, _, _ = parse_items(p.cmd("items", until="ENDPAGE", tmax=3.0))
             now = next((q["val"] for q in items2 if q["i"] == it["i"]), None)
@@ -189,10 +205,12 @@ def main():
     ap.add_argument("--pages", default="")
     ap.add_argument("--quick", action="store_true")
     a = ap.parse_args()
+    global ARGS; ARGS = a
     pages = [int(x) for x in a.pages.split(",") if x != ""] if a.pages else sorted(PAGES)
 
     p = Port(PORT)
     st0 = api(a.ip)
+    snap = (st0 or {}).get("sfx") or {}          # знімок: повернемо точно, а не перетягуванням
     print("радіо: %s, станція «%s», грає=%s" % (st0.get("v") if st0 else "?",
           st0.get("name") if st0 else "?", st0.get("play") if st0 else "?"), flush=True)
     heap0 = st0.get("heap") if st0 else 0
@@ -225,6 +243,13 @@ def main():
     p.cmd("m2close", 0.6)
     drops = [l for l in out.splitlines() if "провал" in l]
     check(len(drops) <= 2, "звук на переходах меню", "провалів: %d" % len(drops))
+    # повернути звукові налаштування точно, як були до прогону
+    if snap:
+        setapi(a.ip, "sfxVol=%d" % snap.get("vol", 72))
+        setapi(a.ip, "sfxEvVol=0:%d" % snap.get("splashVol", 70))
+        st2 = api(a.ip) or {}
+        ok = (st2.get("sfx") or {}).get("vol") == snap.get("vol")
+        check(ok, "звукові налаштування повернуто як були")
     p.close()
 
     print("\n================ ПІДСУМОК ================")
