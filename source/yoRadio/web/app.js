@@ -104,6 +104,25 @@ function toast(msg, bad) {
 }
 
 function fillRange(r) { const mn = +r.min || 0, mx = +r.max || 100; r.style.setProperty('--p', ((r.value - mn) / (mx - mn) * 100) + '%'); }
+/*  Чи людина зараз крутить цей елемент. На дотику браузер часто НЕ ставить
+    фокус на повзунок, тому самого document.activeElement мало: стан, що
+    прийшов з радіо (ще старий, бо зміну ми шлемо із затримкою), затирав те,
+    що тягнуть пальцем — повзунок смикався назад. Тому запам'ятовуємо мить
+    останньої дії й ще секунду елемент не чіпаємо.  */
+const HELD = new WeakMap();
+function hold(el, ms) { if (el) HELD.set(el, Date.now() + (ms || 1200)); }
+function held(el) {
+  if (!el) return false;
+  if (document.activeElement === el) return true;
+  const t = HELD.get(el);
+  return !!t && Date.now() < t;
+}
+['pointerdown', 'touchstart', 'input', 'change'].forEach(ev =>
+  document.addEventListener(ev, e => {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT')) hold(t);
+  }, true));
+
 function range(min, max, val, oninput, onchange, step) {
   const r = h('input', { type: 'range', min, max, step: step || 1, value: val });
   fillRange(r);
@@ -527,7 +546,7 @@ function miniUpdate() {
       ibtn('next', 'Наступна', () => serm ? setx({ sermRel: 1 }) : send('next=1'), 'ghost'),
       h('div', { class: 'v' }, ic('vol'), volRange('mv')));
   }
-  const r = $('#mv'); if (r && document.activeElement !== r) { r.value = W.vol; fillRange(r); }
+  const r = $('#mv'); if (r && !held(r)) { r.value = W.vol; fillRange(r); }
 }
 let volT = 0;
 function volRange(id) {
@@ -589,7 +608,7 @@ VIEWS.player = page => {
         seek.append(r, h('div', { class: 't' }, h('span', null, mmss(W.sdtpos)), h('span', null, mmss(W.sdtend))));
       }
     }
-    if (document.activeElement !== vr) { vr.value = W.vol; fillRange(vr); $('#vo').textContent = Math.round(W.vol / 2.54) + '%'; }
+    if (!held(vr)) { vr.value = W.vol; fillRange(vr); $('#vo').textContent = Math.round(W.vol / 2.54) + '%'; }
     if (!S) return;
     /*  джерело  */
     const ssig = [W.mode, S.dev.noSd, W.snuffle, serm].join('|');
@@ -1339,7 +1358,7 @@ VIEWS.alarm = page => {
     sleepNote.textContent = S.sleep.set ? `Радіо вимкнеться через ${mmss(S.sleep.left)}; останні 20 секунд звук плавно стихає, екран гасне.` : 'Таймер не стоїть.';
     const a = S.alarm;
     onSw.firstChild.checked = !!a.on;
-    if (document.activeElement !== time) time.value = `${pad2(a.h)}:${pad2(a.m)}`;
+    if (!held(time)) time.value = `${pad2(a.h)}:${pad2(a.m)}`;
     days.set(a.days);
     aNote.textContent = !a.on ? 'Будильник вимкнено.' : a.ring ? 'Будильник дзвонить зараз.' : a.in < 0 ? 'Радіо ще не знає точного часу.' : `Задзвонить через ${Math.floor(a.in / 60)} год ${pad2(a.in % 60)} хв${W.mode === 0 && W.name ? '. Заграє «' + W.name + '»' : ''}.`;
   });
@@ -1371,11 +1390,11 @@ VIEWS.screen = page => {
   let xs = '';
   live(what => {
     if (S) {
-      if (document.activeElement !== br) { br.value = S.bright; fillRange(br); brOut.textContent = S.bright + '%'; }
+      if (!held(br)) { br.value = S.bright; fillRange(br); brOut.textContent = S.bright + '%'; }
       nOn.firstChild.checked = !!S.night.on;
-      if (document.activeElement !== nFrom) nFrom.value = S.night.from;
-      if (document.activeElement !== nTo) nTo.value = S.night.to;
-      if (document.activeElement !== nl) { nl.value = S.night.level; fillRange(nl); nlOut.textContent = S.night.level ? S.night.level + '%' : 'гасне'; }
+      if (!held(nFrom)) nFrom.value = S.night.from;
+      if (!held(nTo)) nTo.value = S.night.to;
+      if (!held(nl)) { nl.value = S.night.level; fillRange(nl); nlOut.textContent = S.night.level ? S.night.level + '%' : 'гасне'; }
       nNote.textContent = S.night.on ? (S.night.act ? 'Зараз діє нічний режим.' : 'Зараз денний режим.') : '';
       save.set(S.save); led.set(S.led);
     }
@@ -1480,12 +1499,12 @@ VIEWS.sound = page => {
   live(() => {
     if (S && S.snd) {
       const d = S.snd;
-      d.eq.forEach((v, i) => { if (document.activeElement !== sl[i]) { sl[i].value = v; fillRange(sl[i]); outs[i].textContent = (v > 0 ? '+' : '') + v; } });
+      d.eq.forEach((v, i) => { if (!held(sl[i])) { sl[i].value = v; fillRange(sl[i]); outs[i].textContent = (v > 0 ? '+' : '') + v; } });
       presets.set(d.preset);
       on.firstChild.checked = !!d.on;
       geq.classList.toggle('off', !d.on);
       guard.set(d.guard); vb.set(d.vb); loud.set(d.loud);
-      if (document.activeElement !== bal) { bal.value = d.bal; fillRange(bal); balOut.textContent = d.bal ? (d.bal < 0 ? 'ліворуч ' + -d.bal : 'праворуч ' + d.bal) : 'по центру'; }
+      if (!held(bal)) { bal.value = d.bal; fillRange(bal); balOut.textContent = d.bal ? (d.bal < 0 ? 'ліворуч ' + -d.bal : 'праворуч ' + d.bal) : 'по центру'; }
       roomOn.firstChild.checked = !!d.roomOn;
       const busy = d.rst === 1 || d.rst === 2;
       roomBtn.lastChild.textContent = busy ? 'Зупинити' : 'Зміряти';
@@ -1525,7 +1544,7 @@ VIEWS.mic = page => {
     const a3 = selectEl(MIC_ACTS, 3, v => setx({ [k + '3']: v }));
     const el = card(title, row('Увімкнено', sub, o), row('Чутливість', null, sens),
       row('Двічі', null, h('div', { style: { width: '220px' } }, a2)), row('Тричі', null, h('div', { style: { width: '220px' } }, a3)));
-    el.upd = m => { o.firstChild.checked = !!m[k + 'On']; sens.set(m[k + 'Sens']); if (document.activeElement !== a2) a2.value = m[k + '2']; if (document.activeElement !== a3) a3.value = m[k + '3']; };
+    el.upd = m => { o.firstChild.checked = !!m[k + 'On']; sens.set(m[k + 'Sens']); if (!held(a2)) a2.value = m[k + '2']; if (!held(a3)) a3.value = m[k + '3']; };
     return el;
   };
   const clap = kind('clap', 'Хлопки', 'хлопніть у долоні двічі чи тричі з рівним кроком');
@@ -2054,7 +2073,7 @@ function sfxSection() {
     let tm = 0;
     const r = range(0, 100, 60, v => { val.textContent = v ? v + '%' : 'вимк.'; clearTimeout(tm); tm = setTimeout(() => onSet(v), 250); });
     const el = h('div', { class: 'bar', style: { minWidth: '220px', gap: '10px', flex: '1', maxWidth: '360px' } }, r, val);
-    el.set = v => { if (document.activeElement !== r) { r.value = v; fillRange(r); val.textContent = v ? v + '%' : 'вимк.'; } };
+    el.set = v => { if (!held(r)) { r.value = v; fillRange(r); val.textContent = v ? v + '%' : 'вимк.'; } };
     return el;
   };
   const splashSw = sw(false, v => setx({ splashOff: v ? 0 : 1 }));
