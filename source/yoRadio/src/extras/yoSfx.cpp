@@ -46,7 +46,7 @@ void YoSfx::begin(){
   _lock = xSemaphoreCreateMutex();
   _q = xQueueCreate(6, sizeof(uint8_t));
   /*  вище за задачу з'єднання станції (3): інакше рукостискання TLS рвало звук  */
-  xTaskCreatePinnedToCore(_taskFn, "sfx", 4096, this, 4, nullptr, 1);
+  xTaskCreatePinnedToCore(_taskFn, "sfx", 4096, this, 3, nullptr, 1);   /* нижче за головний цикл: він веде звук */
 }
 
 void YoSfx::refreshUser(){

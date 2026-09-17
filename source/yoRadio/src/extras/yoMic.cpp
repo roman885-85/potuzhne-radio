@@ -46,7 +46,7 @@ void YoMic::begin(){
   /*  Пріоритет 0 — як у задачі простою: коли віднімання луни забирає все ядро,
       FreeRTOS ділить час між ними по черзі, і сторож задач не спрацьовує
       (дамп 1.4.5: сторож, у задачі mic). Решта роботи ядра 0 її й так випереджає.  */
-  xTaskCreatePinnedToCore(_taskFn, "mic", 8192, this, 0, &_task, 0);
+  xTaskCreatePinnedToCore(_taskFn, "mic", 8192, this, 3, &_task, 0);   /* не 0: на дні його витісняли, і слух губив хлопки */
 }
 
 void YoMic::_taskFn(void* p){ ((YoMic*)p)->_run(); }
