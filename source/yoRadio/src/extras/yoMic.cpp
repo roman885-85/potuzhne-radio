@@ -711,6 +711,15 @@ void YoMic::_sweep(int16_t* raw){
     { YoI2sGuard lk; i2s_read(I2S_NUM_0, raw, FR * 4, &got, 0); }
     if(!got) break;
   }
+  /*  На час тонів піднімаємо пріоритет задачі. Звичайно вона слухає з
+      найнижчим (0) — і цього досить, бо переважно спить на i2s_read. Але під
+      час заміру вона має без упину готувати відліки: «під кімнату» жене тон
+      ще й через усю обробку (еквалайзер, захист динаміка) — це близько 30%
+      процесора, і на нульовому пріоритеті її щомиті витісняли Wi-Fi, екран,
+      DLNA та AirPlay. Тон виходив рваний — на слух «притормаживание зі
+      скрипом». Повертаємо пріоритет наприкінці.  */
+  const UBaseType_t prioWas = uxTaskPriorityGet(nullptr);
+  vTaskPrioritySet(nullptr, 6);
   if(MUTE_PIN != 255) digitalWrite(MUTE_PIN, _swAmp ? !MUTE_VAL : MUTE_VAL);  /* підсилювач */
   /*  Фора буферу передачі. Далі запис і читання йдуть у лок-степі (записали
       кадр — стільки ж прочитали), тож без фори буфер передачі весь час на нулі:
@@ -747,6 +756,7 @@ void YoMic::_sweep(int16_t* raw){
   i2s_zero_dma_buffer(I2S_NUM_0);
   if(MUTE_PIN != 255 && !player.isRunning()) digitalWrite(MUTE_PIN, MUTE_VAL);
   free(cap); free(sil); free(hw); free(out);
+  vTaskPrioritySet(nullptr, prioWas);
   _swState = ok ? 2 : 3;
 }
 
