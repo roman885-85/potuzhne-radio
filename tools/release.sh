@@ -71,15 +71,20 @@ newer(){ # $1 локальний файл, $2 назва у випуску
   if [ -f "$TMP/$2" ] && cmp -s "$1" "$TMP/$2"; then return 1; fi
   cp "$1" "$TMP/$2"; return 0
 }
-if newer "$ROOT/Програми/ПОТУЖНЕ РАДІО.apk" PotuzhneRadio-Android.apk; then
-  M_AND="$(sed -n 's/.*android:versionName="\([^"]*\)".*/\1/p' "$ROOT/apps/android-client/app/src/main/AndroidManifest.xml" | head -1)"
+# Номер беремо з самої програми, а НЕ з версії прошивки: її могли не
+# перезбирати під цей випуск. І беремо його щоразу, коли програма лежить у
+# «Програми/» — саме вона піде у випуск, хай навіть байт у байт та сама.
+if [ -f "$ROOT/Програми/ПОТУЖНЕ РАДІО.apk" ]; then
+  newer "$ROOT/Програми/ПОТУЖНЕ РАДІО.apk" PotuzhneRadio-Android.apk || true
+  A_V="$(sed -n 's/.*android:versionName="\([^"]*\)".*/\1/p' "$ROOT/apps/android-client/app/src/main/AndroidManifest.xml" | head -1)"
+  [ -n "$A_V" ] && M_AND="$A_V"
   echo ">>> програма для Android $M_AND — з Програми/"
 fi
-# Номер пишемо той, що СПРАВДІ в програмі (build.sh лишає його поруч), а не
-# версію прошивки: програму могли не перезбирати під цей випуск.
-if newer "$ROOT/Програми/ПОТУЖНЕ РАДІО.exe" PotuzhneRadio-Windows.exe; then
-  W_V="$(cat "$ROOT/Програми/.windows-version" 2>/dev/null || echo "$VER")"
-  M_WIN="$W_V"; echo ">>> програма для Windows $W_V — з Програми/"
+if [ -f "$ROOT/Програми/ПОТУЖНЕ РАДІО.exe" ]; then
+  newer "$ROOT/Програми/ПОТУЖНЕ РАДІО.exe" PotuzhneRadio-Windows.exe || true
+  W_V="$(cat "$ROOT/Програми/.windows-version" 2>/dev/null || true)"   # лишає build.sh
+  [ -n "$W_V" ] && M_WIN="$W_V"
+  echo ">>> програма для Windows $M_WIN — з Програми/"
 fi
 
 # програма для Mac — свіжа з «Програми/», якщо її зібрано під цю версію (apps/mac-client/build.sh)
