@@ -468,28 +468,39 @@ void Player::_drawClock(Gfx& g){
   if(ok){ snprintf(b, sizeof(b), "%02d", t.tm_sec); g.text(18 + w, CLK_Y + 48, b, F_TITLE, C_TXT2); }
   const int16_t rx = SW - 14;
   if(ok){
-    g.text(rx, CLK_Y + 16, WDAY[t.tm_wday % 7], F_ROWB, C_TXT, AL_R);
+    g.text(rx, CLK_Y + 12, WDAY[t.tm_wday % 7], F_ROWB, C_TXT, AL_R);
     snprintf(b, sizeof(b), "%d %s", t.tm_mday, tr(MON[t.tm_mon % 12]));
-    g.text(rx, CLK_Y + 32, b, F_ROW, C_TXT2, AL_R);
+    g.text(rx, CLK_Y + 28, b, F_ROW, C_TXT2, AL_R);
   }
   if(timekeeper.weatherHave){
     snprintf(b, sizeof(b), "%d°", (int)lroundf(timekeeper.weatherTemp));
     int16_t tw = g.text(rx, CLK_Y + 52, b, F_TITLE, C_TXT, AL_R);
     /*  значок погоди  */
-    float cx = rx - tw - 18, cy = CLK_Y + 45;
+    /*  Значок погоди був заввишки майже як два рядки тексту й упирався в дату.
+        Тепер менший (S) і має власне сонце: те, що з набору меню, розраховане
+        на рядок налаштувань і поряд із написом виглядало завеликим.  */
+    const float S = 0.8f;
+    float cx = rx - tw - 17, cy = CLK_Y + 45;
     uint8_t ic = timekeeper.weatherIcon;
     const uint16_t cl = RGB(205, 210, 220), sun = C_ACC;
+    auto sunny = [&](float x, float y, float s, uint16_t c){
+      g.circle(x, y, 3.6f * s, c);
+      for(uint8_t k = 0; k < 8; k++){
+        float a = k * 0.7854f;
+        g.line(x + 5.9f * s * cosf(a), y + 5.9f * s * sinf(a), x + 8.0f * s * cosf(a), y + 8.0f * s * sinf(a), 1.7f, c);
+      }
+    };
     auto cloud = [&](float x, float y, float s, uint16_t c){
       g.circle(x - 4 * s, y + 1 * s, 4.2f * s, c); g.circle(x + 2 * s, y - 1.5f * s, 5.5f * s, c);
       g.box((int16_t)(x - 8 * s), (int16_t)(y + 1 * s), (int16_t)(16 * s), (int16_t)(5 * s), (uint8_t)(2.5f * s), c);
     };
-    if(ic == 0){ icon(g, IC_SUN, cx, cy - 2, sun, C_BG); }
-    else if(ic == 1){ icon(g, IC_SUN, cx + 4, cy - 6, sun, C_BG); cloud(cx - 2, cy + 1, 0.9f, cl); }
-    else if(ic == 2 || ic == 3){ if(ic == 3) cloud(cx + 5, cy - 4, 0.7f, RGB(140, 148, 160)); cloud(cx, cy, 1, cl); }
-    else if(ic == 4 || ic == 5){ cloud(cx, cy - 3, 1, cl); for(uint8_t k = 0; k < 3; k++) g.line(cx - 5 + k * 5, cy + 5, cx - 7 + k * 5, cy + 10, 1.6f, C_BLUE); }
-    else if(ic == 6){ cloud(cx, cy - 3, 1, cl); const float xy[8] = { cx + 1, cy + 3, cx - 4, cy + 10, cx - 1, cy + 10, cx - 3, cy + 15 }; g.line(xy[0], xy[1], xy[2], xy[3], 2, sun); g.line(xy[2], xy[3], xy[4], xy[5], 2, sun); g.line(xy[4], xy[5], xy[6], xy[7], 2, sun); }
-    else if(ic == 7){ cloud(cx, cy - 3, 1, cl); for(uint8_t k = 0; k < 3; k++) g.circle(cx - 5 + k * 5, cy + 8, 1.5f, 0xFFFF); }
-    else if(ic == 8){ for(uint8_t k = 0; k < 3; k++) g.line(cx - 8 + (k & 1) * 3, cy - 4 + k * 5, cx + 8 - (k & 1) * 3, cy - 4 + k * 5, 2, cl); }
+    if(ic == 0){ sunny(cx, cy - 1, S, sun); }
+    else if(ic == 1){ sunny(cx + 3 * S, cy - 5 * S, S * 0.85f, sun); cloud(cx - 2 * S, cy + 1 * S, 0.9f * S, cl); }
+    else if(ic == 2 || ic == 3){ if(ic == 3) cloud(cx + 5 * S, cy - 4 * S, 0.7f * S, RGB(140, 148, 160)); cloud(cx, cy, S, cl); }
+    else if(ic == 4 || ic == 5){ cloud(cx, cy - 3 * S, S, cl); for(uint8_t k = 0; k < 3; k++) g.line(cx + (-5 + k * 5) * S, cy + 5 * S, cx + (-7 + k * 5) * S, cy + 10 * S, 1.6f, C_BLUE); }
+    else if(ic == 6){ cloud(cx, cy - 3 * S, S, cl); const float xy[8] = { cx + 1 * S, cy + 3 * S, cx - 4 * S, cy + 10 * S, cx - 1 * S, cy + 10 * S, cx - 3 * S, cy + 15 * S }; g.line(xy[0], xy[1], xy[2], xy[3], 2, sun); g.line(xy[2], xy[3], xy[4], xy[5], 2, sun); g.line(xy[4], xy[5], xy[6], xy[7], 2, sun); }
+    else if(ic == 7){ cloud(cx, cy - 3 * S, S, cl); for(uint8_t k = 0; k < 3; k++) g.circle(cx + (-5 + k * 5) * S, cy + 8 * S, 1.5f, 0xFFFF); }
+    else if(ic == 8){ for(uint8_t k = 0; k < 3; k++) g.line(cx + (-8 + (k & 1) * 3) * S, cy + (-4 + k * 5) * S, cx + (8 - (k & 1) * 3) * S, cy + (-4 + k * 5) * S, 2, cl); }
   }
 }
 

@@ -47,7 +47,9 @@ cp "$FW/web/app.css.gz" "$TMP/PotuzhneRadio-ES3C28P-app.css.gz"
 (cd "$FW/web" && zip -q -j "$TMP/PotuzhneRadio-web.zip" app.js.gz app.css.gz)
 
 # програми — з попереднього Latest (не змінювались)
-PREV="$(gh release view -R "$REPO" --json tagName --jq .tagName 2>/dev/null || true)"
+# Найсвіжіший випуск, ВРАХОВУЮЧИ пробні: `gh release view` без тега показує
+# лише остаточний, і маніфест версій програм брався з позаминулого випуску.
+PREV="$(gh api "repos/$REPO/releases" --jq '.[0].tag_name' 2>/dev/null || true)"
 for f in PotuzhneRadio-Android.apk PotuzhneRadio-Windows.exe PotuzhneRadio-Mac.zip PotuzhneRadio-Builder-Mac.zip PotuzhneRadio-Builder-Windows.zip; do
   if [ -n "$PREV" ] && [ "$PREV" != "$TAG" ]; then gh release download "$PREV" -R "$REPO" -p "$f" -D "$TMP" 2>/dev/null || true; fi
 done
@@ -73,17 +75,23 @@ if newer "$ROOT/Програми/ПОТУЖНЕ РАДІО.apk" PotuzhneRadio-An
   M_AND="$(sed -n 's/.*android:versionName="\([^"]*\)".*/\1/p' "$ROOT/apps/android-client/app/src/main/AndroidManifest.xml" | head -1)"
   echo ">>> програма для Android $M_AND — з Програми/"
 fi
+# Номер пишемо той, що СПРАВДІ в програмі (build.sh лишає його поруч), а не
+# версію прошивки: програму могли не перезбирати під цей випуск.
 if newer "$ROOT/Програми/ПОТУЖНЕ РАДІО.exe" PotuzhneRadio-Windows.exe; then
-  M_WIN="$VER"; echo ">>> програма для Windows $VER — з Програми/"
+  W_V="$(cat "$ROOT/Програми/.windows-version" 2>/dev/null || echo "$VER")"
+  M_WIN="$W_V"; echo ">>> програма для Windows $W_V — з Програми/"
 fi
 
 # програма для Mac — свіжа з «Програми/», якщо її зібрано під цю версію (apps/mac-client/build.sh)
 MACAPP="$ROOT/Програми/ПОТУЖНЕ РАДІО.app"
-if [ -d "$MACAPP" ] && [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$MACAPP/Contents/Info.plist" 2>/dev/null)" = "$VER" ]; then
-  echo ">>> програма для Mac $VER — з Програми/"
+MAC_V="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$MACAPP/Contents/Info.plist" 2>/dev/null || true)"
+# Беремо програму з «Програми/» щоразу, коли вона не старіша за ту, що вже у
+# випуску: zip щоразу інший (час у файлах), тож порівнюємо номери, не байти.
+if [ -n "$MAC_V" ] && { [ -z "$M_MAC" ] || [ "$MAC_V" != "$M_MAC" ]; }; then
+  echo ">>> програма для Mac $MAC_V — з Програми/"
   rm -f "$TMP/PotuzhneRadio-Mac.zip"
   ditto -c -k --sequesterRsrc --keepParent "$MACAPP" "$TMP/PotuzhneRadio-Mac.zip"
-  M_MAC="$VER"
+  M_MAC="$MAC_V"
 fi
 python3 - "$MAN" "$M_AND" "$M_MAC" "$M_WIN" <<'PY'
 import json,sys

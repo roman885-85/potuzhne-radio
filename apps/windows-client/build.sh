@@ -84,5 +84,8 @@ EXTRA=$(cd "$PUB" && ls | grep -v '^PotuzhneRadio.exe$' || true)
 
 mkdir -p "$OUT"
 cp "$PUB/PotuzhneRadio.exe" "$OUT/$APP_NAME.exe"
+# Номер версії поруч: tools/release.sh пише в маніфест саме його, бо з самого
+# .exe на Mac його не прочитати, а версія прошивки може вже піти вперед.
+printf '%s' "$VER" > "$OUT/.windows-version"
 rm -rf "$PUB"
 ok "$(du -h "$OUT/$APP_NAME.exe" | cut -f1 | tr -d ' ') — $OUT/$APP_NAME.exe"
