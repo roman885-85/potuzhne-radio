@@ -219,7 +219,9 @@ void ListPage::_drawItem(Gfx& g, Item& it){
     case IT_GAP: return;
     case IT_NOTE: {
       if(!it.text) return;
-      const char* s = it.text();
+      /*  Переклад беремо для всього напису, а вже потім ріжемо на рядки:
+          сам рядок із «\n» до Gfx::text не доходить (m2lang).  */
+      const char* s = tr(it.text());
       if(!s) return;
       char line[96]; int16_t by = y + 15;
       while(*s){

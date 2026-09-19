@@ -457,7 +457,7 @@ void Player::_drawClock(Gfx& g){
     char b[48];
     snprintf(b, sizeof(b), "%02d:%02d", t.tm_hour, t.tm_min);
     int16_t w = g.text(MX + 4, CARD_Y + SM_H + 24, b, F_MID, C_TXT);
-    snprintf(b, sizeof(b), "%s, %d %s", WDAY[t.tm_wday % 7], t.tm_mday, MON[t.tm_mon % 12]);
+    snprintf(b, sizeof(b), "%s, %d %s", tr(WDAY[t.tm_wday % 7]), t.tm_mday, tr(MON[t.tm_mon % 12]));
     g.text(MX + 12 + w, CARD_Y + SM_H + 24, b, F_ROW, C_TXT2, AL_L, SW - MX - 20 - w);
     return;
   }
@@ -469,7 +469,7 @@ void Player::_drawClock(Gfx& g){
   const int16_t rx = SW - 14;
   if(ok){
     g.text(rx, CLK_Y + 16, WDAY[t.tm_wday % 7], F_ROWB, C_TXT, AL_R);
-    snprintf(b, sizeof(b), "%d %s", t.tm_mday, MON[t.tm_mon % 12]);
+    snprintf(b, sizeof(b), "%d %s", t.tm_mday, tr(MON[t.tm_mon % 12]));
     g.text(rx, CLK_Y + 32, b, F_ROW, C_TXT2, AL_R);
   }
   if(timekeeper.weatherHave){

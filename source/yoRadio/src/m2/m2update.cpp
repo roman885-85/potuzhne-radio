@@ -30,7 +30,7 @@ static const char* vUpdNote(){
   switch(ota.state()){
     case OTA_CHECKING: return "звертаюсь до GitHub…";
     case OTA_LATEST:   return "у радіо остання версія";
-    case OTA_ERROR:    snprintf(b, sizeof(b), tr("не вийшло: %s"), ota.error()); return b;
+    case OTA_ERROR:    snprintf(b, sizeof(b), tr("не вийшло: %s"), tr(ota.error())); return b;
     case OTA_AVAILABLE: {
       /*  перші рядки опису випуску  */
       const char* s = ota.notes(); size_t n = 0; uint8_t lines = 0;

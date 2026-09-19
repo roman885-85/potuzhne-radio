@@ -769,7 +769,7 @@ static const char* vBat2(){
   uint16_t mv = extras.batMv();
   if(extras.s.noBat) snprintf(b, sizeof(b), "не показується");
   else if(mv < 2800) snprintf(b, sizeof(b), "-");
-  else snprintf(b, sizeof(b), tr("%d%%, %u.%02u В%s"), extras.batPct(), mv / 1000, (mv % 1000) / 10, extras.charged() ? ", заряджено" : (extras.charging() ? ", заряджається" : ""));
+  else snprintf(b, sizeof(b), tr("%d%%, %u.%02u В%s"), extras.batPct(), mv / 1000, (mv % 1000) / 10, extras.charged() ? tr(", заряджено") : (extras.charging() ? tr(", заряджається") : ""));
   return b;
 }
 static const char* vHeap(){ static char b[24]; snprintf(b, sizeof(b), tr("%u КБ"), (unsigned)(ESP.getFreeHeap() / 1024)); return b; }

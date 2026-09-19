@@ -472,7 +472,7 @@ void YoDsp::_rtFinish(bool ok, const char* msg){
   mic.apply();
   extras.changed();
   changed();
-  snprintf(_rtMsg, sizeof(_rtMsg), "%s", msg);
+  snprintf(_rtMsg, sizeof(_rtMsg), "%s", m2::tr(msg));
   _rtState = ok ? RT_DONE : RT_FAIL;
   Serial.printf("##ROOM#\t%s (нерівність %.1f -> %.1f дБ)\n", msg, _rtBefore, _rtAfter);
   if(_rtResume) player.sendCommand({PR_PLAY, config.lastStation()});
