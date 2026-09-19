@@ -19,6 +19,7 @@ sealed class BrowserView : UserControl
     readonly FlatButton _other = new() { Text = "Знайти інше радіо", FontPx = 13f };
     readonly FlatButton _reload = new() { Text = "Оновити сторінку", FontPx = 13f };
     readonly FlatButton _external = new() { Text = "Відкрити в браузері", FontPx = 13f };
+    readonly FlatButton _update = new() { Text = "Перевірити оновлення", FontPx = 13f };
     readonly Panel _host = new() { BackColor = Theme.Bg };
     readonly Label _loading = new() { AutoSize = false, UseMnemonic = false, ForeColor = Theme.Muted, BackColor = Theme.Bg, TextAlign = ContentAlignment.MiddleCenter, Text = "Завантажую сторінку радіо…" };
     readonly Panel _noRuntime = new() { BackColor = Theme.Bg, Visible = false };
@@ -57,13 +58,14 @@ sealed class BrowserView : UserControl
             var icon = S(22);
             Antenna.Draw(e.Graphics, new RectangleF(S(14), (_bar.Height - icon) / 2f, icon, icon), Theme.Accent);
         };
-        _bar.Controls.AddRange(new Control[] { _name, _notice, _other, _reload, _external });
-        foreach (var b in new[] { _other, _reload, _external }) b.BackColor = Theme.Panel;
+        _bar.Controls.AddRange(new Control[] { _name, _notice, _other, _reload, _external, _update });
+        foreach (var b in new[] { _other, _reload, _external, _update }) b.BackColor = Theme.Panel;
         _bar.Layout += (_, _) => LayoutBar();
 
         _other.Click += (_, _) => FindOtherRequested?.Invoke();
         _reload.Click += (_, _) => Reload();
         _external.Click += (_, _) => { if (_radio != null) Theme.OpenExternal(_radio.BaseUrl); };
+        _update.Click += (_, _) => _ = Updater.RunAsync(FindForm(), silent: false);
         _notice.Click += (_, _) => _noticeClick?.Invoke();
         _noticeTimer.Tick += (_, _) => { _noticeTimer.Stop(); _notice.Visible = false; };
 
@@ -109,7 +111,7 @@ sealed class BrowserView : UserControl
         var bh = S(32);
         var gap = S(8);
         var x = _bar.Width - S(12);
-        foreach (var b in new[] { _external, _reload, _other })
+        foreach (var b in new[] { _update, _external, _reload, _other })
         {
             var w = b.PreferredWidthFor();
             x -= w;
