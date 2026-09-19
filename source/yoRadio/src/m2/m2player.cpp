@@ -1,6 +1,7 @@
 #include "../core/options.h"
 #include "m2player.h"
 #include "m2pages.h"
+#include "m2lang.h"
 #include "../displays/fonts/aa/m2Clock.h"
 #include <SPIFFS.h>
 #include <WiFi.h>
@@ -200,16 +201,47 @@ uint8_t Player::_mode() const {
   return 0;
 }
 
-/*  ---------- стан у шапці ---------- */
+/*  ---------- стан у шапці ----------
+    Значки стану стоять справа наліво з однаковим проміжком. Ширини описані
+    тут один раз: за ними і рахується вільне місце під назву станції, і
+    малюється сама смуга (_drawTop), тож вони не наповзають одне на одне.  */
+static const int16_t ST_RIGHT = SW - 44;   /*  правий край смуги стану  */
+static const int16_t ST_GAP   = 7;         /*  проміжок між значками  */
+static const int16_t W_WIFI = 16, W_BAT = 21, W_BOLT = 11, W_MIC = 11, W_BELL = 14;
+static const int16_t W_MOON = 13 + 3 + 20; /*  значок + число хвилин  */
+static const int16_t W_REC  =  9 + 3 + 22; /*  крапка + хвилини запису  */
+
 int16_t Player::_statusLeft() const {
-  int16_t x = SW - 40;
-  x -= 20;                                           /* Wi-Fi */
-  if(extras.batMv() >= 2800 && !extras.s.noBat) x -= extras.onPower() ? 36 : 26;
-  if(mic.listening()) x -= 14;
-  if(extras.s.alarmOn) x -= 16;
-  if(extras.sleepLeft()) x -= 32;
-  if(recorder.active()) x -= 34;
+  int16_t x = ST_RIGHT - W_WIFI;
+  if(extras.batMv() >= 2800 && !extras.s.noBat){
+    x -= ST_GAP + W_BAT;
+    if(extras.onPower()) x -= W_BOLT;                /*  блискавка притулена до батареї  */
+  }
+  if(mic.listening())    x -= ST_GAP + W_MIC;
+  if(extras.s.alarmOn)   x -= ST_GAP + W_BELL;
+  if(extras.sleepLeft()) x -= ST_GAP + W_MOON;
+  if(recorder.active())  x -= ST_GAP + W_REC;
   return x;
+}
+
+/*  Значки стану малюємо тут, а не беремо з набору меню: ті розраховані на
+    рядок налаштувань (18–19 пікселів заввишки), і поряд із батареєю (12)
+    виглядали завеликими та чужорідними. Ці — в одну висоту з батареєю.  */
+static void stBell(Gfx& g, float cx, float cy, uint16_t c){
+  g.circle(cx, cy - 2.4f, 4.2f, c);
+  const float xy[8] = { cx - 4.2f, cy - 2.4f, cx + 4.2f, cy - 2.4f, cx + 5.2f, cy + 2.6f, cx - 5.2f, cy + 2.6f };
+  g.poly(xy, 4, c);
+  g.line(cx - 5.8f, cy + 2.9f, cx + 5.8f, cy + 2.9f, 1.6f, c);
+  g.circle(cx, cy + 5.2f, 1.5f, c);
+}
+static void stMic(Gfx& g, float cx, float cy, uint16_t c){
+  g.box((int16_t)(cx - 2.5f), (int16_t)(cy - 6.5f), 5, 9, 2, c);
+  g.arc(cx, cy - 1.0f, 4.6f, 1.6f, c, 95, 265);
+  g.line(cx, cy + 3.6f, cx, cy + 6.2f, 1.6f, c);
+}
+static void stMoon(Gfx& g, float cx, float cy, uint16_t c, uint16_t bg){
+  g.circle(cx, cy, 6.3f, c);
+  g.circle(cx + 3.7f, cy - 2.9f, 5.5f, bg);
 }
 
 static const char* const WDAY[7] = { "Неділя", "Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота" };
@@ -224,14 +256,14 @@ void Player::_drawTop(Gfx& g, uint32_t now){
   /*  меню  */
   g.circle(300, 19, 14, C_SURF);
   icon(g, IC_MENU, 300, 19, C_TXT, C_SURF);
-  /*  стан — праворуч наліво  */
-  int16_t x = SW - 40;
+  /*  стан — праворуч наліво, кроками з таблиці ширин вище  */
+  int16_t x = ST_RIGHT - W_WIFI;
   int rs = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127;
   uint8_t wl = rs > -55 ? 4 : rs > -65 ? 3 : rs > -75 ? 2 : rs > -85 ? 1 : 0;
-  x -= 20; signalBars(g, x, 25, wl, C_TXT2, C_SURF2);
+  signalBars(g, x, 25, wl, C_TXT2, C_SURF2);
   char b[16];
   if(extras.batMv() >= 2800 && !extras.s.noBat){
-    x -= 26;
+    x -= ST_GAP + W_BAT;
     int8_t pct = extras.batPct(); if(pct < 0) pct = 0;
     /*  Колір — завжди за станом, а не лише поки заряджається: інакше, щойно
         батарея дозарядилась (живлення є, «заряджено»), значок сірів.
@@ -241,10 +273,10 @@ void Player::_drawTop(Gfx& g, uint32_t now){
     const int16_t bx = x;
     if(pwr){
       /*  підключено до зарядника / комп'ютера — блискавка перед батареєю  */
-      x -= 10;
+      x -= W_BOLT;
       static const float BOLT[] = { 5.5f, 0, 0.5f, 7, 3.6f, 7, 2.5f, 12, 7.5f, 5, 4.4f, 5 };
       float pts[12];
-      for(uint8_t k = 0; k < 12; k += 2){ pts[k] = x + BOLT[k]; pts[k + 1] = 13 + BOLT[k + 1]; }
+      for(uint8_t k = 0; k < 12; k += 2){ pts[k] = x + 1 + BOLT[k]; pts[k + 1] = 13 + BOLT[k + 1]; }
       g.poly(pts, 6, C_GREEN);
     }
     g.frame(bx, 13, 19, 12, 3, c, 1);
@@ -252,17 +284,17 @@ void Player::_drawTop(Gfx& g, uint32_t now){
     int16_t fw = (int16_t)(15 * pct / 100); if(fw < 1) fw = 1;
     g.box(bx + 2, 15, fw, 8, 2, c);
   }
-  if(mic.listening()){ x -= 14; icon(g, IC_MIC, x + 6, 19, C_TXT2, C_BG); }
-  if(extras.s.alarmOn){ x -= 16; icon(g, IC_BELL, x + 7, 19, C_TXT2, C_BG); }
+  if(mic.listening()){  x -= ST_GAP + W_MIC;  stMic(g, x + 5.5f, 19, C_TXT2); }
+  if(extras.s.alarmOn){ x -= ST_GAP + W_BELL; stBell(g, x + 7, 19, C_TXT2); }
   if(extras.sleepLeft()){
-    x -= 32; icon(g, IC_MOON, x + 7, 19, C_TXT2, C_BG);
+    x -= ST_GAP + W_MOON; stMoon(g, x + 6.5f, 19, C_TXT2, C_BG);
     snprintf(b, sizeof(b), "%u", (unsigned)extras.sleepLeft());
-    g.text(x + 17, 24, b, F_SMB, C_TXT2);
+    g.text(x + 16, 24, b, F_SMB, C_TXT2);
   }
   if(recorder.active()){
-    x -= 34; g.circle(x + 6, 19, 4.5f, C_REC);
+    x -= ST_GAP + W_REC; g.circle(x + 4.5f, 19, 4.5f, C_REC);
     snprintf(b, sizeof(b), "%u'", (unsigned)(recorder.seconds() / 60));
-    g.text(x + 14, 24, b, F_SMB, C_REC);
+    g.text(x + 12, 24, b, F_SMB, C_REC);
   }
   /*  назва станції: не влазить — біжить  */
   const int16_t nx = 42, nw = x - 8 - nx;
@@ -397,7 +429,7 @@ void Player::_drawCard(Gfx& g, uint32_t now){
   g.text(tx, CARD_Y + 44, line2, F_ROW, C_TXT2, AL_L, w);
   /*  бітрейт і кодек  */
   if(config.station.bitrate && playing){
-    char b[32]; snprintf(b, sizeof(b), "%u кбіт/с · %s", (unsigned)config.station.bitrate, player.getCodecname());
+    char b[32]; snprintf(b, sizeof(b), tr("%u кбіт/с · %s"), (unsigned)config.station.bitrate, player.getCodecname());
     int16_t bw = Gfx::textW(b, F_SM) + 16;
     if(bw > w) bw = w;
     g.box(tx, CARD_Y + 51, bw, 16, 8, C_SURF2);
@@ -562,14 +594,14 @@ void Player::_drawPopup(Gfx& g){
     const char* t1 = "", *t2 = "", *t3 = "";
     if(bat){
       t1 = "Батарея сідає";
-      snprintf(b, sizeof(b), "%d%% — під'єднайте зарядку", extras.batPct());
+      snprintf(b, sizeof(b), tr("%d%% — під'єднайте зарядку"), extras.batPct());
       t2 = b; t3 = "нагадую щохвилини, поки не під'єднаєте";
     }else if(_popup == 4){
       t1 = "Немає зв'язку";
       t2 = "радіо саме підключається до мережі…"; t3 = "торкніться — вибрати іншу мережу";
     }else if(_popup == 5){
       t1 = "Картка пам'яті";
-      if(_statusN >= 0){ snprintf(b, sizeof(b), "знайдено файлів: %ld", (long)_statusN); t2 = b; } else t2 = "читаю список треків…";
+      if(_statusN >= 0){ snprintf(b, sizeof(b), tr("знайдено файлів: %ld"), (long)_statusN); t2 = b; } else t2 = "читаю список треків…";
       t3 = "за мить заграє";
     }else{
       t1 = "Оновлення"; t2 = "записую нову прошивку…"; t3 = "не вимикайте радіо";
@@ -842,6 +874,12 @@ void Player::onPress(int16_t x, int16_t y){
     else if(near(300, 19)) _zone = 2;
     else _zone = 1;
   }
+  /*  Значок станції в картці — перелік станцій, одразу на тій, що грає.
+      Решта картки лишається паузою: її тиснуть найчастіше.  */
+  else if(!sermonOn() && x >= MX + 8 && x < MX + 8 + LOGO && y >= CARD_Y + 8 && y < CARD_Y + 8 + LOGO){
+    _zone = 7;
+    _ripX = x; _ripY = y; _ripT0 = _pt; _ripUpT = 0; _ripRel = false; _ripOn = true;
+  }
   else if(y >= CARD_Y + 14 && y < CARD_Y + _cardH()){
     _zone = 3;
     _ripX = x; _ripY = y; _ripT0 = _pt; _ripUpT = 0; _ripRel = false; _ripOn = true;
@@ -927,7 +965,7 @@ void Player::onRelease(int16_t x, int16_t y){
     return;
   }
   /*  провели пальцем угору чи вниз — список станцій  */
-  if(abs(dy) > 30 && abs(dy) > abs(dx) && (z == 1 || z == 3 || z == 6)){
+  if(abs(dy) > 30 && abs(dy) > abs(dx) && (z == 1 || z == 3 || z == 6 || z == 7)){
     display.putRequest(NEWMODE, STATIONS);
     return;
   }
@@ -948,6 +986,7 @@ void Player::onRelease(int16_t x, int16_t y){
       }
       break;
     case 6: break;                        /* годинник і край картки — нічого: випадкова зупинка гірша за зайвий дотик */
+    case 7: display.putRequest(NEWMODE, STATIONS); break;   /* значок станції */
   }
 }
 

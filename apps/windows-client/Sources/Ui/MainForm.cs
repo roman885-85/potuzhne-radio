@@ -78,6 +78,9 @@ sealed class MainForm : Form
         AcceptButton = _search.AcceptButton;
         Log.Write($"Запуск: {Environment.ProcessPath}, Windows {Environment.OSVersion.Version}, DPI {DeviceDpi}");
         await StartupAsync();
+        //  Тихо дивимось, чи нема свіжішої версії. Мовчки — щоб не заважати:
+        //  питаємо, лише коли справді є що поставити (див. Net/Updater.cs).
+        _ = Updater.RunAsync(this, silent: true);
     }
 
     // ---------------------------------------------------------------------

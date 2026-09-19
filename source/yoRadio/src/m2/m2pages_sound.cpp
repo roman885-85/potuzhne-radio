@@ -2,6 +2,7 @@
     «Хлопки й стук», «Присутність».  */
 #include "../core/options.h"
 #include "m2pages.h"
+#include "m2lang.h"
 #include "../core/config.h"
 #include "../extras/yoExtras.h"
 #include "../extras/yoDsp.h"
@@ -204,7 +205,7 @@ static const char* vRoomNote(){
   if(s_rmErr[0])                 snprintf(b, sizeof(b), "%s", s_rmErr);
   else if(st == 1 || st == 2)    snprintf(b, sizeof(b), "%s… %u%%", yoDsp.roomMsg(), (unsigned)yoDsp.roomProgress());
   else if(st == 3)               snprintf(b, sizeof(b), "%s", yoDsp.roomMsg());
-  else if(st == 4)               snprintf(b, sizeof(b), "не вийшло: %s", yoDsp.roomMsg());
+  else if(st == 4)               snprintf(b, sizeof(b), tr("не вийшло: %s"), yoDsp.roomMsg());
   else                           snprintf(b, sizeof(b), "радіо грає тони й слухає себе мікрофоном;\nу кімнаті має бути тихо");
   return b;
 }
@@ -258,7 +259,7 @@ static void micMeter(Gfx& g, int16_t x, int16_t y, int16_t w, int16_t h){
   char t[72];
   uint32_t now = millis();
   if(!extras.s.micOn)                                   snprintf(t, sizeof(t), "мікрофон вимкнено");
-  else if(mic.heard() && now - mic.heardMs() < 8000)    snprintf(t, sizeof(t), "почуто: %s — %s", YoMic::gestureName(mic.heard()), YoMic::actionName(YoMic::actionFor((MicGesture)mic.heard())));
+  else if(mic.heard() && now - mic.heardMs() < 8000)    snprintf(t, sizeof(t), tr("почуто: %s — %s"), tr(YoMic::gestureName(mic.heard())), tr(YoMic::actionName(YoMic::actionFor((MicGesture)mic.heard()))));
   else if(mic.speech())                                 snprintf(t, sizeof(t), "чую голос");
   else if(mic.aecActive())                              snprintf(t, sizeof(t), "віднімаю власний звук радіо");
   else                                                  snprintf(t, sizeof(t), "слухаю");
@@ -310,7 +311,7 @@ static const char* vHeard(){
   static char b[72];
   uint32_t now = millis();
   if(!extras.s.micOn) snprintf(b, sizeof(b), "мікрофон вимкнено — жести не слухаються");
-  else if(mic.heard() && now - mic.heardMs() < 8000) snprintf(b, sizeof(b), "почуто: %s — %s", YoMic::gestureName(mic.heard()), YoMic::actionName(YoMic::actionFor((MicGesture)mic.heard())));
+  else if(mic.heard() && now - mic.heardMs() < 8000) snprintf(b, sizeof(b), tr("почуто: %s — %s"), tr(YoMic::gestureName(mic.heard())), tr(YoMic::actionName(YoMic::actionFor((MicGesture)mic.heard()))));
   else snprintf(b, sizeof(b), "плесніть чи постукайте двічі");
   return b;
 }

@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="ua.potuzhne.radio"
-    android:versionCode="3"
-    android:versionName="1.2">
+    android:versionCode="10438"
+    android:versionName="1.4.38">
 
     <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="36" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- щоб застосунок міг сам поставити своє оновлення (див. Update.java) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- адреса телефона в Wi-Fi — щоб знати, яку сотню адрес перебирати -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />

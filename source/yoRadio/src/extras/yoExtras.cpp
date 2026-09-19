@@ -13,6 +13,7 @@
 #include "../core/display.h"
 #include "../menu/yoMenu.h"
 #include "../m2/m2ui.h"
+#include "../m2/m2lang.h"
 #include <WiFi.h>
 #include <HWCDC.h>
 #include <Wire.h>
@@ -99,6 +100,8 @@ void YoExtras::_load(){
   if(s.eqLoud > 2) s.eqLoud = 0;
   if(s.eqGuard > 2) s.eqGuard = 1;
   if(s.vbass > 3) s.vbass = 0;
+  if(s.lang >= m2::LANG_N) s.lang = m2::LANG_UK;
+  m2::langSet(s.lang);                   /* мова екрана — до першого малювання */
   yoDsp.changed();
 
   memset(fav, 0, sizeof(fav));

@@ -78,6 +78,7 @@ struct ExtStore {
   uint8_t  airplayInit;                          /* 1 — типове значення AirPlay уже виставлено */
   int16_t  tsCalXL, tsCalXR, tsCalYT, tsCalYB;   /* калібрування сенсора: виміряні екранні координати чотирьох позначок */
   uint8_t  tsCalInit;                            /* 1 — калібрування вже виставлено (типово — тотожне) */
+  uint8_t  lang;                                 /* мова екрана: 0 українська, 1 English (m2/m2lang) */
 };
 /*  Зовнішній ЦАП I2S — на вільні виводи роз'єму розширення  */
 #define DAC_BCLK  14

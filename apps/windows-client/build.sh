@@ -64,7 +64,11 @@ fi
 step "Збірка $RID (один самодостатній файл)"
 PUB="$HERE/obj/publish-$RID"
 rm -rf "$PUB"
+# Номер версії — той самий, що в прошивки: за ним програма розуміє, чи є
+# у випуску на GitHub щось свіжіше за неї (Sources/Net/Updater.cs).
+VER=$(cat "$(cd ../.. && pwd)/firmware/VERSION" 2>/dev/null || echo 1.0.0)
 dotnet publish PotuzhneRadio.csproj -c Release -r "$RID" --self-contained true \
+  -p:Version="$VER" -p:FileVersion="$VER.0" -p:AssemblyVersion="$VER.0" \
   -p:PublishSingleFile=true \
   -p:IncludeNativeLibrariesForSelfExtract=true \
   -p:EnableCompressionInSingleFile=true \

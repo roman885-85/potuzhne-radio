@@ -1,6 +1,7 @@
 /*  Нове меню: «Розробник», «Звуки й заставка», «Аудіовихід», схема ЦАП.  */
 #include "../core/options.h"
 #include "m2pages.h"
+#include "m2lang.h"
 #include "../core/config.h"
 #include "../core/display.h"
 #include "../extras/yoExtras.h"
@@ -32,7 +33,7 @@ static Item s_devItems[] = {
   iSection("ЛОГОТИПИ СТАНЦІЙ"),
   iButton("Шукати логотипи знову", IC_REFRESH, [](){
     uint16_t n = logos.forget();
-    char m[48]; snprintf(m, sizeof(m), "шукатиму знову: %u", n);
+    char m[48]; snprintf(m, sizeof(m), tr("шукатиму знову: %u"), n);
     M.toast(m);
     display.forceLogo();
   }),
@@ -56,8 +57,11 @@ static void sfxHear(SfxEvent e){
 /*  Кнопка ▶ «прослухати»: грає звук події зараз, навіть коли звуки подій вимкнено.  */
 static void sfxListen(SfxEvent e){
   const ExtStore& s = extras.s;
-  uint32_t v = e == SFX_START ? s.splashVol : (uint32_t)s.sfxVol * s.sfxEvVol[e] / 100;
-  if(!v && e != SFX_LOWBAT){ M.toast(e == SFX_START || !s.sfxVol ? "гучність 0 — звуку не буде" : "гучність цього звуку 0"); return; }
+  /*  Батарея рахується лише за своїм повзунком — так само, як і звучить.  */
+  uint32_t v = e == SFX_START ? s.splashVol
+             : e == SFX_LOWBAT ? s.sfxEvVol[e]
+             : (uint32_t)s.sfxVol * s.sfxEvVol[e] / 100;
+  if(!v){ M.toast(e == SFX_START || (!s.sfxVol && e != SFX_LOWBAT) ? "гучність 0 — звуку не буде" : "гучність цього звуку 0"); return; }
   sfx.test(e);
 }
 #define SFX_EV_SLIDER(label, ev) iSliderPlay(label, 0, 100, [](){ return (int32_t)extras.s.sfxEvVol[ev]; }, \

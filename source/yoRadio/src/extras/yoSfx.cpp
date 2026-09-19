@@ -69,6 +69,9 @@ bool YoSfx::userFile(SfxEvent e){
 static bool enabledFor(SfxEvent e){
   const ExtStore& s = extras.s;
   if(e == SFX_START) return s.splashVol > 0;
+  /*  Батарея — свій повзунок (див. _gainQ15), тож і вмикається ним: загальна
+      гучність на нулі не має ховати попередження.  */
+  if(e == SFX_LOWBAT) return s.sfxOn && s.sfxEvVol[e] && (s.sfxMask & (1U << e));
   return s.sfxOn && s.sfxVol && (s.sfxMask & (1U << e));
 }
 
@@ -106,7 +109,14 @@ int32_t YoSfx::_gainQ15(SfxEvent e){
       помножена на гучність саме цієї події.  */
   uint32_t v = e == SFX_START ? extras.s.splashVol : extras.s.sfxVol;
   if(v > 100) v = 100;
-  if(e != SFX_START && e < sizeof(extras.s.sfxEvVol)){ uint32_t ev = extras.s.sfxEvVol[e]; if(ev > 100) ev = 100; v = v * ev / 100; }
+  if(e != SFX_START && e < sizeof(extras.s.sfxEvVol)){
+    uint32_t ev = extras.s.sfxEvVol[e]; if(ev > 100) ev = 100;
+    /*  Попередження про батарею має бути чути й тоді, коли решта звуків тиха,
+        тому воно слухає лише свій повзунок. Раніше замість цього стояв нижній
+        поріг у 40 %: усе нижче нього не мало жодного впливу, і звук був завжди
+        гучний. Тепер повзунок працює від 0 до 100.  */
+    v = e == SFX_LOWBAT ? ev : v * ev / 100;
+  }
   return (int32_t)(32767UL * v * v / 10000UL);
 }
 
@@ -226,8 +236,6 @@ void YoSfx::_run(){
     const Clip* c = _get(e);
     if(!c) continue;
     int32_t g = _gainQ15(e);
-    /*  попередження про батарею чути завжди — навіть коли гучність звуків на нулі  */
-    if(e == SFX_LOWBAT && g < 32767 * 40 * 40 / 10000) g = 32767 * 40 * 40 / 10000;
     if(!g) continue;
     if(player.isRunning()){
       /*  станція грає — домішує задача звуку  */

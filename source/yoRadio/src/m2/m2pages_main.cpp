@@ -3,6 +3,7 @@
 #include "../core/options.h"
 #include "m2pages.h"
 #include "m2bridge.h"
+#include "m2lang.h"
 #include <SPIFFS.h>
 #include "../core/config.h"
 #include "../core/player.h"
@@ -243,7 +244,7 @@ void PultPage::tap(int16_t id, int16_t x, int16_t y){
       for(uint8_t i = 0; i < 5; i++) if(SLEEP_MIN[i] == m){ nx = SLEEP_MIN[(i + 1) % 5]; break; }
       extras.setSleep(nx);
       char b[40];
-      if(nx) snprintf(b, sizeof(b), "таймер сну: %u хв", nx); else snprintf(b, sizeof(b), "таймер сну вимкнено");
+      if(nx) snprintf(b, sizeof(b), tr("таймер сну: %u хв"), nx); else snprintf(b, sizeof(b), "таймер сну вимкнено");
       M.toast(b);
       break; }
     case 1: M.push(&pgAlarm); break;
@@ -296,10 +297,14 @@ static const char* vVer(){ return prVersion(); }
 static const char* vUpd(){
   static char b[40];
   if(ota.installing()) return "іде…";
-  if(ota.available()){ snprintf(b, sizeof(b), "є %s", ota.latest()); return b; }
+  if(ota.available()){ snprintf(b, sizeof(b), tr("є %s"), ota.latest()); return b; }
   if(ota.state() == OTA_CHECKING) return "перевіряю…";
   return ota.latest()[0] ? "остання" : "";
 }
+
+/*  Назви мов навмисно не перекладаються: кожна написана сама собою, щоб її
+    впізнав і той, хто другої не знає.  */
+static const char* const LANGS[] = { "Українська", "English" };
 
 static Item s_setItems[] = {
   iSection("МЕРЕЖА"),
@@ -309,6 +314,8 @@ static Item s_setItems[] = {
   iNav("Хлопки й стук", IC_HAND, C_VIOLET, vGest, [](){ M.push(&pgGest); }),
   iNav("Присутність", IC_PERSON, C_VIOLET, vPres, [](){ M.push(&pgPres); }),
   iSection("СИСТЕМА"),
+  iSeg("Мова", LANGS, 2, [](){ return (int32_t)extras.s.lang; },
+       [](int32_t v){ extras.s.lang = (uint8_t)v; extras.changed(); langSet((uint8_t)v); M.invalAll(); }),
   iNav("Часовий пояс", IC_GLOBE, C_TEAL, vTz, [](){ M.push(&pgTz); }),
   iSwitch("Автостарт", IC_START, C_TEAL, [](){ return (int32_t)(config.store.smartstart != 2); },
           [](int32_t v){ config.saveValue(&config.store.smartstart, static_cast<uint8_t>(v ? 1 : 2)); }),
@@ -340,8 +347,8 @@ static const char* vBattery(){
   if(extras.s.noBat)       snprintf(b, sizeof(b), "не показується");
   else if(mv == 0)         snprintf(b, sizeof(b), "вимірюю…");
   else if(mv < 2800)       snprintf(b, sizeof(b), "не знайдено");
-  else if(extras.onUsb())  snprintf(b, sizeof(b), "USB, %u.%02u В", mv / 1000, (mv % 1000) / 10);
-  else                     snprintf(b, sizeof(b), "%d%%, %u.%02u В", extras.batPct(), mv / 1000, (mv % 1000) / 10);
+  else if(extras.onUsb())  snprintf(b, sizeof(b), tr("USB, %u.%02u В"), mv / 1000, (mv % 1000) / 10);
+  else                     snprintf(b, sizeof(b), tr("%d%%, %u.%02u В"), extras.batPct(), mv / 1000, (mv % 1000) / 10);
   return b;
 }
 static bool nightOn(){ return extras.s.nightOn; }
@@ -434,17 +441,17 @@ static const char* vAlarmNote(){
   int32_t m = extras.alarmInMin();
   char st[48];
   if(config.getMode() == PM_WEB && config.station.name[0]) snprintf(st, sizeof(st), "%s", config.station.name);
-  else snprintf(st, sizeof(st), "остання станція");
-  if(!extras.s.alarmOn) snprintf(b, sizeof(b), "вимкнено · заграє %s", st);
-  else if(m < 0)        snprintf(b, sizeof(b), "час ще не відомий · заграє %s", st);
-  else                  snprintf(b, sizeof(b), "через %d год %02d хв · заграє %s", (int)(m / 60), (int)(m % 60), st);
+  else snprintf(st, sizeof(st), "%s", tr("остання станція"));
+  if(!extras.s.alarmOn) snprintf(b, sizeof(b), tr("вимкнено · заграє %s"), st);
+  else if(m < 0)        snprintf(b, sizeof(b), tr("час ще не відомий · заграє %s"), st);
+  else                  snprintf(b, sizeof(b), tr("через %d год %02d хв · заграє %s"), (int)(m / 60), (int)(m % 60), st);
   return b;
 }
 static const char* vSleepNote(){
   static char b[40];
   uint16_t sm = extras.sleepMinutes();
   if(!sm) snprintf(b, sizeof(b), "таймер вимкнено");
-  else { uint32_t s = extras.sleepLeftSec(); snprintf(b, sizeof(b), "радіо замовкне через %u:%02u", (unsigned)(s / 60), (unsigned)(s % 60)); }
+  else { uint32_t s = extras.sleepLeftSec(); snprintf(b, sizeof(b), tr("радіо замовкне через %u:%02u"), (unsigned)(s / 60), (unsigned)(s % 60)); }
   return b;
 }
 
@@ -682,7 +689,7 @@ void SermPage::draw(Gfx& g){
     icon(g, IC_CROSS, SW / 2, 72, C_VIOLET, C_SURF);
     char b[48];
     if(sermons.loading()){
-      if(sermons.loadedSoFar()) snprintf(b, sizeof(b), "завантажую з сайту… %u", sermons.loadedSoFar());
+      if(sermons.loadedSoFar()) snprintf(b, sizeof(b), tr("завантажую з сайту… %u"), sermons.loadedSoFar());
       else snprintf(b, sizeof(b), "завантажую з сайту…");
       g.text(SW / 2, 110, b, F_ROW, C_TXT, AL_C, CWID - 20);
     }else{
@@ -706,7 +713,7 @@ void SermPage::draw(Gfx& g){
     else icon(g, IC_PLAY, MX + 27, y + 26, C_TXT2, C_SURF2);
     g.text(MX + 50, y + 22, s->title, F_ROW, on ? C_ACC : C_TXT, AL_L, CWID - 62);
     char b[96];
-    if(s->dur) snprintf(b, sizeof(b), "%s · %s · %u хв", s->preacher, s->date, (unsigned)((s->dur + 30) / 60));
+    if(s->dur) snprintf(b, sizeof(b), tr("%s · %s · %u хв"), s->preacher, s->date, (unsigned)((s->dur + 30) / 60));
     else snprintf(b, sizeof(b), "%s · %s", s->preacher, s->date);
     g.text(MX + 50, y + 40, b, F_SM, C_TXT2, AL_L, CWID - 62);
   }
@@ -755,17 +762,17 @@ static const char* vBuild(){ static char b[40]; snprintf(b, sizeof(b), "%s, %s",
 static const char* vNet(){ return WB::staUp() ? WB::curSsid() : "немає"; }
 static const char* vIp(){ return WB::staUp() ? WB::ip() : "-"; }
 static const char* vRssi(){ static char b[16]; if(WB::staUp()) snprintf(b, sizeof(b), "%d dBm", (int)WB::rssi()); else snprintf(b, sizeof(b), "-"); return b; }
-static const char* vStream(){ static char b[40]; if(player.status() == PLAYING && config.station.bitrate) snprintf(b, sizeof(b), "%d кбіт/с, %s", config.station.bitrate, player.getCodecname()); else snprintf(b, sizeof(b), "-"); return b; }
-static const char* vWeather(){ static char b[40]; if(timekeeper.weatherHave) snprintf(b, sizeof(b), "%.1f°  %d мм  %d%%", (float)timekeeper.weatherTemp, (int)timekeeper.weatherPress, (int)timekeeper.weatherHum); else snprintf(b, sizeof(b), "-"); return b; }
+static const char* vStream(){ static char b[40]; if(player.status() == PLAYING && config.station.bitrate) snprintf(b, sizeof(b), tr("%d кбіт/с, %s"), config.station.bitrate, player.getCodecname()); else snprintf(b, sizeof(b), "-"); return b; }
+static const char* vWeather(){ static char b[40]; if(timekeeper.weatherHave) snprintf(b, sizeof(b), tr("%.1f°  %d мм  %d%%"), (float)timekeeper.weatherTemp, (int)timekeeper.weatherPress, (int)timekeeper.weatherHum); else snprintf(b, sizeof(b), "-"); return b; }
 static const char* vBat2(){
   static char b[48];
   uint16_t mv = extras.batMv();
   if(extras.s.noBat) snprintf(b, sizeof(b), "не показується");
   else if(mv < 2800) snprintf(b, sizeof(b), "-");
-  else snprintf(b, sizeof(b), "%d%%, %u.%02u В%s", extras.batPct(), mv / 1000, (mv % 1000) / 10, extras.charged() ? ", заряджено" : (extras.charging() ? ", заряджається" : ""));
+  else snprintf(b, sizeof(b), tr("%d%%, %u.%02u В%s"), extras.batPct(), mv / 1000, (mv % 1000) / 10, extras.charged() ? ", заряджено" : (extras.charging() ? ", заряджається" : ""));
   return b;
 }
-static const char* vHeap(){ static char b[24]; snprintf(b, sizeof(b), "%u КБ", (unsigned)(ESP.getFreeHeap() / 1024)); return b; }
+static const char* vHeap(){ static char b[24]; snprintf(b, sizeof(b), tr("%u КБ"), (unsigned)(ESP.getFreeHeap() / 1024)); return b; }
 static Item s_infoItems[] = {
   iSection("ПОТУЖНЕ РАДІО"),
   iInfo("Версія", vBuild),
@@ -816,7 +823,7 @@ void PowerPage::draw(Gfx& g){
     g.text(r.x + 76, r.y + 34, _go == (int8_t)i ? (i ? "Вимикаюсь…" : "Перезавантажую…") : T1[i], F_ROWB, C_TXT, AL_L, r.w - 90);
     const char* sub = T2[i];
     char ab[64];
-    if(i == 1 && extras.s.alarmOn){ snprintf(ab, sizeof(ab), "дотиком або будильником о %02u:%02u", extras.s.alarmH, extras.s.alarmM); sub = ab; }
+    if(i == 1 && extras.s.alarmOn){ snprintf(ab, sizeof(ab), tr("дотиком або будильником о %02u:%02u"), extras.s.alarmH, extras.s.alarmM); sub = ab; }
     g.text(r.x + 76, r.y + 54, arm ? "тримайте, поки коло не замкнеться" : sub, F_SM, arm ? col : C_TXT2, AL_L, r.w - 90);
   }
   g.text(SW / 2, 186, "утримайте кнопку ~1 секунду", F_SM, C_TXT2, AL_C);

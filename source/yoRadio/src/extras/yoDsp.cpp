@@ -1,6 +1,7 @@
 /*  Цей файл — гаряча точка звуку: на кожен кадр десятки множень.  */
 #pragma GCC optimize ("O2")
 #include "yoDsp.h"
+#include "../m2/m2lang.h"
 #include <math.h>
 #include "esp_timer.h"
 #include "yoExtras.h"
@@ -568,7 +569,7 @@ void YoDsp::roomTick(){
       }
       changed();
       _rtIter++;
-      snprintf(_rtMsg, sizeof(_rtMsg), "уточнюю (%u)", (unsigned)_rtIter);
+      snprintf(_rtMsg, sizeof(_rtMsg), m2::tr("уточнюю (%u)"), (unsigned)_rtIter);
       _rtSweep(-12, 0);
       return;
     }
@@ -577,11 +578,11 @@ void YoDsp::roomTick(){
     char m[48];
     if(_rtBestSpread <= _rtBefore - 1.0f){
       e.eqRoomOn = 1;
-      snprintf(m, sizeof(m), "рівніше: %.1f -> %.1f дБ", _rtBefore, _rtBestSpread);
+      snprintf(m, sizeof(m), m2::tr("рівніше: %.1f -> %.1f дБ"), _rtBefore, _rtBestSpread);
       _rtFinish(true, m);
     }else{
       e.eqRoomOn = 0;
-      snprintf(m, sizeof(m), "поправка не потрібна (%.1f дБ)", _rtBefore);
+      snprintf(m, sizeof(m), m2::tr("поправка не потрібна (%.1f дБ)"), _rtBefore);
       _rtFinish(true, m);
     }
   }

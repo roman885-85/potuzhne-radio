@@ -4,6 +4,7 @@
     - пропозиція оновитись — на головному екрані (m2player.cpp).  */
 #include "../core/options.h"
 #include "m2pages.h"
+#include "m2lang.h"
 #include "m2update.h"
 #include "../core/config.h"
 #include "../displays/dspcore.h"
@@ -29,7 +30,7 @@ static const char* vUpdNote(){
   switch(ota.state()){
     case OTA_CHECKING: return "звертаюсь до GitHub…";
     case OTA_LATEST:   return "у радіо остання версія";
-    case OTA_ERROR:    snprintf(b, sizeof(b), "не вийшло: %s", ota.error()); return b;
+    case OTA_ERROR:    snprintf(b, sizeof(b), tr("не вийшло: %s"), ota.error()); return b;
     case OTA_AVAILABLE: {
       /*  перші рядки опису випуску  */
       const char* s = ota.notes(); size_t n = 0; uint8_t lines = 0;
@@ -42,7 +43,7 @@ static const char* vUpdNote(){
     default: return ota.available() ? "вийшла нова версія" : "радіо саме перевіряє GitHub двічі на добу";
   }
 }
-static const char* vInstall(){ static char b[48]; snprintf(b, sizeof(b), "Встановити %s", ota.latest()); return b; }
+static const char* vInstall(){ static char b[48]; snprintf(b, sizeof(b), tr("Встановити %s"), ota.latest()); return b; }
 
 static Item s_updItems[] = {
   iSection("ПРОШИВКА"),
@@ -109,7 +110,7 @@ static void drawOta(Gfx& g){
   g.text((int16_t)cx, (int16_t)cy + 8, b, F_MID, C_TXT, AL_C);
   g.text(SW / 2, 186, ota.stepName(), F_ROW, C_TXT, AL_C, SW - 20);
   if(st == OTA_FIRMWARE && ota.total()){
-    snprintf(b, sizeof(b), "%.1f з %.1f МБ · %u КБ/с", ota.done() / 1048576.0f, ota.total() / 1048576.0f, (unsigned)(ota.speed() / 1024));
+    snprintf(b, sizeof(b), tr("%.1f з %.1f МБ · %u КБ/с"), ota.done() / 1048576.0f, ota.total() / 1048576.0f, (unsigned)(ota.speed() / 1024));
     g.text(SW / 2, 206, b, F_SM, C_TXT2, AL_C);
   }
   g.text(SW / 2, 228, st == OTA_DONE ? "за мить радіо увімкнеться знову" : "не вимикайте радіо", F_SM, st == OTA_DONE ? C_TEAL : C_TXT2, AL_C);

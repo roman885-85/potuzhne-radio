@@ -5,6 +5,7 @@
 #include "../displays/dspcore.h"
 #include "../displays/tools/spidma.h"
 #include "m2pages.h"
+#include "m2lang.h"
 #include "../extras/yoExtras.h"
 
 extern DspCore dsp;
@@ -1086,7 +1087,7 @@ void Menu::_drawCalib(Gfx& g){
   /*  підказка по центру  */
   g.text(SW / 2, SH / 2 - 14, "Калібрування сенсора", F_TITLE, C_TXT, AL_C);
   char b[40];
-  snprintf(b, sizeof(b), "Торкніться позначки  %u/4", (unsigned)(s_cal.step < 4 ? s_cal.step + 1 : 4));
+  snprintf(b, sizeof(b), tr("Торкніться позначки  %u/4"), (unsigned)(s_cal.step < 4 ? s_cal.step + 1 : 4));
   g.text(SW / 2, SH / 2 + 12, b, F_ROW, C_TXT2, AL_C);
   if(s_cal.err) g.text(SW / 2, SH / 2 + 34, "Торкайтесь точно центру позначки", F_SMB, C_ACC, AL_C);
 }

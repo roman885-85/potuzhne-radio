@@ -2,6 +2,7 @@
     клавіатура. Уся робота з радіомодулем — функціями старого меню (WB).  */
 #include "../core/options.h"
 #include "m2pages.h"
+#include "m2lang.h"
 #include "m2bridge.h"
 #include "../core/network.h"
 
@@ -43,7 +44,7 @@ void WifiPage::draw(Gfx& g){
     g.box(MX, 4, CWID, 54, R_CARD, C_SURF);
     drawBadge(g, MX + 12, 17, IC_WIFI, up ? C_TEAL : C_GREY);
     g.text(MX + 50, 27, up ? WB::curSsid() : "не підключено", F_ROWB, C_TXT, AL_L, CWID - 64);
-    if(up) snprintf(b, sizeof(b), "підключено · %s", WB::ip());
+    if(up) snprintf(b, sizeof(b), tr("підключено · %s"), WB::ip());
     else snprintf(b, sizeof(b), WB::apLock() ? "виберіть мережу, щоб радіо почало грати" : "радіо зараз не в мережі");
     g.text(MX + 50, 45, b, F_SM, up ? C_TEAL : C_TXT2, AL_L, CWID - 64);
   }
@@ -127,7 +128,7 @@ void WifiPage::tap(int16_t id, int16_t x, int16_t y){
     uint8_t k = WB::pick(id);
     if(k == 1){ M.push(&pgNet); return; }
     if(k == 2){ WB::connect(); M.push(&pgConnect); return; }
-    snprintf(s_kbdTitle, sizeof(s_kbdTitle), "Пароль: %s", WB::ssidBuf());
+    snprintf(s_kbdTitle, sizeof(s_kbdTitle), tr("Пароль: %s"), WB::ssidBuf());
     kbdOpen(WB::passBuf(), WB::passCap(), true, s_kbdTitle, afterPass);
     return;
   }
@@ -136,7 +137,7 @@ void WifiPage::tap(int16_t id, int16_t x, int16_t y){
     WB::ssidBuf()[0] = 0; WB::passBuf()[0] = 0;
     kbdOpen(WB::ssidBuf(), WB::ssidCap(), false, "Назва мережі", [](bool ok){
       if(!ok || !WB::ssidBuf()[0]) return;
-      snprintf(s_kbdTitle, sizeof(s_kbdTitle), "Пароль: %s", WB::ssidBuf());
+      snprintf(s_kbdTitle, sizeof(s_kbdTitle), tr("Пароль: %s"), WB::ssidBuf());
       kbdOpen(WB::passBuf(), WB::passCap(), true, s_kbdTitle, afterPass);
     });
     return;
@@ -235,7 +236,7 @@ static Item s_netItems[] = {
   iButton("Підключитись", IC_WIFI, connectNow),
   iNote([](){ return "радіо спробує просто зараз і скаже, чи вийшло"; }, 26),
   iButton("Змінити пароль", IC_KEYS, [](){
-    snprintf(s_kbdTitle, sizeof(s_kbdTitle), "Пароль: %s", WB::ssidBuf());
+    snprintf(s_kbdTitle, sizeof(s_kbdTitle), tr("Пароль: %s"), WB::ssidBuf());
     kbdOpen(WB::passBuf(), WB::passCap(), true, s_kbdTitle, afterPass);
   }, C_TXT),
   iGap(12),
@@ -328,7 +329,7 @@ void ConnectPage::tap(int16_t id, int16_t x, int16_t y){
   if(!failed()) return;
   network.tryClear();
   if(id == 0){
-    snprintf(s_kbdTitle, sizeof(s_kbdTitle), "Пароль: %s", WB::ssidBuf());
+    snprintf(s_kbdTitle, sizeof(s_kbdTitle), tr("Пароль: %s"), WB::ssidBuf());
     kbdOpen(WB::passBuf(), WB::passCap(), true, s_kbdTitle, afterPass);
   }else M.popTo(&pgWifi);
 }

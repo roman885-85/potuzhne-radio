@@ -27,6 +27,22 @@ PKG_DIR="ua/potuzhne/radio"
 say() { printf '\033[36m›\033[0m %s\n' "$1"; }
 die() { printf '\033[31m✗ %s\033[0m\n' "$1" >&2; exit 1; }
 
+# ---- номер версії -----------------------------------------------------------
+# Той самий, що в прошивки: за ним застосунок розуміє, чи є у випуску на
+# GitHub щось свіжіше за нього (Update.java). versionCode має лише зростати,
+# тож складаємо його з тих самих трьох чисел.
+MAN="app/src/main/AndroidManifest.xml"
+FW="$(cd "$HERE/../.." && pwd)/firmware/VERSION"
+if [ -f "$FW" ]; then
+  V=$(tr -d '[:space:]' < "$FW")
+  CODE=$(echo "$V" | awk -F. '{printf "%d", $1*10000 + $2*100 + $3}')
+  if [ -n "$V" ] && [ "$CODE" -gt 0 ] 2>/dev/null; then
+    sed -i '' -e "s/android:versionCode=\"[^\"]*\"/android:versionCode=\"$CODE\"/" \
+              -e "s/android:versionName=\"[^\"]*\"/android:versionName=\"$V\"/" "$MAN"
+    say "версія $V (код $CODE)"
+  fi
+fi
+
 # ---- інструменти ------------------------------------------------------------
 
 [ -d "$SDK" ] || die "Не знайдено Android SDK у $SDK. Задайте ANDROID_SDK=шлях"

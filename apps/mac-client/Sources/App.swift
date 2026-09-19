@@ -32,6 +32,7 @@ struct PotuzhneRadioApp: App {
                     .disabled(model.current == nil)
                 Button("Дозволи для голосових команд…") { model.voiceCheckShown = true }
                 Divider()
+                Button("Перевірити оновлення…") { Updater.run(silent: false) }
                 Button("Відкрити в браузері") { model.openInBrowser() }
                     .disabled(model.current == nil)
             }
@@ -46,6 +47,12 @@ struct PotuzhneRadioApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    //  Тихо дивимось, чи нема свіжішої версії. Мовчки — щоб не заважати:
+    //  питаємо, лише коли справді є що поставити (див. Update.swift).
+    func applicationDidFinishLaunching(_ note: Notification) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { Updater.run(silent: true) }
+    }
 }
 
 @MainActor

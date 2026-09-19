@@ -51,13 +51,48 @@ PREV="$(gh release view -R "$REPO" --json tagName --jq .tagName 2>/dev/null || t
 for f in PotuzhneRadio-Android.apk PotuzhneRadio-Windows.exe PotuzhneRadio-Mac.zip PotuzhneRadio-Builder-Mac.zip PotuzhneRadio-Builder-Windows.zip; do
   if [ -n "$PREV" ] && [ "$PREV" != "$TAG" ]; then gh release download "$PREV" -R "$REPO" -p "$f" -D "$TMP" 2>/dev/null || true; fi
 done
+# ---- маніфест версій програм ----------------------------------------------
+# Програми оновлюються самі: кожна дивиться у цей файл останнього випуску й
+# порівнює зі своєю версією. Тут пишемо, ЯКОЇ версії бінарник реально лежить у
+# випуску: якщо програму не перезбирали, вона переноситься з минулого разом зі
+# своїм номером — і тоді оновлення нікому не пропонується даремно.
+MAN="$TMP/PotuzhneRadio-clients.json"
+if [ -n "$PREV" ] && [ "$PREV" != "$TAG" ]; then
+  gh release download "$PREV" -R "$REPO" -p PotuzhneRadio-clients.json -D "$TMP" 2>/dev/null || true
+fi
+manget(){ [ -f "$MAN" ] && python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2],''))" "$MAN" "$1" 2>/dev/null || true; }
+M_AND="$(manget android)"; M_MAC="$(manget mac)"; M_WIN="$(manget windows)"
+
+# свіжа програма з «Програми/» замінює перенесену, якщо файл інший — тоді це нова збірка
+newer(){ # $1 локальний файл, $2 назва у випуску
+  [ -f "$1" ] || return 1
+  if [ -f "$TMP/$2" ] && cmp -s "$1" "$TMP/$2"; then return 1; fi
+  cp "$1" "$TMP/$2"; return 0
+}
+if newer "$ROOT/Програми/ПОТУЖНЕ РАДІО.apk" PotuzhneRadio-Android.apk; then
+  M_AND="$(sed -n 's/.*android:versionName="\([^"]*\)".*/\1/p' "$ROOT/apps/android-client/app/src/main/AndroidManifest.xml" | head -1)"
+  echo ">>> програма для Android $M_AND — з Програми/"
+fi
+if newer "$ROOT/Програми/ПОТУЖНЕ РАДІО.exe" PotuzhneRadio-Windows.exe; then
+  M_WIN="$VER"; echo ">>> програма для Windows $VER — з Програми/"
+fi
+
 # програма для Mac — свіжа з «Програми/», якщо її зібрано під цю версію (apps/mac-client/build.sh)
 MACAPP="$ROOT/Програми/ПОТУЖНЕ РАДІО.app"
 if [ -d "$MACAPP" ] && [ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$MACAPP/Contents/Info.plist" 2>/dev/null)" = "$VER" ]; then
   echo ">>> програма для Mac $VER — з Програми/"
   rm -f "$TMP/PotuzhneRadio-Mac.zip"
   ditto -c -k --sequesterRsrc --keepParent "$MACAPP" "$TMP/PotuzhneRadio-Mac.zip"
+  M_MAC="$VER"
 fi
+python3 - "$MAN" "$M_AND" "$M_MAC" "$M_WIN" <<'PY'
+import json,sys
+out={}
+for k,v in (("android",sys.argv[2]),("mac",sys.argv[3]),("windows",sys.argv[4])):
+    if v: out[k]=v
+json.dump(out, open(sys.argv[1],"w"), ensure_ascii=False, indent=1)
+PY
+echo ">>> версії програм: $(cat "$MAN" | tr -d '\n ')"
 
 echo ">>> push main"
 git -C "$ROOT" push origin main

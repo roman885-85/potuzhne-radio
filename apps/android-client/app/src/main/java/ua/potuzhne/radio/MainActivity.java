@@ -138,6 +138,9 @@ public class MainActivity extends Activity {
         SystemBars.keepClear(root);
 
         begin();
+        // Тихо дивимось, чи нема свіжішої версії. Мовчки — щоб не заважати:
+        // питаємо, лише коли справді є що поставити (див. Update.java).
+        main.postDelayed(() -> Update.run(this, true), 4000);
     }
 
     @Override
@@ -850,7 +853,7 @@ public class MainActivity extends Activity {
         Radio r = current;
         new AlertDialog.Builder(this)
                 .setTitle(r.subtitle())
-                .setItems(new String[]{"Голосові команди", "Знайти інше радіо", "Оновити", "Відкрити в браузері"}, (d, which) -> {
+                .setItems(new String[]{"Голосові команди", "Знайти інше радіо", "Оновити", "Відкрити в браузері", "Перевірити оновлення"}, (d, which) -> {
                     if (current != r) return;
                     if (which == 0) {
                         showVoiceHelp();
@@ -858,8 +861,10 @@ public class MainActivity extends Activity {
                         startSearch(false, null);
                     } else if (which == 2) {
                         reload();
-                    } else {
+                    } else if (which == 3) {
                         openInBrowser(r);
+                    } else {
+                        Update.run(this, false);
                     }
                 })
                 .show();

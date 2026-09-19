@@ -1,4 +1,5 @@
 #include "m2gfx.h"
+#include "m2lang.h"
 
 namespace m2 {
 
@@ -27,6 +28,10 @@ static uint8_t cpOf(uint32_t u){
 uint16_t toCp1251(const char* s, uint8_t* out, uint16_t cap){
   uint16_t n = 0;
   if(!s || !cap) return 0;
+  /*  Єдине місце перекладу: сюди приходить кожен напис — і той, що малюється,
+      і той, чию ширину міряють. Тож вибір мови нічого більше в коді не чіпає
+      (див. m2lang).  */
+  s = tr(s);
   while(*s && n + 1 < cap){
     uint8_t c = (uint8_t)*s;
     uint32_t u; uint8_t len;
