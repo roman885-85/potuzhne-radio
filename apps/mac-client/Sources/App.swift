@@ -66,6 +66,7 @@ final class AppModel: ObservableObject {
     weak var web: WKWebView?
 
     private var health: Timer?
+    private var rescan: Timer?
     private var fails = 0
     private var autoConnect = true
     private var watch: Any?
@@ -91,8 +92,20 @@ final class AppModel: ObservableObject {
     func start() async {
         if let ip = UserDefaults.standard.string(forKey: kLastIP) {
             tryingSaved = true
-            let r = await RadioProbe.hello(ip, timeout: 2.5)
+            DiscoveryLog.write("збережена адреса \(ip): перевіряю")
+            let r = await RadioProbe.hello(ip, timeout: 2.5, logFailures: true)
             tryingSaved = false
+            DiscoveryLog.write("збережена адреса \(ip): \(r == nil ? "не відповіла" : "відповіла")")
+            if let r { connect(r); return }
+        }
+        /*  Адреса могла змінитись, а ім'я — ні. Пробуємо його окремо: це
+            працює навіть тоді, коли Bonjour мовчить, бо йде звичайним
+            запитом через curl.  */
+        if let host = UserDefaults.standard.string(forKey: kLastHost), !host.isEmpty {
+            tryingSaved = true
+            let r = await RadioProbe.hello("\(host).local", timeout: 3, logFailures: true)
+            tryingSaved = false
+            DiscoveryLog.write("збережене ім'я \(host).local: \(r == nil ? "не відповіло" : "відповіло")")
             if let r { connect(r); return }
         }
         search()
@@ -104,6 +117,19 @@ final class AppModel: ObservableObject {
         self.message = message
         autoConnect = message == nil
         finder.start()
+        /*  Раніше пошук ішов один раз: якщо саме в ту мить Bonjour мовчав
+            (а таке буває), програма так і лишалась ні з чим, поки людина не
+            натисне «Знайти інше радіо». Тепер повторюємо сама.  */
+        rescan?.invalidate()
+        rescan = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] t in
+            Task { @MainActor in
+                guard let self else { t.invalidate(); return }
+                if self.current != nil { t.invalidate(); self.rescan = nil; return }
+                guard !self.finder.searching, self.finder.radios.isEmpty else { return }
+                DiscoveryLog.write("нічого не знайшли — шукаю ще раз")
+                self.finder.start()
+            }
+        }
     }
 
     private func maybeAutoConnect() {
@@ -115,6 +141,7 @@ final class AppModel: ObservableObject {
 
     func connect(_ r: Radio) {
         finder.stop()
+        rescan?.invalidate(); rescan = nil
         UserDefaults.standard.set(r.ip, forKey: kLastIP)
         if !r.host.isEmpty { UserDefaults.standard.set(r.host, forKey: kLastHost) }
         message = nil

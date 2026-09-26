@@ -33,27 +33,34 @@ enum RadioProbe {
         URLSession одразу дає -1009, а в налаштуваннях «Локальна мережа»
         програми немає. Системні програми, як curl, ця заборона не стосується;
         сторінку ж показує WebKit, у нього свій мережевий процес — теж можна.  */
-    static func get(_ url: String, timeout: TimeInterval) async -> (code: Int, body: Data)? {
+    static func get(_ url: String, timeout: TimeInterval, logFailures: Bool = false) async -> (code: Int, body: Data)? {
         await withCheckedContinuation { cont in
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
             p.arguments = ["-s", "-m", String(format: "%.1f", timeout), "--connect-timeout", String(format: "%.1f", timeout),
                            "-H", "Connection: close", "-w", "\n%{http_code}", url]
             let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
-            p.terminationHandler = { _ in
+            p.terminationHandler = { pr in
                 let d = out.fileHandleForReading.readDataToEndOfFile()
                 guard let nl = d.lastIndex(of: 10), let code = Int(String(decoding: d[(nl + 1)...], as: UTF8.self)), code > 0 else {
+                    /*  Не вийшло. Записуємо код curl — саме тут видно заборону
+                        локальної мережі (7 «не достукався») від звичайного
+                        «нікого немає за цією адресою» під час перебору.  */
+                    if logFailures { DiscoveryLog.write("curl \(url): код виходу \(pr.terminationStatus)") }
                     cont.resume(returning: nil); return
                 }
                 cont.resume(returning: (code, d[..<nl]))
             }
-            do { try p.run() } catch { cont.resume(returning: nil) }
+            do { try p.run() } catch {
+                DiscoveryLog.write("curl не запустився: \(error.localizedDescription)")
+                cont.resume(returning: nil)
+            }
         }
     }
 
     /// Чи відповідає за цією адресою наше радіо. `timeout` — для перебору підмережі.
-    static func hello(_ address: String, timeout: TimeInterval = 1.2) async -> Radio? {
-        guard let r = await get("http://\(address)/api/hello", timeout: timeout) else { return nil }
+    static func hello(_ address: String, timeout: TimeInterval = 1.2, logFailures: Bool = false) async -> Radio? {
+        guard let r = await get("http://\(address)/api/hello", timeout: timeout, logFailures: logFailures) else { return nil }
         if r.code == 200, let j = try? JSONSerialization.jsonObject(with: r.body) as? [String: Any],
            (j["potuzhne"] as? Int) == 1 {
             return Radio(ip: (j["ip"] as? String).flatMap { $0.isEmpty || $0 == "0.0.0.0" ? nil : $0 } ?? address,
@@ -206,11 +213,16 @@ final class RadioFinder: NSObject, ObservableObject, NetServiceBrowserDelegate, 
                 return true
             }
             while running < 48, next() { running += 1 }
+            var found = 0
             while let r = await g.next() {
                 if Task.isCancelled { g.cancelAll(); return }
-                if let r { await MainActor.run { self.add(r) } }
+                if let r { found += 1; await MainActor.run { self.add(r) } }
                 _ = next()
             }
+            DiscoveryLog.write("перебір \(hosts.count) адрес: знайдено \(found)")
+            /*  Жодної відповіді за всю підмережу — це не «радіо вимкнене», а
+                майже напевно заборона локальної мережі для програми.  */
+            if found == 0, hosts.count > 32 { RadioProbe.lanBlocked = true }
         }
     }
 
@@ -237,8 +249,16 @@ final class RadioFinder: NSObject, ObservableObject, NetServiceBrowserDelegate, 
                 }
             }
         }
+        DiscoveryLog.write("Bonjour розвʼязав \(sender.name) -> \(ips.isEmpty ? "адрес немає" : ips.joined(separator: ", "))")
         Task {
-            for ip in ips { if let r = await RadioProbe.hello(ip, timeout: 3) { await MainActor.run { self.add(r) }; break } }
+            for ip in ips {
+                if let r = await RadioProbe.hello(ip, timeout: 3, logFailures: true) {
+                    DiscoveryLog.write("Bonjour: \(ip) відповіло — \(r.host)")
+                    await MainActor.run { self.add(r) }
+                    return
+                }
+            }
+            DiscoveryLog.write("Bonjour: жодна адреса не відповіла")
         }
     }
 }
