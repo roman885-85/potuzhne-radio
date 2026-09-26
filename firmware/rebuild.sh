@@ -88,4 +88,13 @@ cp yoRadio.assets.bin                              "$HERE/PotuzhneRadio-ES3C28P-
 cp boot_app0.bin                                   "$HERE/boot_app0.bin"
 rm -f "$HERE"/yoRadio.ino.bin "$HERE"/yoRadio.ino.bootloader.bin "$HERE"/yoRadio.ino.partitions.bin "$HERE"/yoRadio.spiffs.bin "$HERE"/yoRadio.assets.bin
 mkdir -p "$HERE/web" && cp "$SKETCH"/data/www/app.*.gz "$HERE/web/" 2>/dev/null || true   # файли сторінки — поруч із прошивкою
+# ELF цієї збірки — щоб потім було чим розшифрувати дамп падіння (команда
+# coredump друкує адреси, а вони без ELF тієї самої збірки нічого не варті).
+# Тримаємо останні 10: файл важить близько 28 МБ.
+if [ -f "$B/bp/yoRadio.ino.elf" ]; then
+  mkdir -p "$HERE/elf"
+  cp "$B/bp/yoRadio.ino.elf" "$HERE/elf/$VER.elf"
+  ls -1t "$HERE"/elf/*.elf 2>/dev/null | tail -n +11 | xargs -r rm -f
+  echo ">>> ELF збережено: elf/$VER.elf"
+fi
 echo ">>> готово: версія $VER від $BUILD, образи в $HERE"

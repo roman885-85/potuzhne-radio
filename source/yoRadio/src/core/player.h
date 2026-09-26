@@ -24,7 +24,7 @@
   #define PLQ_SEND_DELAY pdMS_TO_TICKS(20) //portMAX_DELAY
 #endif
 
-enum playerRequestType_e : uint8_t { PR_PLAY = 1, PR_STOP = 2, PR_PREV = 3, PR_NEXT = 4, PR_VOL = 5, PR_CHECKSD = 6, PR_VUTONUS = 7, PR_BURL = 8, PR_TOGGLE = 9, PR_EXT = 10 };   /* PR_EXT: 1 — грати звук AirPlay, 0 — AirPlay скінчився */
+enum playerRequestType_e : uint8_t { PR_PLAY = 1, PR_STOP = 2, PR_PREV = 3, PR_NEXT = 4, PR_VOL = 5, PR_CHECKSD = 6, PR_VUTONUS = 7, PR_BURL = 8, PR_TOGGLE = 9, PR_EXT = 10, PR_SEEK = 11 };   /* PR_EXT: 1 — грати звук AirPlay, 0 — AirPlay скінчився; PR_SEEK — позиція у файлі картки, байти */
 struct playerRequestParams_t
 {
   playerRequestType_e type;

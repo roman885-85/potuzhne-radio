@@ -211,6 +211,15 @@ void Player::loop() {
         else if(extOn){ _extRelease(false); _stop(); }
         break;
       }
+      case PR_SEEK: {
+        /*  Перемотка файла картки йде саме тут, у головному циклі, а не з тієї
+            задачі, що попросила. setFilePos скидає буфер і стан декодера
+            (MP3/FLAC), і поки це робила задача веб-сервера, головний цикл у
+            той самий час декодував із тих самих буферів: звук спотикався, а
+            від частих перемоток радіо зависало й сторож його перезавантажував.  */
+        if(isRunning() && requestP.payload > 0) setFilePos((uint32_t)requestP.payload);
+        break;
+      }
       case PR_BURL: {
       #if defined(MQTT_ROOT_TOPIC) || defined(YO_BROWSEURL)
         if(strlen(burl)>0){
