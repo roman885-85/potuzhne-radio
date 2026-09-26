@@ -12,6 +12,7 @@
 namespace m2 {
 
 static const char* const DAC_NAME[5] = { "ES8311", "PCM5102A", "UDA1334A", "MAX98357A", "VS1053B" };
+static const char* const PWR_LBL[3] = { "вимк", "високий", "низький" };
 static const char* const DAC_KIND[5] = { "вбудований кодек і підсилювач", "стерео ЦАП, лінійний вихід",
                                          "стерео ЦАП, навушники й лінія", "моно підсилювач 3 Вт на динамік",
                                          "окремий декодер, інша прошивка" };
@@ -29,11 +30,13 @@ static Item s_devItems[] = {
   iSwitch("Картка пам'яті", IC_CARD, C_ORANGE, [](){ return (int32_t)!extras.s.noSd; },
           [](int32_t v){ extras.s.noSd = !v; extras.changed(); if(extras.s.noSd){ recorder.stop(); if(config.getMode() == PM_SDCARD) config.changeMode(PM_WEB); } }),
   iNav("Аудіовихід", IC_SPEAKER, C_TEAL, vDac, [](){ M.push(&pgDac); }),
-  iSwitch("Живити модуль з IO3", IC_CHIP, C_ORANGE, [](){ return (int32_t)extras.s.dacPwr; },
-          [](int32_t v){ extras.s.dacPwr = v; extras.changed(); extras.applyDac(); }),
-  iNote([](){ return extras.s.dacPwr
-      ? "ДОСЛІД: IO3 керує ключем живлення модуля —\nмодуль гасне разом із радіо. Схема нижче показує\nIO3. Напряму з виводу модуль не живиться."
-      : "ДОСЛІД: вимкнене радіо світить модулем — шина\n3,3 В мусить лишатись під напругою, на ній\nгодинник і сенсор пробудження. IO3 може вимикати\nмодуль — але через ключ, не напряму (див. схему)."; }, 66),
+  iSeg("Ключ живлення модуля (IO3)", PWR_LBL, 3, [](){ return (int32_t)extras.s.dacPwr; },
+       [](int32_t v){ extras.s.dacPwr = v; extras.changed(); extras.applyDac(); }),
+  iNote([](){ return extras.s.dacPwr == 1
+      ? "ДОСЛІД: IO3 вмикає модуль ВИСОКИМ рівнем.\nСхема: P-канальний у розрив 5 В, затвор через 10 кОм\nна 5 В, NPN із затвора на землю, база через 10 кОм\nна IO3. Модуль гасне разом із радіо."
+      : extras.s.dacPwr == 2
+      ? "ДОСЛІД: IO3 вмикає модуль НИЗЬКИМ рівнем.\nСхема простіша: один P-канальний, витік на 3,3 В,\nзатвор прямо на IO3. Годиться модулям, яким\nвистачає 3,3 В. Модуль гасне разом із радіо."
+      : "ДОСЛІД: вимкнене радіо світить модулем — шина\n3,3 В мусить лишатись під напругою, на ній годинник\nі сенсор пробудження. IO3 може гасити модуль через\nключ. Рівень виберіть за своїм транзистором."; }, 66),
   iNav("Заставка й звуки", IC_NOTE, C_PINK, vSnd, [](){ M.push(&pgDevSnd); }),
   iSection("ЛОГОТИПИ СТАНЦІЙ"),
   iButton("Шукати логотипи знову", IC_REFRESH, [](){

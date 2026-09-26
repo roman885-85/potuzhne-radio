@@ -101,7 +101,7 @@ void YoExtras::_load(){
   if(s.eqGuard > 2) s.eqGuard = 1;
   if(s.vbass > 3) s.vbass = 0;
   if(s.lang >= m2::LANG_N) s.lang = m2::LANG_UK;
-  if(s.dacPwr > 1) s.dacPwr = 0;
+  if(s.dacPwr > 2) s.dacPwr = 0;
   m2::langSet(s.lang);                   /* мова екрана — до першого малювання */
   yoDsp.changed();
 
@@ -234,11 +234,16 @@ void YoExtras::applyDac(){
   /*  Живлення подаємо ПЕРШИМ і даємо модулю отямитись: інакше такти підуть у
       ще мертву мікросхему й вона може не піднятись.  */
   if(s.dacPwr){
+    /*  Яким рівнем ключ відкривається — залежить від того, який транзистор
+        поставили: 1 — високим (P-канальний через NPN, комутує 5 В),
+        2 — низьким (один P-канальний, витік на 3,3 В, затвор прямо на IO3).  */
+    const bool want = s.dac != 0;
+    const bool lvl  = (s.dacPwr == 2) ? !want : want;
     gpio_hold_dis((gpio_num_t)DAC_PWR);
     pinMode(DAC_PWR, OUTPUT);
-    bool was = digitalRead(DAC_PWR);
-    digitalWrite(DAC_PWR, s.dac ? HIGH : LOW);
-    if(s.dac && !was) delay(60);
+    const bool was = digitalRead(DAC_PWR);
+    digitalWrite(DAC_PWR, lvl ? HIGH : LOW);
+    if(want && lvl != was) delay(60);            /* дати модулю піднятись */
   }
   if(s.dac){
     player.setPinout(DAC_BCLK, DAC_LRC, DAC_DOUT, I2S_PIN_NO_CHANGE, I2S_PIN_NO_CHANGE);
@@ -361,14 +366,22 @@ void YoExtras::_powerOff(){
       діоди — світиться при вимкненому радіо. Лінію мікрофона (I2S_DIN) не
       чіпаємо: це вхід, її веде кодек.  */
   {
-    static const uint8_t SP[8] = { DAC_BCLK, DAC_LRC, DAC_DOUT, I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_MCLK, DAC_PWR };
-    for(uint8_t i = 0; i < 8; i++){
+    static const uint8_t SP[7] = { DAC_BCLK, DAC_LRC, DAC_DOUT, I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_MCLK };
+    for(uint8_t i = 0; i < 7; i++){
       if(SP[i] == 255) continue;
       gpio_reset_pin((gpio_num_t)SP[i]);
       pinMode(SP[i], OUTPUT);
       digitalWrite(SP[i], LOW);
       gpio_hold_en((gpio_num_t)SP[i]);
     }
+  }
+  /*  Ключ живлення модуля — саме ВИМИКАЮЧИМ рівнем: при схемі «вмикає
+      низьким» нуль тримав би модуль увімкненим усю ніч.  */
+  if(s.dacPwr){
+    gpio_hold_dis((gpio_num_t)DAC_PWR);
+    pinMode(DAC_PWR, OUTPUT);
+    digitalWrite(DAC_PWR, s.dacPwr == 2 ? HIGH : LOW);
+    gpio_hold_en((gpio_num_t)DAC_PWR);
   }
   gpio_deep_sleep_hold_en();
 
