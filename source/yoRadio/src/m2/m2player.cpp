@@ -803,7 +803,8 @@ void Player::render(){
     }
   }
   /*  рівень звуку й риски в картці  */
-  if(now - _specT >= 30){
+  yoSpec.wanted = (_mode() == 0);          /* з картки риски не показуємо — і не рахуємо */
+  if(yoSpec.wanted && now - _specT >= 30){
     _specT = now;
     bool playing = player.status() == PLAYING;
     uint16_t vu = playing ? player.get_VUlevel(100) : 0;
