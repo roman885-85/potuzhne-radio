@@ -289,6 +289,14 @@ void MyNetwork::setWifiParams(){
     MDNS.addServiceTxt("potuzhne", "tcp", "board", "ES3C28P");
     MDNS.addServiceTxt("potuzhne", "tcp", "ver", prVersion());
     MDNS.addServiceTxt("potuzhne", "tcp", "host", (const char*)config.store.mdnsname);
+    /*  Задача mDNS від IDF створюється з пріоритетом 1 на ядрі 0 — нижче за
+        все, що там працює (екран 4, мікрофон 3, AirPlay 5). Поки екран
+        перемальовується, вона не встигає відповісти, і запит клієнта просто
+        гине: заміром виходило, що радіо втрачає кожен четвертий запит, а
+        відповідь іде 125–215 мс замість одиниць. Робота там мікроскопічна
+        (кілька пакетів), тож піднімаємо її над малюванням — але значно нижче
+        за lwIP (18) і Wi-Fi (23).  */
+    if(TaskHandle_t h = xTaskGetHandle("mdns")) vTaskPrioritySet(h, 6);
   }
 }
 

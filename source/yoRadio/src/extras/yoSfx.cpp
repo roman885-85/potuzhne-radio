@@ -266,8 +266,12 @@ void YoSfx::_run(){
     ~0,4 с — спершу тиша, інакше початок звуку губиться (як у перевірці жестів).  */
 void YoSfx::_out(const Clip& c, int32_t g, uint64_t startPos, SfxEvent ev){
   _outBusy = true;
-  bool wasMuted = MUTE_PIN != 255 && digitalRead(MUTE_PIN) == MUTE_VAL;
-  if(MUTE_PIN != 255) digitalWrite(MUTE_PIN, !MUTE_VAL);
+  /*  Вбудований підсилювач чіпаємо, лише коли звук іде саме на нього. Раніше
+      знімали приглушення завжди — і звук події (зокрема привітання заставки)
+      лунав із вбудованого динаміка навіть тоді, коли вибрано зовнішній ЦАП.  */
+  const bool ownAmp = extras.s.dac == 0 && MUTE_PIN != 255;
+  bool wasMuted = ownAmp && digitalRead(MUTE_PIN) == MUTE_VAL;
+  if(ownAmp) digitalWrite(MUTE_PIN, !MUTE_VAL);
   uint32_t rate = player.getSampleRate();
   if(rate < 8000) rate = 44100;
   const size_t FR = 256;
@@ -315,7 +319,7 @@ void YoSfx::_out(const Clip& c, int32_t g, uint64_t startPos, SfxEvent ev){
       i2s_write(I2S_NUM_0, buf, n * 4, &w, pdMS_TO_TICKS(500));
       tail -= n;
     }
-    if(!player.isRunning() && MUTE_PIN != 255) digitalWrite(MUTE_PIN, MUTE_VAL);
+    if(!player.isRunning() && ownAmp) digitalWrite(MUTE_PIN, MUTE_VAL);
   }
   _lastEndMs = millis();
   _outBusy = false;

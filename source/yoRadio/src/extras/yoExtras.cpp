@@ -232,6 +232,11 @@ void YoExtras::_wifiCheck(uint32_t now){
 void YoExtras::applyDac(){
   if(s.dac){
     player.setPinout(DAC_BCLK, DAC_LRC, DAC_DOUT, I2S_PIN_NO_CHANGE, I2S_PIN_NO_CHANGE);
+    /*  Відв'язуємо лінію даних вбудованого кодека: перепризначення виводів не
+        знімає старий із матриці GPIO, тож ES8311 і далі отримував звук і
+        вбудований динамік говорив разом із зовнішнім ЦАПом. Такт і слово
+        (BCLK/LRC) лишаємо — на них тримається вбудований мікрофон.  */
+    gpio_reset_pin((gpio_num_t)I2S_DOUT);
   }else{
     player.setPinout(I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_DIN, I2S_MCLK);
     /*  старі виводи зовнішнього ЦАП відв'язуємо, щоб не лишились на шині  */
@@ -250,7 +255,7 @@ void YoExtras::begin(){
     }
   }
   _load();
-  if(s.dac) applyDac();                          /* зовнішній ЦАП — одразу після старту */
+  applyDac();          /* виставляємо вибраний вихід ДО першого звуку (привітання заставки) */
   analogSetPinAttenuation(EXT_BAT_PIN, ADC_11db);
   _led(0, 0, 0);
 }
