@@ -40,6 +40,13 @@ def main() -> int:
     if bad:
         print("порожній переклад:", bad[:5], file=sys.stderr)
         return 1
+    #  Переноси рядків у json мають бути ДВОМА знаками (\ і n), як у коді
+    #  прошивки. Справжній перенос розірве рядок C і збірка впаде на
+    #  «missing terminating character» — перевіряємо тут, а не компілятором.
+    raw = [k for k, v in tab.items() if "\n" in k or "\n" in v or "\r" in k or "\r" in v]
+    if raw:
+        print("справжній перенос рядка замість \\n:", raw[:3], file=sys.stderr)
+        return 1
     for k, v in tab.items():
         if k.count("%") != v.count("%"):
             print(f"не збігаються підстановки:\n  {k!r}\n  {v!r}", file=sys.stderr)

@@ -101,6 +101,7 @@ void YoExtras::_load(){
   if(s.eqGuard > 2) s.eqGuard = 1;
   if(s.vbass > 3) s.vbass = 0;
   if(s.lang >= m2::LANG_N) s.lang = m2::LANG_UK;
+  if(s.dacPwr > 1) s.dacPwr = 0;
   m2::langSet(s.lang);                   /* мова екрана — до першого малювання */
   yoDsp.changed();
 
@@ -230,6 +231,15 @@ void YoExtras::_wifiCheck(uint32_t now){
     BCLK 14, LRC 21, DIN 2. Перемикаємо самі виводи I2S на ходу, а
     вбудований підсилювач вимикаємо, щоб динамік плати мовчав.  */
 void YoExtras::applyDac(){
+  /*  Живлення подаємо ПЕРШИМ і даємо модулю отямитись: інакше такти підуть у
+      ще мертву мікросхему й вона може не піднятись.  */
+  if(s.dacPwr){
+    gpio_hold_dis((gpio_num_t)DAC_PWR);
+    pinMode(DAC_PWR, OUTPUT);
+    bool was = digitalRead(DAC_PWR);
+    digitalWrite(DAC_PWR, s.dac ? HIGH : LOW);
+    if(s.dac && !was) delay(60);
+  }
   if(s.dac){
     player.setPinout(DAC_BCLK, DAC_LRC, DAC_DOUT, I2S_PIN_NO_CHANGE, I2S_PIN_NO_CHANGE);
     /*  Відв'язуємо лінію даних вбудованого кодека: перепризначення виводів не
@@ -251,8 +261,13 @@ void YoExtras::applyDac(){
       digitalWrite(DP[i], LOW);
     }
   }
+  /*  Дослідне живлення модуля з виводу IO3. Вивід віддає до ~40 мА — цього
+      вистачає PCM5102A і UDA1334A, але не підсилювачу MAX98357A: йому потрібен
+      окремий ключ. Сенс у тому, що при вимкненні радіо модуль гасне разом із
+      ним, а не світиться від постійної шини 3,3 В (вона мусить лишатись під
+      напругою, бо на ній живе годинник і сенсор, який будить радіо).  */
   player.setOutputPins(player.status() == PLAYING);
-  Serial.printf("##DAC#\tаудіовихід %u\n", s.dac);
+  Serial.printf("##DAC#\tаудіовихід %u, живлення з IO3: %u\n", s.dac, s.dacPwr);
 }
 
 void YoExtras::begin(){
@@ -346,8 +361,8 @@ void YoExtras::_powerOff(){
       діоди — світиться при вимкненому радіо. Лінію мікрофона (I2S_DIN) не
       чіпаємо: це вхід, її веде кодек.  */
   {
-    static const uint8_t SP[7] = { DAC_BCLK, DAC_LRC, DAC_DOUT, I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_MCLK };
-    for(uint8_t i = 0; i < 7; i++){
+    static const uint8_t SP[8] = { DAC_BCLK, DAC_LRC, DAC_DOUT, I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_MCLK, DAC_PWR };
+    for(uint8_t i = 0; i < 8; i++){
       if(SP[i] == 255) continue;
       gpio_reset_pin((gpio_num_t)SP[i]);
       pinMode(SP[i], OUTPUT);
@@ -489,8 +504,8 @@ void YoExtras::earlyBoot(){
   /*  Виводи звуку теж були зафіксовані в нулі (щоб уві сні не живили
       зовнішній модуль) — відпускаємо, інакше радіо прокинулось би німим.  */
   {
-    static const uint8_t SP[7] = { DAC_BCLK, DAC_LRC, DAC_DOUT, I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_MCLK };
-    for(uint8_t i = 0; i < 7; i++) if(SP[i] != 255) gpio_hold_dis((gpio_num_t)SP[i]);
+    static const uint8_t SP[8] = { DAC_BCLK, DAC_LRC, DAC_DOUT, I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_MCLK, DAC_PWR };
+    for(uint8_t i = 0; i < 8; i++) if(SP[i] != 255) gpio_hold_dis((gpio_num_t)SP[i]);
   }
   if(s_wokeTouch) rtc_gpio_deinit((gpio_num_t)TS_INT);
 }

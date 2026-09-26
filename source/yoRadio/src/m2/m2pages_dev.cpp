@@ -29,6 +29,11 @@ static Item s_devItems[] = {
   iSwitch("Картка пам'яті", IC_CARD, C_ORANGE, [](){ return (int32_t)!extras.s.noSd; },
           [](int32_t v){ extras.s.noSd = !v; extras.changed(); if(extras.s.noSd){ recorder.stop(); if(config.getMode() == PM_SDCARD) config.changeMode(PM_WEB); } }),
   iNav("Аудіовихід", IC_SPEAKER, C_TEAL, vDac, [](){ M.push(&pgDac); }),
+  iSwitch("Живити модуль з IO3", IC_CHIP, C_ORANGE, [](){ return (int32_t)extras.s.dacPwr; },
+          [](int32_t v){ extras.s.dacPwr = v; extras.changed(); extras.applyDac(); }),
+  iNote([](){ return extras.s.dacPwr
+      ? "ДОСЛІД: живлення модуля йде з виводу IO3, а не з постійної\n3,3 В — тож модуль гасне разом із радіо. Схема під'єднання\nнижче вже показує IO3. Не для MAX98357A: вивід не потягне."
+      : "ДОСЛІД: вимкнене радіо світить модулем, бо шина 3,3 В мусить\nлишатись під напругою — на ній годинник і сенсор пробудження.\nУвімкніть, щоб живити модуль з IO3, і перенесіть туди провід."; }, 50),
   iNav("Заставка й звуки", IC_NOTE, C_PINK, vSnd, [](){ M.push(&pgDevSnd); }),
   iSection("ЛОГОТИПИ СТАНЦІЙ"),
   iButton("Шукати логотипи знову", IC_REFRESH, [](){
@@ -183,6 +188,14 @@ void DacInfoPage::draw(Gfx& g){
   };
   const Pin* pins = nullptr; uint8_t np = 0;
   switch(s_dacSel){ case 1: pins = P1; np = 7; break; case 2: pins = P2; np = 5; break; case 3: pins = P3; np = 5; break; case 4: pins = P4; np = 9; break; default: break; }
+  /*  Досліду живлення з IO3 — показуємо саме те, що треба з'єднати зараз:
+      провід живлення йде не на 5V роз'єму UART, а на IO3.  */
+  static Pin alt[9];
+  if(np && extras.s.dacPwr && s_dacSel >= 1 && s_dacSel <= 3){
+    memcpy(alt, pins, np * sizeof(Pin));
+    alt[0].esp = "IO3 (дослід)";
+    pins = alt;
+  }
   int16_t ty;
   if(np){
     const int16_t rh = np > 7 ? 13 : (np > 5 ? 16 : 18), y0 = 16;
@@ -213,6 +226,8 @@ void DacInfoPage::draw(Gfx& g){
   }
   g.text(MX + 2, ty, D[s_dacSel][0], F_SM, C_TXT2, AL_L, CWID);
   g.text(MX + 2, ty + 14, D[s_dacSel][1], F_SM, C_TXT2, AL_L, CWID);
+  if(extras.s.dacPwr && s_dacSel >= 1 && s_dacSel <= 3)
+    g.text(MX + 2, ty + 28, "Дослід: живлення з IO3 — модуль гасне з радіо.", F_SM, C_ORANGE, AL_L, CWID);
   if(s_dacSel == 4){
     g.box(MX, 160, CWID, 36, 12, C_SURF2);
     g.text(SW / 2, 183, "Де ці роз'єми на платі", F_ROWB, C_TXT, AL_C);
