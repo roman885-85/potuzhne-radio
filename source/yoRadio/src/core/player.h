@@ -42,6 +42,7 @@ class Player: public Audio {
     //char        _plError[PLERR_LN];
   private:
     volatile uint32_t _seekTo = 0, _seekAt = 0;   /* куди просили перемотати і коли */
+    volatile uint32_t _cPos = 0, _cSize = 0, _cTime = 0, _cDur = 0, _cFill = 0, _cAt = 0;
     void _stop(bool alreadyStopped = false, bool keepAmp = false);
     void _fadeOutWait();                /* звук грає — спершу плавно стишити */
     void _play(uint16_t stationId);
@@ -84,7 +85,16 @@ class Player: public Audio {
         стрибає: вони вже пересунули його, а радіо ще кілька разів встигає
         відповісти старою позицією.  */
     void     seekTo(uint32_t pos);
+    /*  Те, що віддаємо сторінці й програмам. Читати тут напряму з audiofile
+        НЕ можна: getFilePos()/getFileSize() кличуть audiofile.position() і
+        .size(), тобто лізуть у файловий об'єкт SD із задачі веб-сервера, поки
+        головний цикл читає з того самого файла. Значення знімаємо в
+        головному циклі (cachePos) і віддаємо копію.  */
+    void     cachePos();
     uint32_t shownFilePos();
+    uint32_t shownFileSize(){ return _cSize; }
+    uint32_t shownTime(){ return _cTime; }
+    uint32_t shownDur(){ return _cDur; }
     void resetQueue();
     #if defined(MQTT_ROOT_TOPIC) || defined(YO_BROWSEURL)
     void browseUrl();

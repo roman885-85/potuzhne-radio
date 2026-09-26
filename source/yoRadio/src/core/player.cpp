@@ -167,6 +167,7 @@ void resetPlayer(){
   #define PL_QUEUE_TICKS_ST 4
 #endif
 void Player::loop() {
+  cachePos();                 /* знімок позиції для сторінки — лише звідси */
   if(playerQueue==NULL) return;
   playerRequestParams_t requestP;
   if(xQueueReceive(playerQueue, &requestP, (isRunning() || _extData)?PL_QUEUE_TICKS:PL_QUEUE_TICKS_ST)){
@@ -267,6 +268,19 @@ void Player::seekTo(uint32_t pos){
   sendCommand({PR_SEEK, (int)pos});
 }
 
+/*  Знімок позиції — лише з головного циклу, раз на чверть секунди.  */
+void Player::cachePos(){
+  const uint32_t now = millis();
+  if(now - _cAt < 250) return;
+  _cAt = now;
+  if(!isRunning() || config.getMode() != PM_SDCARD){ _cPos = _cSize = _cTime = _cDur = _cFill = 0; return; }
+  _cPos  = getFilePos();
+  _cSize = getFileSize();
+  _cTime = getAudioCurrentTime();
+  _cDur  = getAudioFileDuration();
+  _cFill = inBufferFilled();
+}
+
 uint32_t Player::shownFilePos(){
   /*  Поки команда чекає в черзі, кажемо ту позицію, про яку просили: інакше
       програма встигає отримати відповідь зі старою, і повзунок відкочується.  */
@@ -276,7 +290,7 @@ uint32_t Player::shownFilePos(){
       лишком кілобайт — секунд шість на 128 кбіт/с). Одразу після перемотки
       читання мчить уперед, набираючи буфер, і повзунок стрибав туди ж, хоч
       звук ішов із потрібного місця. Віднімаємо те, що ще не відтворене.  */
-  const uint32_t p = getFilePos(), q = inBufferFilled();
+  const uint32_t p = _cPos, q = _cFill;
   const uint32_t v = p > q ? p - q : 0;
   return v < sd_min ? sd_min : v;
 }
