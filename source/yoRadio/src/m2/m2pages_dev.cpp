@@ -32,8 +32,8 @@ static Item s_devItems[] = {
   iSwitch("Живити модуль з IO3", IC_CHIP, C_ORANGE, [](){ return (int32_t)extras.s.dacPwr; },
           [](int32_t v){ extras.s.dacPwr = v; extras.changed(); extras.applyDac(); }),
   iNote([](){ return extras.s.dacPwr
-      ? "ДОСЛІД: живлення модуля йде з виводу IO3, а не з постійної\n3,3 В — тож модуль гасне разом із радіо. Схема під'єднання\nнижче вже показує IO3. Не для MAX98357A: вивід не потягне."
-      : "ДОСЛІД: вимкнене радіо світить модулем, бо шина 3,3 В мусить\nлишатись під напругою — на ній годинник і сенсор пробудження.\nУвімкніть, щоб живити модуль з IO3, і перенесіть туди провід."; }, 50),
+      ? "ДОСЛІД: IO3 керує ключем живлення модуля —\nмодуль гасне разом із радіо. Схема нижче показує\nIO3. Напряму з виводу модуль не живиться."
+      : "ДОСЛІД: вимкнене радіо світить модулем — шина\n3,3 В мусить лишатись під напругою, на ній\nгодинник і сенсор пробудження. IO3 може вимикати\nмодуль — але через ключ, не напряму (див. схему)."; }, 66),
   iNav("Заставка й звуки", IC_NOTE, C_PINK, vSnd, [](){ M.push(&pgDevSnd); }),
   iSection("ЛОГОТИПИ СТАНЦІЙ"),
   iButton("Шукати логотипи знову", IC_REFRESH, [](){
@@ -193,7 +193,7 @@ void DacInfoPage::draw(Gfx& g){
   static Pin alt[9];
   if(np && extras.s.dacPwr && s_dacSel >= 1 && s_dacSel <= 3){
     memcpy(alt, pins, np * sizeof(Pin));
-    alt[0].esp = "IO3 (дослід)";
+    alt[0].esp = "5V через ключ";
     pins = alt;
   }
   int16_t ty;
@@ -227,7 +227,7 @@ void DacInfoPage::draw(Gfx& g){
   g.text(MX + 2, ty, D[s_dacSel][0], F_SM, C_TXT2, AL_L, CWID);
   g.text(MX + 2, ty + 14, D[s_dacSel][1], F_SM, C_TXT2, AL_L, CWID);
   if(extras.s.dacPwr && s_dacSel >= 1 && s_dacSel <= 3)
-    g.text(MX + 2, ty + 28, "Дослід: живлення з IO3 — модуль гасне з радіо.", F_SM, C_ORANGE, AL_L, CWID);
+    g.text(MX + 2, ty + 28, "Дослід: IO3 керує ключем 5 В — модуль гасне з радіо.", F_SM, C_ORANGE, AL_L, CWID);
   if(s_dacSel == 4){
     g.box(MX, 160, CWID, 36, 12, C_SURF2);
     g.text(SW / 2, 183, "Де ці роз'єми на платі", F_ROWB, C_TXT, AL_C);
