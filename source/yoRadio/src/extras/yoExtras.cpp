@@ -237,10 +237,19 @@ void YoExtras::applyDac(){
         вбудований динамік говорив разом із зовнішнім ЦАПом. Такт і слово
         (BCLK/LRC) лишаємо — на них тримається вбудований мікрофон.  */
     gpio_reset_pin((gpio_num_t)I2S_DOUT);
+    pinMode(I2S_DOUT, OUTPUT); digitalWrite(I2S_DOUT, LOW);   /* нуль, а не підтяжка вгору */
   }else{
     player.setPinout(I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_DIN, I2S_MCLK);
-    /*  старі виводи зовнішнього ЦАП відв'язуємо, щоб не лишились на шині  */
-    gpio_reset_pin((gpio_num_t)DAC_BCLK); gpio_reset_pin((gpio_num_t)DAC_LRC); gpio_reset_pin((gpio_num_t)DAC_DOUT);
+    /*  Старі виводи зовнішнього ЦАП відв'язуємо від шини й КЛАДЕМО В НУЛЬ.
+        Саме відв'язування лишає на них підтяжку вгору, і підключений модуль
+        живиться через неї крізь захисні діоди своїх входів — світиться, хоч
+        звук іде не на нього.  */
+    static const uint8_t DP[3] = { DAC_BCLK, DAC_LRC, DAC_DOUT };
+    for(uint8_t i = 0; i < 3; i++){
+      gpio_reset_pin((gpio_num_t)DP[i]);
+      pinMode(DP[i], OUTPUT);
+      digitalWrite(DP[i], LOW);
+    }
   }
   player.setOutputPins(player.status() == PLAYING);
   Serial.printf("##DAC#\tаудіовихід %u\n", s.dac);
@@ -332,6 +341,20 @@ void YoExtras::_powerOff(){
   pinMode(BRIGHTNESS_PIN, OUTPUT); digitalWrite(BRIGHTNESS_PIN, LOW); gpio_hold_en((gpio_num_t)BRIGHTNESS_PIN);
   pinMode(TS_RST, OUTPUT);         digitalWrite(TS_RST, HIGH);        gpio_hold_en((gpio_num_t)TS_RST);
   pinMode(EXT_LED_PIN, OUTPUT);    digitalWrite(EXT_LED_PIN, LOW);    gpio_hold_en((gpio_num_t)EXT_LED_PIN);
+  /*  Виводи звуку теж кладемо в нуль і фіксуємо. Уві сні вони інакше «пливуть»
+      або лишаються з підтяжкою, і зовнішній модуль живиться через свої вхідні
+      діоди — світиться при вимкненому радіо. Лінію мікрофона (I2S_DIN) не
+      чіпаємо: це вхід, її веде кодек.  */
+  {
+    static const uint8_t SP[7] = { DAC_BCLK, DAC_LRC, DAC_DOUT, I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_MCLK };
+    for(uint8_t i = 0; i < 7; i++){
+      if(SP[i] == 255) continue;
+      gpio_reset_pin((gpio_num_t)SP[i]);
+      pinMode(SP[i], OUTPUT);
+      digitalWrite(SP[i], LOW);
+      gpio_hold_en((gpio_num_t)SP[i]);
+    }
+  }
   gpio_deep_sleep_hold_en();
 
   /*  палець ще на кнопці «вимкнути» — дочекатись, поки відпустять,
@@ -463,6 +486,12 @@ void YoExtras::earlyBoot(){
   gpio_hold_dis((gpio_num_t)BRIGHTNESS_PIN);
   gpio_hold_dis((gpio_num_t)TS_RST);
   gpio_hold_dis((gpio_num_t)EXT_LED_PIN);
+  /*  Виводи звуку теж були зафіксовані в нулі (щоб уві сні не живили
+      зовнішній модуль) — відпускаємо, інакше радіо прокинулось би німим.  */
+  {
+    static const uint8_t SP[7] = { DAC_BCLK, DAC_LRC, DAC_DOUT, I2S_BCLK, I2S_LRC, I2S_DOUT, I2S_MCLK };
+    for(uint8_t i = 0; i < 7; i++) if(SP[i] != 255) gpio_hold_dis((gpio_num_t)SP[i]);
+  }
   if(s_wokeTouch) rtc_gpio_deinit((gpio_num_t)TS_INT);
 }
 
