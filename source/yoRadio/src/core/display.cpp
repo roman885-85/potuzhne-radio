@@ -180,6 +180,12 @@ void Display::forceRedraw(){
 }
 
 void Display::_start() {
+  /*  З карткою пам'яті готовність настає майже одразу — мережі чекати не
+      треба, і заставка обривалась, не доказавши вступ (без картки радіо
+      чекало Wi-Fi, і вона встигала). Даємо їй доказати, але не довше ніж
+      5 с від увімкнення — інакше плеєр чекав би на несправній заставці.  */
+  if(splash.active() && !splash.introDone() && millis() < 5000){ _startWait = true; return; }
+  _startWait = false;
   splash.stop();
   if (network.status != CONNECTED && network.status != SDREADY) {
     _noNetScreen();
@@ -327,6 +333,8 @@ void Display::loop() {
     DSTEP(m2::P.render());
   }
   if(_bootStep == 1 && splash.active()) splash.tick();     /* заставка, поки радіо шукає мережу */
+  /*  Старт відклали, щоб заставка доказала вступ — повертаємось до нього.  */
+  if(_startWait && (!splash.active() || splash.introDone() || millis() >= 5000)) _start();
 
   requestParams_t request;
   if(xQueueReceive(displayQueue, &request, DSP_QUEUE_TICKS)){

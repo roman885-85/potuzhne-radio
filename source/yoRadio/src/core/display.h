@@ -48,6 +48,7 @@ class Display {
     volatile bool _redrawReq = false;
     bool     _locked = false;
     uint8_t  _bootStep = 0;
+    bool     _startWait = false;        /* чекаємо, поки заставка доказує вступ */
     bool     _lostPending = false;   /* зв'язок зник ще на заставці — показати, щойно плеєр готовий */
     bool     _playerBuilt = false;   /* старт завершено (зі мережею) */
     volatile uint32_t _splashDemoMs = 0;
