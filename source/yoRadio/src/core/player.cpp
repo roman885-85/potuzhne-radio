@@ -212,6 +212,7 @@ void Player::loop() {
         break;
       }
       case PR_SEEK: {
+        _seekAt = 0;                    /* виконали — далі показуємо справжню позицію */
         /*  Перемотка файла картки йде саме тут, у головному циклі, а не з тієї
             задачі, що попросила. setFilePos скидає буфер і стан декодера
             (MP3/FLAC), і поки це робила задача веб-сервера, головний цикл у
@@ -257,6 +258,21 @@ void Player::setOutputPins(bool isPlaying) {
   bool _ml = MUTE_LOCK?!MUTE_VAL:(isPlaying?!MUTE_VAL:MUTE_VAL);
   if(extras.s.dac) _ml = MUTE_VAL;       /* звук іде на зовнішній ЦАП — вбудований підсилювач вимкнено */
   if(MUTE_PIN!=255) digitalWrite(MUTE_PIN, _ml);
+}
+
+/*  Перемотка файла картки: у чергу, а показуємо одразу цільову позицію.  */
+void Player::seekTo(uint32_t pos){
+  _seekTo = pos;
+  _seekAt = millis();
+  sendCommand({PR_SEEK, (int)pos});
+}
+
+uint32_t Player::shownFilePos(){
+  /*  Поки команда чекає в черзі (і ще пів секунди, доки буфер набереться),
+      кажемо програмам ту позицію, про яку просили: інакше вони встигають
+      отримати кілька відповідей зі старою, і повзунок скаче.  */
+  if(_seekAt && millis() - _seekAt < 1500) return _seekTo;
+  return getFilePos();
 }
 
 /*  Перемикання й зупинка — через затихання: звук ще 0,3 с грає, стишуючись,

@@ -41,6 +41,7 @@ class Player: public Audio {
     plStatus_e  _status;
     //char        _plError[PLERR_LN];
   private:
+    volatile uint32_t _seekTo = 0, _seekAt = 0;   /* куди просили перемотати і коли */
     void _stop(bool alreadyStopped = false, bool keepAmp = false);
     void _fadeOutWait();                /* звук грає — спершу плавно стишити */
     void _play(uint16_t stationId);
@@ -78,6 +79,12 @@ class Player: public Audio {
     void setError(const char *e);
     //bool hasError() { return strlen(_plError)>0; }
     void sendCommand(playerRequestParams_t request);
+    /*  Перемотка файла картки: запам'ятовуємо, куди попросили, і доки команда
+        не виконалась — саме це й показуємо програмам. Інакше повзунок у них
+        стрибає: вони вже пересунули його, а радіо ще кілька разів встигає
+        відповісти старою позицією.  */
+    void     seekTo(uint32_t pos);
+    uint32_t shownFilePos();
     void resetQueue();
     #if defined(MQTT_ROOT_TOPIC) || defined(YO_BROWSEURL)
     void browseUrl();

@@ -326,6 +326,15 @@ public class MainActivity extends Activity {
      *                вона щойно вийшла.
      * @param message що сказати над пошуком (наприклад, що зв'язок втрачено)
      */
+    /** Повтор пошуку, поки радіо не знайдеться (зупиняється, щойно відкрили радіо). */
+    private static final long RETRY_MS = 20000;
+    private final Runnable retrySearch = new Runnable() {
+        @Override public void run() {
+            if (searching || current != null) return;
+            startSearch(true, null);
+        }
+    };
+
     private void startSearch(boolean auto, String message) {
         if (finder != null) finder.cancel();
         showSearchScreen();
@@ -390,7 +399,13 @@ public class MainActivity extends Activity {
             return;
         }
         if (found.isEmpty()) {
-            status.setText("Радіо не знайдено. Перевірте, що телефон і радіо в одній мережі Wi-Fi");
+            status.setText("Радіо не знайдено. Шукаю ще…");
+            // Один невдалий захід нічого не означає: Wi-Fi телефона міг ще не
+            // прокинутись, а групові пакети губляться легко. Раніше програма
+            // просто ставала й чекала, поки натиснуть «Шукати» — звідси
+            // «знаходить з третього-четвертого разу». Тепер повторюємо самі.
+            main.removeCallbacks(retrySearch);
+            main.postDelayed(retrySearch, RETRY_MS);
             if (networks.isEmpty()) {
                 hint.setText("Телефон зараз не в мережі Wi-Fi");
             } else {
@@ -613,6 +628,7 @@ public class MainActivity extends Activity {
     // =========================================================================
 
     private void openRadio(Radio r) {
+        main.removeCallbacks(retrySearch);   // знайшли — повтор більше не потрібен
         if (finder != null) {
             finder.cancel();
             finder = null;
