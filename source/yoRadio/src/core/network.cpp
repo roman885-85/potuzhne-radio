@@ -279,25 +279,47 @@ void MyNetwork::setWifiParams(){
     _evReady = true;
   }
   //config.setTimeConf(); //??
-  if(strlen(config.store.mdnsname)>0 && MDNS.begin(config.store.mdnsname)){
-    /*  Оголошуємо радіо в мережі, щоб програми-клієнти (Mac, Windows,
-        Android) знаходили його самі, без введення адреси. Свій тип
-        «_potuzhne._tcp» — лише наші радіо; «_http._tcp» — для браузерів.  */
-    MDNS.setInstanceName("ПОТУЖНЕ РАДІО");
-    MDNS.addService("http", "tcp", 80);
-    MDNS.addService("potuzhne", "tcp", 80);
-    MDNS.addServiceTxt("potuzhne", "tcp", "board", "ES3C28P");
-    MDNS.addServiceTxt("potuzhne", "tcp", "ver", prVersion());
-    MDNS.addServiceTxt("potuzhne", "tcp", "host", (const char*)config.store.mdnsname);
-    /*  Задача mDNS від IDF створюється з пріоритетом 1 на ядрі 0 — нижче за
-        все, що там працює (екран 4, мікрофон 3, AirPlay 5). Поки екран
-        перемальовується, вона не встигає відповісти, і запит клієнта просто
-        гине: заміром виходило, що радіо втрачає кожен четвертий запит, а
-        відповідь іде 125–215 мс замість одиниць. Робота там мікроскопічна
-        (кілька пакетів), тож піднімаємо її над малюванням — але значно нижче
-        за lwIP (18) і Wi-Fi (23).  */
-    if(TaskHandle_t h = xTaskGetHandle("mdns")) vTaskPrioritySet(h, 6);
+  mdnsStart();
+}
+
+/*  mDNS виносимо окремо. Раніше він піднімався лише якщо ім'я задане і
+    MDNS.begin() вдався, а решта коду (AirPlay) зверталась до нього без
+    перевірки — і будь-яка невдача mDNS означала падіння просто в setup(),
+    тобто вічну перезавантажувальну петлю. Тепер: ім'я є завжди, невдача
+    не страшна, а спробу можна повторити з головного циклу.  */
+bool MyNetwork::mdnsStart(){
+  if(mdnsReady) return true;
+  if(WiFi.status() != WL_CONNECTED) return false;
+  char buf[MDNS_LENGTH];
+  const char* nm = config.store.mdnsname;
+  if(strlen(nm) == 0){
+    snprintf(buf, MDNS_LENGTH, "yoradio-%x", config.getChipId());
+    nm = buf;
   }
+  if(!MDNS.begin(nm)){
+    Serial.println("##[BOOT]#\tmDNS не піднявся, спробуємо згодом");
+    return false;
+  }
+  /*  Оголошуємо радіо в мережі, щоб програми-клієнти (Mac, Windows,
+      Android) знаходили його самі, без введення адреси. Свій тип
+      «_potuzhne._tcp» — лише наші радіо; «_http._tcp» — для браузерів.  */
+  MDNS.setInstanceName("ПОТУЖНЕ РАДІО");
+  MDNS.addService("http", "tcp", 80);
+  MDNS.addService("potuzhne", "tcp", 80);
+  MDNS.addServiceTxt("potuzhne", "tcp", "board", "ES3C28P");
+  MDNS.addServiceTxt("potuzhne", "tcp", "ver", prVersion());
+  MDNS.addServiceTxt("potuzhne", "tcp", "host", nm);
+  /*  Задача mDNS від IDF створюється з пріоритетом 1 на ядрі 0 — нижче за
+      все, що там працює (екран 4, мікрофон 3, AirPlay 5). Поки екран
+      перемальовується, вона не встигає відповісти, і запит клієнта просто
+      гине: заміром виходило, що радіо втрачає кожен четвертий запит, а
+      відповідь іде 125–215 мс замість одиниць. Робота там мікроскопічна
+      (кілька пакетів), тож піднімаємо її над малюванням — але значно нижче
+      за lwIP (18) і Wi-Fi (23).  */
+  if(TaskHandle_t h = xTaskGetHandle("mdns")) vTaskPrioritySet(h, 6);
+  mdnsReady = true;
+  Serial.printf("##[BOOT]#\tmDNS: %s.local\n", nm);
+  return true;
 }
 
 void MyNetwork::requestTimeSync(bool withTelnetOutput, uint8_t clientId) {
@@ -333,6 +355,14 @@ void MyNetwork::_noNetwork() {
     збережені мережі перебираємо по черзі. Якщо тієї, що була, більше немає —
     радіо саме перейде на іншу знайому, і все це не чіпає ні звук, ні дотики.  */
 void MyNetwork::loop(){
+  /*  mDNS міг не піднятись на старті (мережа ще не встигла, не вистачило
+      пам'яті). Без нього клієнти не знаходять радіо, тож тихо пробуємо
+      знову раз на 10 с — і колонку AirPlay теж буде оголошено, бо її
+      задача сама повторює реєстрацію служби.  */
+  if(!mdnsReady && status == CONNECTED){
+    static uint32_t mAt = 0;
+    if(millis() - mAt > 10000){ mAt = millis(); mdnsStart(); }
+  }
   /*  Не покладаємось лише на події: питаємо і сам стан станції.  */
   if(_try == TRY_RUN){
     wl_status_t st = WiFi.status();

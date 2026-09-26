@@ -5494,6 +5494,11 @@ static const uint32_t pow14[2][4] PROGMEM = {
 
     for (sfb = 0; sfb < maxSFB; sfb++) {
         width = sfbTab[sfb+1] - sfbTab[sfb];    /* assume >= 0 (see sfBandTabLong/sfBandTabShort) */
+        /*  Нижче йдуть цикли «do ... while(--width)»: при width == 0 лічильник
+            іде в мінус і декодер пише за межі буфера мільярди разів — саме так
+            гинуло радіо на пошкодженому потоці AAC. Для справного файлу width
+            завжди більший за нуль, тож перевірка нічого не змінює.  */
+        if (width <= 0) continue;
         cbIdx = cbRight[sfb];
 
         if (cbIdx == 14 || cbIdx == 15) {

@@ -16,6 +16,11 @@ class MyNetwork {
         не блокуючи ні звук, ні екран, ні пошук мереж у меню.  */
     bool linkLost = false;
     bool staPaused = false;          /* спроби спинено: шукаємо мережі */
+    /*  mDNS піднявся і ним можна користуватись. Прапорець обов'язковий:
+        бібліотека mDNS не переживає звернення до себе, поки не запущена
+        (assert усередині черги -> падіння системи), а падіння в setup()
+        дає нескінченне перезавантаження радіо.  */
+    bool mdnsReady = false;
   public:
     MyNetwork() {};
     void begin();
@@ -26,6 +31,7 @@ class MyNetwork {
     void requestTimeSync(bool withTelnetOutput=false, uint8_t clientId=0);
     void requestWeatherSync();
     void setWifiParams();
+    bool mdnsStart();                /* підняти mDNS; можна кликати повторно */
     bool wifiBegin(bool silent=false);
     bool wifiRemembered();           /* мережа, яку пам'ятає сам драйвер Wi-Fi */
     void connectTo(const char* ssid, const char* pass);   /* спроба просто зараз */

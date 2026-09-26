@@ -425,6 +425,9 @@ void YoAirplay::setOn(bool v){
 
 bool YoAirplay::_mdns(){
   if(_mdnsOn) return true;
+  /*  Без піднятого mDNS до нього не можна торкатись: бібліотека не
+      перевіряє власний стан і валить систему прямо в setup().  */
+  if(!network.mdnsReady) return false;
   if(mdns_service_exists("_raop", "_tcp", nullptr)){ _mdnsOn = true; return true; }
   uint8_t mac[6];
   WiFi.macAddress(mac);
@@ -496,7 +499,7 @@ void YoAirplay::stop(){
   xTaskNotifyGive((TaskHandle_t)_task);
   for(uint8_t i = 0; i < 100 && _task; i++) vTaskDelay(pdMS_TO_TICKS(10));
   udpClose(pcbA); udpClose(pcbC); udpClose(pcbT);
-  if(_mdnsOn){ mdns_service_remove("_raop", "_tcp"); _mdnsOn = false; }
+  if(_mdnsOn){ if(network.mdnsReady) mdns_service_remove("_raop", "_tcp"); _mdnsOn = false; }
   Serial.println("##AIRPLAY#\tвимкнено");
 }
 

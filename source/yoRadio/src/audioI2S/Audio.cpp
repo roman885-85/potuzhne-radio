@@ -3124,6 +3124,21 @@ void Audio::processLocalFile() {
         if(m_resumeFilePos){
             if(m_resumeFilePos < m_audioDataStart) m_resumeFilePos = m_audioDataStart;
             if(m_avr_bitrate) m_audioCurrentTime = ((m_resumeFilePos - m_audioDataStart) / m_avr_bitrate) * 8;
+            /*  У M4A кадри не мають міток синхронізації (RAW AAC): довільний
+                байт — це середина кадру, декодер розбирає мотлох і гине. Тому
+                переводимо байти в секунди й питаємо в таблиць файлу справжній
+                початок кадру; заодно час стає чесним, а не «43-я секунда» на
+                самому початку. Не вийшло розібрати таблиці — грає з початку.  */
+            if(m_codec == CODEC_M4A){
+                uint32_t p4 = 0, real4 = 0;
+                if(yoM4aLocate((uint32_t)m_audioCurrentTime, p4, real4) && p4 >= m_audioDataStart){
+                    m_resumeFilePos  = p4;
+                    m_audioCurrentTime = real4;
+                }else{
+                    m_resumeFilePos  = m_audioDataStart;
+                    m_audioCurrentTime = 0;
+                }
+            }
             audiofile.seek(m_resumeFilePos);
             InBuff.resetBuffer();
             if(m_f_Log) log_i("m_resumeFilePos %i", m_resumeFilePos);
@@ -4664,6 +4679,7 @@ bool Audio::yoM4aLocate(uint32_t sec, uint32_t& pos, uint32_t& realSec){
         scan = trak + trakS;
     }
     if(!stbl) return false;
+    if((uint64_t)stbl + stblS > fsize || (uint64_t)mdia + mdiaS > fsize) return false;
     uint8_t b[24];
     /*  timescale  */
     if(!m4aChild(f, mdia, mdia + mdiaS, "mdhd", o, s)) return false;
@@ -4672,8 +4688,13 @@ bool Audio::yoM4aLocate(uint32_t sec, uint32_t& pos, uint32_t& realSec){
     if(!timescale) return false;
     /*  кадр на потрібній секунді  */
     if(!m4aChild(f, stbl, stbl + stblS, "stts", o, s)) return false;
+    const uint32_t sttsS = s;
     f.seek(o + 4); if(f.read(b, 4) != 4) return false;
     uint32_t n = m4aBe32(b);
+    /*  Лічильник узятий із файла: якщо він бреше (пошкоджений чи чужий
+        формат), цикл читав би з картки нескінченно. Обмежуємо тим, скільки
+        записів фізично влазить в атом — по 8 байт на запис.  */
+    if(sttsS >= 8 && n > (sttsS - 8) / 8) n = (sttsS - 8) / 8;
     uint64_t want = (uint64_t)sec * timescale, t = 0;
     uint32_t sample = 0, lastDelta = 1024;
     for(uint32_t i = 0; i < n; i++){
@@ -4699,8 +4720,10 @@ bool Audio::yoM4aLocate(uint32_t sec, uint32_t& pos, uint32_t& realSec){
     f.seek(stcoOff + 4); if(f.read(b, 4) != 4) return false;
     uint32_t chunks = m4aBe32(b);
     if(!m4aChild(f, stbl, stbl + stblS, "stsc", o, s)) return false;
+    const uint32_t stscS = s;
     f.seek(o + 4); if(f.read(b, 4) != 4) return false;
     uint32_t ne = m4aBe32(b);
+    if(stscS >= 8 && ne > (stscS - 8) / 12) ne = (stscS - 8) / 12;
     uint32_t acc = 0, chunk = 0, firstInChunk = 0;
     bool found = false;
     uint32_t first = 0, spc = 0;
@@ -4720,6 +4743,10 @@ bool Audio::yoM4aLocate(uint32_t sec, uint32_t& pos, uint32_t& realSec){
         first = nextFirst; spc = nspc;
     }
     if(!found || !chunk || chunk > chunks) return false;
+    {   /*  таблиця зсувів шматків мусить містити цей номер  */
+        const uint64_t need = (uint64_t)stcoOff + 8 + (uint64_t)(chunk - 1) * (co64 ? 8 : 4) + (co64 ? 8 : 4);
+        if(need > fsize) return false;
+    }
     uint64_t cofs;
     if(co64){ f.seek(stcoOff + 8 + (chunk - 1) * 8); if(f.read(b, 8) != 8) return false; cofs = ((uint64_t)m4aBe32(b) << 32) | m4aBe32(b + 4); }
     else    { f.seek(stcoOff + 8 + (chunk - 1) * 4); if(f.read(b, 4) != 4) return false; cofs = m4aBe32(b); }
@@ -4727,8 +4754,27 @@ bool Audio::yoM4aLocate(uint32_t sec, uint32_t& pos, uint32_t& realSec){
     uint64_t inChunk = 0;
     if(fixedSize) inChunk = (uint64_t)(sample - firstInChunk) * fixedSize;
     else {
-        f.seek(stszOff + 12 + (uint64_t)firstInChunk * 4);
-        for(uint32_t i = firstInChunk; i < sample; i++){ if(f.read(b, 4) != 4) return false; inChunk += m4aBe32(b); }
+        /*  Розміри кадрів читаємо ПАЧКАМИ. Раніше тут було одне звернення до
+            картки на КОЖЕН кадр: на десятихвилинній доріжці це близько 25 тисяч
+            читань поспіль, у головному циклі. Радіо ставало намертво, і сторож
+            перезавантажував його — саме це й ловилось як «пауза, тоді грати =
+            зависання» на M4A (відновлення з місця запускає ту саму перемотку).  */
+        /*  Межі: таблиця розмірів мусить справді містити ці кадри й не
+            вилазити за файл. Без перевірки радіо читало казна-звідки й падало,
+            а на старті це ставало петлею: автостарт відновлює позицію, падіння,
+            перезавантаження, і знову.  */
+        if((uint64_t)stszOff + 12 + (uint64_t)sample * 4 > fsize) return false;
+        if(sample > firstInChunk){
+            uint32_t left = sample - firstInChunk;
+            uint8_t blk[256];                        /* 64 розміри за раз */
+            f.seek(stszOff + 12 + (uint64_t)firstInChunk * 4);
+            while(left){
+                const uint32_t take = left > 64 ? 64 : left;
+                if(f.read(blk, take * 4) != (int)(take * 4)) return false;
+                for(uint32_t k = 0; k < take; k++) inChunk += m4aBe32(blk + k * 4);
+                left -= take;
+            }
+        }
     }
     uint64_t p = cofs + inChunk;
     if(p >= fsize) return false;
