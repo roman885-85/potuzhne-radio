@@ -24,7 +24,14 @@ static const int  BLK    = 512;     /* 32 мс: блок для ударів і 
 static const int  VADN   = 480;     /* 30 мс: кадр WebRTC VAD */
 
 bool YoMic::listening() const {
-  return running() && extras.s.micOn && !extras.s.dac;
+  /*  Мікрофон працює при будь-якому виході. Раніше його глушив зовнішній ЦАП —
+      вважалось, що кодек лишається без тактів. Насправді ні: перепризначення
+      виводів не знімає старі з матриці GPIO, тож такт і слово далі приходять
+      на кодек, а головний такт (MCLK) і лінія мікрофона (DIN) при переході на
+      зовнішній ЦАП узагалі не чіпаються. Те саме доводить і давня вада, яку
+      довелось лікувати окремо: вбудований динамік продовжував грати разом із
+      зовнішнім ЦАПом — а це можливо лише коли такти до кодека доходять.  */
+  return running() && extras.s.micOn;
 }
 
 MicGesture YoMic::takeGesture(){
@@ -33,12 +40,13 @@ MicGesture YoMic::takeGesture(){
 }
 
 void YoMic::apply(){
-  if(extras.s.dac) return;                        /* зовнішній ЦАП — кодек без тактів */
+  /*  Підсилення мікрофона кодек приймає шиною I2C — до виводів I2S це
+      відношення не має, тож виставляємо його при будь-якому виході.  */
   uint8_t g = extras.s.micGain ? extras.s.micGain - 1 : 4;   /* типове — 24 дБ */
   es8311_mic(g);
 }
 
-void YoMic::gainTemp(uint8_t step){ if(!extras.s.dac) es8311_mic(step > 7 ? 7 : step); }
+void YoMic::gainTemp(uint8_t step){ es8311_mic(step > 7 ? 7 : step); }
 
 void YoMic::begin(){
   if(_task) return;
