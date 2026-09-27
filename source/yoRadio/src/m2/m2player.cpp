@@ -194,6 +194,10 @@ void Player::_loadFav(){
 
 static bool sermonOn(){ return player.remoteStationName && sermons.playing() >= 0; }
 
+#ifdef YO_DEBUG
+volatile uint32_t yoRowDur = 0, yoRowPos = 0, yoRowN = 0;   /* відладка: що бачить задача екрана */
+#endif
+
 uint8_t Player::_mode() const {
   if(config.getMode() == PM_SDCARD || sermonOn()) return 2;
   bool any = false;
@@ -535,6 +539,9 @@ void Player::_drawRow(Gfx& g){
     g.line(SW - 20, cy - 6, SW - 20, cy + 6, 2, _btn == 1 ? C_ACCTXT : C_TXT);
     { const float xy[6] = { SW - 32, cy - 6, SW - 32, cy + 6, SW - 22, cy }; g.poly(xy, 3, _btn == 1 ? C_ACCTXT : C_TXT); }
     uint32_t dur = player.durSec(), pos = player.posSec();
+#ifdef YO_DEBUG
+    { extern volatile uint32_t yoRowDur, yoRowPos, yoRowN; yoRowDur = dur; yoRowPos = pos; yoRowN++; }   /* відладка: що бачить задача екрана */
+#endif
     float f = dur ? (float)pos / dur : 0;
     if(_seek >= 0) f = _seek;
     if(f > 1) f = 1;

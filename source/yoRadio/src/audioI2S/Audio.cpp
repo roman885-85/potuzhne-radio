@@ -3123,7 +3123,7 @@ void Audio::processLocalFile() {
         AUDIO_INFO("stream ready");
         if(m_resumeFilePos){
             if(m_resumeFilePos < m_audioDataStart) m_resumeFilePos = m_audioDataStart;
-            if(m_avr_bitrate) m_audioCurrentTime = ((m_resumeFilePos - m_audioDataStart) / m_avr_bitrate) * 8;
+            if(m_avr_bitrate) m_audioCurrentTime = (float)((uint64_t)(m_resumeFilePos - m_audioDataStart) * 8) / m_avr_bitrate;
             /*  У M4A кадри не мають міток синхронізації (RAW AAC): довільний
                 байт — це середина кадру, декодер розбирає мотлох і гине. Тому
                 переводимо байти в секунди й питаємо в таблиць файлу справжній
@@ -4489,7 +4489,7 @@ void Audio::compute_audioCurrentTime(int bd) {
             sum_bitrate += getBitRate();
             m_avr_bitrate = sum_bitrate / (loop_counter - 20);
             if(loop_counter == 199 && m_resumeFilePos){
-                m_audioCurrentTime = ((getFilePos() - m_audioDataStart - inBufferFilled()) / m_avr_bitrate) * 8; // #293
+                m_audioCurrentTime = (float)((uint64_t)(getFilePos() - m_audioDataStart - inBufferFilled()) * 8) / m_avr_bitrate; // #293
             }
         }
     }
@@ -4497,7 +4497,7 @@ void Audio::compute_audioCurrentTime(int bd) {
         if(loop_counter == 2){
             m_avr_bitrate = getBitRate();
             if(m_resumeFilePos){  // if connecttoFS() is called with resumeFilePos != 0
-                m_audioCurrentTime = ((getFilePos() - m_audioDataStart - inBufferFilled()) / m_avr_bitrate) * 8; // #293
+                m_audioCurrentTime = (float)((uint64_t)(getFilePos() - m_audioDataStart - inBufferFilled()) * 8) / m_avr_bitrate; // #293
             }
         }
     }
@@ -4608,10 +4608,14 @@ uint32_t Audio::getAudioFileDuration() {
     if(getDatamode() == AUDIO_LOCALFILE) {if(!audiofile) return 0;}
     if(m_streamType == ST_WEBFILE)   {if(!m_contentlength) return 0;}
 
-    if     (m_avr_bitrate && m_codec == CODEC_MP3)   m_audioFileDuration = 8 * (m_audioDataSize / m_avr_bitrate); // #289
-    else if(m_avr_bitrate && m_codec == CODEC_WAV)   m_audioFileDuration = 8 * (m_audioDataSize / m_avr_bitrate);
-    else if(m_avr_bitrate && m_codec == CODEC_M4A)   m_audioFileDuration = 8 * (m_audioDataSize / m_avr_bitrate);
-    else if(m_avr_bitrate && m_codec == CODEC_AAC)   m_audioFileDuration = 8 * (m_audioDataSize / m_avr_bitrate);
+    /*  Спершу множимо, потім ділимо. Було «8 * (розмір / бітрейт)»: ділення в
+        цілих ішло першим, тож довжина виходила кратною восьми секундам, а для
+        файла коротшого за бітрейт у байтах — просто нулем. На нулі екран
+        показує «--:--» і гасить повзунок, тобто перемотка ставала недоступна.  */
+    if     (m_avr_bitrate && m_codec == CODEC_MP3)   m_audioFileDuration = (uint32_t)(((uint64_t)m_audioDataSize * 8) / m_avr_bitrate); // #289
+    else if(m_avr_bitrate && m_codec == CODEC_WAV)   m_audioFileDuration = (uint32_t)(((uint64_t)m_audioDataSize * 8) / m_avr_bitrate);
+    else if(m_avr_bitrate && m_codec == CODEC_M4A)   m_audioFileDuration = (uint32_t)(((uint64_t)m_audioDataSize * 8) / m_avr_bitrate);
+    else if(m_avr_bitrate && m_codec == CODEC_AAC)   m_audioFileDuration = (uint32_t)(((uint64_t)m_audioDataSize * 8) / m_avr_bitrate);
     else if(                 m_codec == CODEC_FLAC)  m_audioFileDuration = FLACGetAudioFileDuration();
     else return 0;
     return m_audioFileDuration;
@@ -4828,7 +4832,7 @@ bool Audio::setFilePos(uint32_t pos) {
     if(m_codec == CODEC_FLAC) FLACDecoderReset();
     InBuff.resetBuffer();
     if(pos < m_audioDataStart) pos = m_audioDataStart; // issue #96
-    if(m_avr_bitrate) m_audioCurrentTime = ((pos-m_audioDataStart) / m_avr_bitrate) * 8; // #96
+    if(m_avr_bitrate) m_audioCurrentTime = (float)((uint64_t)(pos - m_audioDataStart) * 8) / m_avr_bitrate; // #96
     uint32_t sk = audiofile.seek(pos);
     return sk;
 }

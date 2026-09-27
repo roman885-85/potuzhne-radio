@@ -10,6 +10,7 @@
 #include "../displays/dspcore.h"
 #include "../displays/tools/spidma.h"
 #include "../m2/m2simd.h"
+namespace m2 { extern volatile uint32_t yoRowDur, yoRowPos, yoRowN; }
 #include "hal/spi_ll.h"
 #include "esp_core_dump.h"
 #include <WiFi.h>
@@ -537,6 +538,17 @@ void yodbgLoop(){
     else if(!strcmp(buf,"mwifi"))  yomenu.openWifi(false);   /* без замка: це перевірка, а не режим точки доступу */
     else if(!strcmp(buf,"mclose")) yomenu.close();
     else if(!strncmp(buf,"touchlog ",9)){ extern volatile bool yoTouchLog; yoTouchLog = atoi(buf+9) != 0; Serial.printf("TOUCHLOG %d\n", (int)yoTouchLog); }
+    else if(!strcmp(buf,"spos")){
+      /*  сирі числа позиції: щоб бачити, яке саме з них бреше  */
+      Serial.printf("SPOS екран бачить: довжина %lu, позиція %lu (перемальовок рядка %lu)\n",
+                    (unsigned long)m2::yoRowDur, (unsigned long)m2::yoRowPos, (unsigned long)m2::yoRowN);
+      Serial.printf("SPOS файл %lu/%lu, у буфері %lu, час %lu/%lu, sd_min %lu sd_max %lu, показуємо %lu\n",
+                    (unsigned long)player.getFilePos(), (unsigned long)player.getFileSize(),
+                    (unsigned long)player.inBufferFilled(),
+                    (unsigned long)player.getAudioCurrentTime(), (unsigned long)player.getAudioFileDuration(),
+                    (unsigned long)player.sd_min, (unsigned long)player.sd_max,
+                    (unsigned long)player.shownFilePos());
+    }
     else if(!strcmp(buf,"items")){ m2::M.dumpTop(); }
     else if(!strncmp(buf,"scrsm",5)){
       int v = atoi(buf + 5);
