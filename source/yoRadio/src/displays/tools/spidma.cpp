@@ -6,6 +6,8 @@
 #include "soc/gdma_channel.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static gdma_channel_handle_t s_chan = nullptr;
 static dma_descriptor_t*     s_desc = nullptr;
@@ -13,8 +15,26 @@ static const int   SPIDMA_DESC  = 9;          /* 9 x 4092 = 36 КБ за оди�
 static const size_t SPIDMA_CHUNK = 4092;
 static const size_t SPIDMA_MAX   = 32768;     /* межа довжини передачі в регістрі SPI */
 static bool s_broken = false;                /* передача раз не завершилась — далі без DMA */
+/*  Кінець передачі приходить перериванням від GDMA. Раніше задача екрана
+    спала «на око», рахуючи час із частоти шини, і прокидалась із точністю
+    до такту планувальника — заміром виходило близько 4,7 мс зайвого сну на
+    кадр. Тепер сон рівно до сигналу.  */
+static SemaphoreHandle_t s_done = nullptr;
+static bool s_irq = false;                   /* переривання підключене */
+/*  Як чекати кінця передачі: 2 — за сигналом переривання (звичайно),
+    1 — сном за розрахунком (запасний шлях, якщо переривання не підключилось;
+    команда dmawait дає порівняти їх на ходу).  */
+uint8_t spidmaMode = 2;
 uint32_t spidmaBytes = 0;                        /* налагодження: скільки пішло в екран */
 uint32_t spidmaHz = 40000000;                 /* частота шини дисплея — щоб знати, скільки спати під час передачі */
+
+/*  Викликається з переривання: лише розбудити того, хто чекає. IRAM_ATTR —
+    щоб працювало й тоді, коли кеш вимкнено записом у флеш.  */
+static IRAM_ATTR bool spidmaEof(gdma_channel_handle_t, gdma_event_data_t*, void*){
+  BaseType_t hp = pdFALSE;
+  if(s_done) xSemaphoreGiveFromISR(s_done, &hp);
+  return hp == pdTRUE;
+}
 
 bool spidmaBegin(){
   if(s_chan) return true;
@@ -32,6 +52,14 @@ bool spidmaBegin(){
   st.owner_check = false;
   st.auto_update_desc = false;
   gdma_apply_strategy(s_chan, &st);
+  /*  Не вийшло підключити переривання — не біда: лишається старий шлях зі
+      сном за розрахунком, просто трохи марнотратніший.  */
+  if(!s_done) s_done = xSemaphoreCreateBinary();
+  if(s_done){
+    gdma_tx_event_callbacks_t cb = {};
+    cb.on_trans_eof = spidmaEof;
+    s_irq = gdma_register_tx_event_callbacks(s_chan, &cb, nullptr) == ESP_OK;
+  }
   return true;
 }
 
@@ -61,6 +89,7 @@ static void spidmaKick(const uint8_t* p, size_t len){
   /*  Ядро Arduino тримає SPI у повнодуплексному режимі з фазою прийому.
       На час передачі прийом вимикаємо, а після — повертаємо як було, щоб
       його власні записи через FIFO працювали далі без змін.  */
+  if(s_irq) xSemaphoreTake(s_done, 0);          /* прибрати сигнал від минулої передачі */
   s_userSave = hw->user.val;
   hw->user.usr_miso = 0;
   hw->user.usr_mosi = 1;
@@ -83,14 +112,27 @@ static void spidmaKick(const uint8_t* p, size_t len){
 static bool spidmaFinish(){
   if(!s_busy) return true;
   spi_dev_t* hw = &GPSPI2;
-  const int64_t need = (int64_t)s_len * 8 * 1000000LL / spidmaHz;      /* мікросекунд на всю передачу */
   bool done = true;
-  while(!hw->dma_int_raw.trans_done){
-    const int64_t el = esp_timer_get_time() - s_t0;
-    if(el > 300000){ done = false; break; }
-    /*  спимо навіть коротко: порожнє очікування по кілька мілісекунд на смугу
-        забирало ядро 0 цілком, і задача простою не діставала часу  */
-    if(need - el > 1200) vTaskDelay(pdMS_TO_TICKS(need - el > 3000 ? (need - el) / 1000 - 1 : 1));
+  if(s_irq && spidmaMode == 2){
+    /*  Сигнал GDMA приходить, коли з пам'яті прочитано все. SPI після цього
+        ще досуває останні байти зі своєї черги — це одиниці мікросекунд,
+        їх чекаємо коротким опитуванням.  */
+    if(xSemaphoreTake(s_done, pdMS_TO_TICKS(300)) != pdTRUE) done = false;
+    if(done){
+      const int64_t tail = esp_timer_get_time();
+      while(!hw->dma_int_raw.trans_done){
+        if(esp_timer_get_time() - tail > 20000){ done = false; break; }
+      }
+    }
+  }else{
+    const int64_t need = (int64_t)s_len * 8 * 1000000LL / spidmaHz;    /* мікросекунд на всю передачу */
+    while(!hw->dma_int_raw.trans_done){
+      const int64_t el = esp_timer_get_time() - s_t0;
+      if(el > 300000){ done = false; break; }
+      /*  спимо навіть коротко: порожнє очікування по кілька мілісекунд на смугу
+          забирало ядро 0 цілком, і задача простою не діставала часу  */
+      if(need - el > 1200) vTaskDelay(pdMS_TO_TICKS(need - el > 3000 ? (need - el) / 1000 - 1 : 1));
+    }
   }
   if(!done){
     Serial.printf("##DSP#\tDMA: передача %u байт не завершилась (usr=%u raw=0x%08x) — далі без DMA\n",
@@ -125,6 +167,7 @@ bool spidmaWait(){
 }
 
 bool spidmaOk(){ return s_chan && !s_broken; }
+bool spidmaIrqOn(){ return s_irq; }
 
 void* spidmaScratch(size_t len){
   static void* s_buf = nullptr; static size_t s_len = 0;

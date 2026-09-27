@@ -10,6 +10,7 @@
 #include "../displays/dspcore.h"
 #include "../displays/tools/spidma.h"
 #include "../m2/m2simd.h"
+#include "hal/spi_ll.h"
 #include "esp_core_dump.h"
 #include <WiFi.h>
 #include <esp_wifi.h>
@@ -610,7 +611,14 @@ void yodbgLoop(){
       /*  spihz <МГц> — частота шини дисплея без перезбирання (перевірка 80 МГц); без числа — показати  */
       int mhz = atoi(buf + 5);
       if(mhz >= 10 && mhz <= 80){ dsp.setSPISpeed((uint32_t)mhz * 1000000UL); spidmaHz = (uint32_t)mhz * 1000000UL; }
-      Serial.printf("SPIHZ %u МГц\n", (unsigned)(spidmaHz / 1000000UL));
+      /*  Справжня частота — з дільника самого SPI, а не з того, що попросили:
+          частота береться діленням 80 МГц на ціле, тож не всяке число існує.  */
+      const uint32_t cl = GPSPI2.clock.val;
+      const uint32_t pre = ((cl >> 18) & 0x0F) + 1, n = ((cl >> 12) & 0x3F) + 1;
+      const uint32_t real = (cl & 0x80000000UL) ? 80000000UL : (80000000UL / (pre * n));
+      Serial.printf("SPIHZ просили %u МГц, насправді %u.%u МГц (дільник %u×%u)\n",
+                    (unsigned)(spidmaHz / 1000000UL), (unsigned)(real / 1000000UL),
+                    (unsigned)((real % 1000000UL) / 100000UL), (unsigned)pre, (unsigned)n);
     }
     else if(!strcmp(buf,"m2perf")){
       /*  нове меню: скільки кадрів і куди йде час (з минулого виклику)  */
@@ -621,6 +629,13 @@ void yodbgLoop(){
                     (unsigned)dt, (unsigned)m.pfFrames, (unsigned)m.pfStrips, (unsigned)(m.pfDrawUs / 1000), (unsigned)(m.pfXferUs / 1000),
                     (unsigned)(m.pfTickUs / 1000), (unsigned)(m.pfMaxUs / 1000));
       m.pfFrames = m.pfStrips = m.pfDrawUs = m.pfXferUs = m.pfTickUs = m.pfMaxUs = 0;
+    }
+    else if(!strncmp(buf,"dmawait",7)){
+      int m = atoi(buf + 7);
+      if(buf[7] && m >= 1 && m <= 2) spidmaMode = (uint8_t)m;
+      Serial.printf("DMAWAIT режим %u (%s), переривання %s\n", (unsigned)spidmaMode,
+                    spidmaMode == 1 ? "сон за розрахунком" : "переривання",
+                    spidmaIrqOn() ? "підключене" : "НЕ підключене");
     }
     else if(!strcmp(buf,"piecheck")){
       /*  Звірка векторних функцій зі звичайним кодом: усі зсуви початку

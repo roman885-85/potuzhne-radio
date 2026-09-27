@@ -23,6 +23,8 @@ bool spidmaOk();                                  /* DMA досі працює *
     спискам меню, кадру меню й заставці — усім у задачі дисплея й ніколи
     одночасно. Тож буфер один: не менше len байт, живе до перезавантаження.  */
 void* spidmaScratch(size_t len);
+extern uint8_t spidmaMode;                        /* дослід: як чекати кінця передачі */
+extern bool spidmaIrqOn();                        /* переривання GDMA справді підключене */
 extern uint32_t spidmaHz;                         /* частота шини дисплея (задає displayILI9341 / команда spihz) */
 
 #endif
