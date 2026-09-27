@@ -718,6 +718,7 @@ void Menu::_processTouch(){
         if(p->grab(id) == 2){ _tm = TM_GRAB; p->drag(id, t.x, cy, false); _ripOn = false; }
       }
       _scroll0 = p->scroll; _scrollF = p->scroll;
+      _dTarget = p->scroll; _dVel = 0; _dT = 0;
     }else if(t.kind == T_DRAG){
       if(_tm == TM_UNDECIDED){
         int16_t dx = t.x - _px0, dy = t.y - _py0;
@@ -729,6 +730,7 @@ void Menu::_processTouch(){
         const int16_t need = gr == 1 ? (int16_t)(abs(dx) * 2) : (int16_t)abs(dx);
         if(abs(dy) > 8 && abs(dy) >= need && p->scrollable() && _maxScroll(p) > 0){
           _tm = TM_SCROLL; _py0 = t.y; _scroll0 = p->scroll; _ripOn = false;
+          _dTarget = p->scroll; _scrollF = p->scroll; _dVel = 0; _dT = 0; _ply = t.y; _lastMoveT = t.t;
           if(_pressId >= 0) inval(_rip);
         }else if(abs(dx) > 5 && gr == 1){
           _tm = TM_GRAB; _ripUp = true; _ripUpT = t.t;
@@ -744,13 +746,19 @@ void Menu::_processTouch(){
         uint32_t dt = t.t - _lastMoveT;
         if(dt > 0){
           float v = -(float)(t.y - _ply) * 1000.0f / dt;
-          _vel = _vel * 0.5f + v * 0.5f;
+          _vel = _vel * 0.5f + v * 0.5f;                     /* для накату після відпускання */
+          /*  Для самого руху швидкість згладжуємо сильніше й за часом, а не
+              за кількістю дотиків: інакше рідкі й часті відліки давали б
+              різну плавність.  */
+          const float k = (float)dt / (float)(dt + 70);      /* стала часу 70 мс */
+          _dVel += (v - _dVel) * k;
+          /*  Один різкий стрибок пальця міряється як шалена швидкість —
+              обмежуємо, інакше він потім довго штовхає список.  */
+          if(_dVel >  1800.0f) _dVel =  1800.0f;
+          if(_dVel < -1800.0f) _dVel = -1800.0f;
         }
         _ply = t.y; _lastMoveT = t.t;
-        if((int16_t)target != p->scroll){
-          p->scroll = (int16_t)target; _scrollF = target;
-          invalScreen(0, HDR - 1, SW, CH + 1);
-        }
+        _dTarget = target;                                   /* сам список посуне такт нижче */
       }else if(_tm == TM_GRAB){
         p->drag(_pressId, t.x, t.y - HDR + p->scroll, false);
       }
@@ -801,6 +809,27 @@ void Menu::render(){
     _held = true;
     _post(A_HOLD, p, _pressId, _ripX, _ripY, 0);
   }
+  /*  Ведення пальцем: список іде за згладженою швидкістю, а до пальця його
+      підтягує слабка пружина. Забігати вперед пальця більш ніж на кілька
+      пікселів не даємо — інакше на зупинці був би помітний відкат.  */
+  if(_tm == TM_SCROLL){
+    float dt = _dT ? (now - _dT) / 1000.0f : 0.016f;
+    _dT = now;
+    if(dt > 0.05f) dt = 0.05f;
+    if(now - _lastMoveT > 60) _dVel = 0;             /* палець стоїть — і список стає */
+    else _dVel *= powf(0.22f, dt);
+    _scrollF += _dVel * dt + (_dTarget - _scrollF) * 9.0f * dt;
+    /*  Відставати дозволяємо помітно — саме в цьому запасі й гаситься ривок,
+        список надолужує його приблизно за 100 мс. А обганяти палець не даємо
+        зовсім: інакше після кожного ривка список проскакував на кілька
+        пікселів і майже півсекунди повз назад — це було видно як гойдання.  */
+    const float LAG = 0.28f * (float)smooth, LEAD = 0.5f;
+    if(_scrollF - _dTarget >  LEAD) _scrollF = _dTarget + LEAD;
+    if(_scrollF - _dTarget < -LAG)  _scrollF = _dTarget - LAG;
+    int16_t s = (int16_t)lroundf(_scrollF);
+    if(s != p->scroll){ p->scroll = s; invalScreen(0, HDR - 1, SW, CH + 1); }
+    if(_trOn && _trN < TR_N){ _trT[_trN] = (uint16_t)(now - _trT0); _trS[_trN] = s; _trG[_trN] = (int16_t)lroundf(_dTarget); _trN++; }
+  }else _dT = 0;
   /*  інерція прокрутки й пружина на краях  */
   if(_fling && _tm != TM_SCROLL){
     static uint32_t ft = 0;
@@ -1134,6 +1163,13 @@ void Menu::dumpTop(){
   Serial.println("ENDPAGE");
 }
 
+void Menu::traceStart(){ _trN = 0; _trT0 = millis(); _trOn = true; }
+void Menu::traceDump(){
+  _trOn = false;
+  Serial.printf("SCRTRACE тактів %u  (мс: список -> палець)\n", (unsigned)_trN);
+  for(uint8_t i = 0; i < _trN; i++) Serial.printf("  %4u: %4d -> %4d\n", (unsigned)_trT[i], (int)_trS[i], (int)_trG[i]);
+}
+
 void Menu::setScroll(int16_t s){
   Page* p = top();
   if(!p) return;
@@ -1141,6 +1177,7 @@ void Menu::setScroll(int16_t s){
   if(s < 0) s = 0;
   if(s > mx) s = mx;
   p->scroll = s; _scrollF = s; _fling = false; _spring = false;
+  _dTarget = s; _dVel = 0; _dT = 0;
   invalAll();
 }
 

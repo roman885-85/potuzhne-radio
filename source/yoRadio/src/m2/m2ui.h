@@ -176,6 +176,11 @@ class Menu {
     /*  Автоматична перевірка: перелік елементів верхньої сторінки й пряма прокрутка.  */
     void dumpTop();
     void setScroll(int16_t s);
+    /*  Сила згладження прокрутки, 0..100: це ширина запасу, на який список
+        має право відставати від пальця. 0 — як було, рівно за пальцем.  */
+    uint8_t smooth = 100;
+    void traceStart();                    /* відладка: записати хід прокрутки по тактах */
+    void traceDump();
     void onPress(uint16_t x, uint16_t y);
     void onDrag(uint16_t x, uint16_t y);
     void onRelease(uint16_t x, uint16_t y);
@@ -230,6 +235,18 @@ class Menu {
     float _spX = 0, _spV = 0, _spTo = 0;
     uint32_t _spLast = 0;
     uint32_t _lastMoveT = 0;
+    /*  Згладження прокрутки під пальцем. Раніше список ішов рівно за
+        пальцем, один в один: палець смикнувся — смикнулась і картинка.
+        Тепер список веде згладжена швидкість пальця, а до самого пальця
+        його лише м'яко підтягує. Рівний рух від цього не відстає, а ривки
+        усереднюються.  */
+    float _dTarget = 0;                   /* куди показує палець (з гумовими краями) */
+    float _dVel = 0;                      /* згладжена швидкість пальця, пікселів за секунду */
+    uint32_t _dT = 0;                     /* коли востаннє рухали список */
+    /*  відладка: хід прокрутки по тактах — щоб бачити згладження в числах  */
+    static const uint8_t TR_N = 120;
+    uint16_t _trT[TR_N]; int16_t _trS[TR_N], _trG[TR_N];
+    uint8_t _trN = 0; bool _trOn = false; uint32_t _trT0 = 0;
     /*  хвиля  */
     Rect _rip; uint8_t _ripR = 0; int16_t _ripX = 0, _ripY = 0; uint32_t _ripT0 = 0; bool _ripOn = false, _ripUp = false, _ripHdr = false; uint32_t _ripUpT = 0;
     Page* _ripPage = nullptr;

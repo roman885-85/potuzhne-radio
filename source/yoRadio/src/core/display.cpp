@@ -18,6 +18,7 @@
 #include "../extras/yoExtras.h"
 #include "../extras/yoSplash.h"
 #include "../extras/yoSfx.h"
+#include "../extras/yoSpectrum.h"
 
 Display display;
 
@@ -319,6 +320,10 @@ void Display::loop() {
   /*  Поки відкрите меню, решта мовчить, а черга просто спорожнюється — інакше
       накопичені запити вивалились би на екран разом, щойно меню закриють.  */
   if(yomenu.active() || yomenu.fading()){
+    /*  Поки відкрите меню, рисок спектра не видно — отже й складати відліки
+        в його буфер нема потреби: у звуковому тракті це робота на кожен
+        відлік. Назад увімкне сам екран плеєра, коли меню закриють.  */
+    yoSpec.wanted = false;
 #ifdef YO_DEBUG
     { uint32_t m0 = millis(); yomenu.render(); uint32_t d = millis() - m0; if(d > yoMenuMs) yoMenuMs = d; }
 #else

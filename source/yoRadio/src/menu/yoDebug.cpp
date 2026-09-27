@@ -538,6 +538,13 @@ void yodbgLoop(){
     else if(!strcmp(buf,"mclose")) yomenu.close();
     else if(!strncmp(buf,"touchlog ",9)){ extern volatile bool yoTouchLog; yoTouchLog = atoi(buf+9) != 0; Serial.printf("TOUCHLOG %d\n", (int)yoTouchLog); }
     else if(!strcmp(buf,"items")){ m2::M.dumpTop(); }
+    else if(!strncmp(buf,"scrsm",5)){
+      int v = atoi(buf + 5);
+      if(buf[5] && v >= 0 && v <= 100) m2::M.smooth = (uint8_t)v;
+      Serial.printf("SCRSM згладження прокрутки %u%% (0 — рівно за пальцем)\n", (unsigned)m2::M.smooth);
+    }
+    else if(!strcmp(buf,"scrtrace")){ m2::M.traceStart(); Serial.println("SCRTRACE запис пішов"); }
+    else if(!strcmp(buf,"scrdump")){ m2::M.traceDump(); }
     else if(!strncmp(buf,"scroll ",7)){ m2::M.setScroll((int16_t)atoi(buf+7)); Serial.printf("SCROLL %d\n", atoi(buf+7)); }
     else if(!strcmp(buf,"calib")){ if(!m2::M.active()) m2::M.open(&m2::pgDev); m2::M.calibStart(); Serial.println("калібрування: торкніться чотирьох позначок"); }
     else if(!strcmp(buf,"calibreset")){ m2::M.calibReset(); Serial.println("калібрування скинуто"); }
