@@ -1,4 +1,5 @@
 #include "m2gfx.h"
+#include "m2simd.h"
 #include "m2lang.h"
 
 namespace m2 {
@@ -85,10 +86,9 @@ void Gfx::fill(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c){
   if(x0 < _cx0) x0 = _cx0; if(y0 < _cy0) y0 = _cy0;
   if(x1 > _cx1) x1 = _cx1; if(y1 > _cy1) y1 = _cy1;
   if(x1 <= x0 || y1 <= y0) return;
-  for(int16_t yy = y0; yy < y1; yy++){
-    uint16_t* p = _px + (int32_t)(yy - _ty) * _tw + (x0 - _tx);
-    for(int16_t i = x1 - x0; i > 0; i--) *p++ = c;
-  }
+  const uint32_t n = (uint32_t)(x1 - x0);
+  for(int16_t yy = y0; yy < y1; yy++)
+    sFill(_px + (int32_t)(yy - _ty) * _tw + (x0 - _tx), n, c);
 }
 
 void Gfx::blit(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* px){
@@ -138,16 +138,21 @@ void Gfx::vgrad(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t c0, uint16_
   static const uint8_t BAY[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
   int r0 = ((c0 >> 11) & 31) * 255 / 31, g0 = ((c0 >> 5) & 63) * 255 / 63, b0 = (c0 & 31) * 255 / 31;
   int r1 = ((c1 >> 11) & 31) * 255 / 31, g1 = ((c1 >> 5) & 63) * 255 / 63, b1 = (c1 & 31) * 255 / 31;
+  /*  Колір у рядку один, а розсіювання залежить лише від xx & 3 — отже на
+      весь рядок є всього чотири різні пікселі. Рахуємо їх раз і кладемо
+      рядок готовим візерунком, а не рахуємо кожен піксель окремо.  */
+  const uint32_t n = (uint32_t)(x1 - x0);
   for(int16_t yy = y0; yy < y1; yy++){
     int k = (int)(yy - top) * 256 / h;
     int r = r0 + (r1 - r0) * k / 256, g = g0 + (g1 - g0) * k / 256, b = b0 + (b1 - b0) * k / 256;
-    uint16_t* p = _px + (int32_t)(yy - _ty) * _tw + (x0 - _tx);
-    for(int16_t xx = x0; xx < x1; xx++){
-      int d = BAY[((yy & 3) << 2) | (xx & 3)];
+    uint16_t pat[8];
+    for(int i = 0; i < 4; i++){
+      int d = BAY[((yy & 3) << 2) | i];
       int rr = div255(r * 31 + d * 16), gg = div255(g * 63 + d * 16), bb = div255(b * 31 + d * 16);
       if(rr > 31) rr = 31; if(gg > 63) gg = 63; if(bb > 31) bb = 31;
-      *p++ = (uint16_t)((rr << 11) | (gg << 5) | bb);
+      pat[i] = pat[i + 4] = (uint16_t)((rr << 11) | (gg << 5) | bb);
     }
+    sFillPat(_px + (int32_t)(yy - _ty) * _tw + (x0 - _tx), n, pat, (uint8_t)(x0 & 3));
   }
 }
 

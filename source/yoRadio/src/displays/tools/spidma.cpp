@@ -132,7 +132,9 @@ void* spidmaScratch(size_t len){
     /*  Перший запит беремо із запасом під найбільшу смугу (рядок списку 254×32),
         щоб потім не перевиділяти й не дробити пам'ять.  */
     size_t want = len < 16384 ? 16384 : len;
-    void* nb = heap_caps_malloc(want, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    /*  Вирівнювання на 16 байтів: векторні інструкції S3 читають і пишуть
+        смугу по 16 байтів і з невирівняною адресою не працюють.  */
+    void* nb = heap_caps_aligned_alloc(16, want, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     if(!nb) return s_len >= len ? s_buf : nullptr;
     if(s_buf) heap_caps_free(s_buf);
     s_buf = nb; s_len = want;

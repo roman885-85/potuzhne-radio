@@ -9,6 +9,7 @@
 #include "../core/sdmanager.h"
 #include "../displays/dspcore.h"
 #include "../displays/tools/spidma.h"
+#include "../m2/m2simd.h"
 #include "esp_core_dump.h"
 #include <WiFi.h>
 #include <esp_wifi.h>
@@ -620,6 +621,94 @@ void yodbgLoop(){
                     (unsigned)dt, (unsigned)m.pfFrames, (unsigned)m.pfStrips, (unsigned)(m.pfDrawUs / 1000), (unsigned)(m.pfXferUs / 1000),
                     (unsigned)(m.pfTickUs / 1000), (unsigned)(m.pfMaxUs / 1000));
       m.pfFrames = m.pfStrips = m.pfDrawUs = m.pfXferUs = m.pfTickUs = m.pfMaxUs = 0;
+    }
+    else if(!strcmp(buf,"piecheck")){
+      /*  Звірка векторних функцій зі звичайним кодом: усі зсуви початку
+          (вирівняність) і всі довжини — саме там ховаються помилки.  */
+      static uint16_t __attribute__((aligned(16))) A[200], B[200];
+      uint32_t bad = 0, cases = 0;
+      for(uint8_t off = 0; off < 8; off++){
+        for(uint32_t n = 0; n <= 80; n++){
+          /*  1. заливка  */
+          for(uint32_t i = 0; i < 200; i++) A[i] = B[i] = (uint16_t)(0x1111 * (i & 7) + i);
+          m2::sFill(A + off, n, 0xBEEF);
+          for(uint32_t i = 0; i < n; i++) B[off + i] = 0xBEEF;
+          if(memcmp(A, B, sizeof(A))) bad++;
+          cases++;
+          /*  2. візерунок  */
+          uint16_t pat[8]; for(uint8_t k = 0; k < 8; k++) pat[k] = (uint16_t)(0xA000 + (k & 3));
+          for(uint32_t i = 0; i < 200; i++) A[i] = B[i] = (uint16_t)(i * 7);
+          m2::sFillPat(A + off, n, pat, (uint8_t)(off & 3));
+          for(uint32_t i = 0; i < n; i++) B[off + i] = pat[((off & 3) + i) & 7];
+          if(memcmp(A, B, sizeof(A))) bad++;
+          cases++;
+          /*  3. перестановка байтів  */
+          for(uint32_t i = 0; i < 200; i++) A[i] = B[i] = (uint16_t)(i * 0x0101 + 0x1234);
+          m2::sSwap16(A + off, n);
+          for(uint32_t i = 0; i < n; i++){ uint16_t v = B[off + i]; B[off + i] = (uint16_t)((v >> 8) | (v << 8)); }
+          if(memcmp(A, B, sizeof(A))) bad++;
+          cases++;
+        }
+      }
+      Serial.printf("PIECHECK перевірок %u, розбіжностей %u — %s\n",
+                    (unsigned)cases, (unsigned)bad, bad ? "Є ПОМИЛКА" : "усе збігається");
+      /*  швидкість на смузі 320×32  */
+      static uint16_t* big = nullptr;
+      if(!big) big = (uint16_t*)heap_caps_aligned_alloc(16, 10240 * 2, MALLOC_CAP_INTERNAL);
+      if(big){
+        const uint32_t N = 10240, R = 200;
+        int64_t t0 = esp_timer_get_time();
+        for(uint32_t k = 0; k < R; k++){ for(uint32_t i = 0; i < N; i++){ uint16_t v = big[i]; big[i] = (uint16_t)((v >> 8) | (v << 8)); } }
+        int64_t t1 = esp_timer_get_time();
+        for(uint32_t k = 0; k < R; k++) m2::sSwap16(big, N);
+        int64_t t2 = esp_timer_get_time();
+        for(uint32_t k = 0; k < R; k++){ uint16_t* p = big; for(uint32_t i = 0; i < N; i++) *p++ = 0x1234; }
+        int64_t t3 = esp_timer_get_time();
+        for(uint32_t k = 0; k < R; k++) m2::sFill(big, N, 0x1234);
+        int64_t t4 = esp_timer_get_time();
+        Serial.printf("  перестановка: було %.2f мс -> стало %.2f мс на смугу\n", (t1-t0)/1000.0/R, (t2-t1)/1000.0/R);
+        Serial.printf("  заливка:      було %.2f мс -> стало %.2f мс на смугу\n", (t3-t2)/1000.0/R, (t4-t3)/1000.0/R);
+      }
+    }
+    else if(!strcmp(buf,"pietest")){
+      /*  Векторні інструкції S3 (PIE) не описані в документації Espressif —
+          з'ясовуємо їхню поведінку дослідом, а не припущенням.  */
+      static uint8_t __attribute__((aligned(16))) A[16], B[16], OA[16], OB[16];
+      auto dump = [](const char* t, const uint8_t* p){
+        Serial.printf("%-14s", t);
+        for(int i = 0; i < 16; i++) Serial.printf(" %02X", p[i]);
+        Serial.println();
+      };
+      for(int i = 0; i < 16; i++){ A[i] = i; B[i] = 0x10 + i; }
+      dump("вхід A", A); dump("вхід B", B);
+      __asm__ volatile("ee.vld.128.ip q0,%0,0\n ee.vld.128.ip q1,%1,0\n ee.vzip.8 q0,q1\n"
+                       "ee.vst.128.ip q0,%2,0\n ee.vst.128.ip q1,%3,0\n"
+                       :: "r"(A), "r"(B), "r"(OA), "r"(OB) : "memory");
+      dump("zip.8  -> q0", OA); dump("zip.8  -> q1", OB);
+      __asm__ volatile("ee.vld.128.ip q0,%0,0\n ee.vld.128.ip q1,%1,0\n ee.vunzip.8 q0,q1\n"
+                       "ee.vst.128.ip q0,%2,0\n ee.vst.128.ip q1,%3,0\n"
+                       :: "r"(A), "r"(B), "r"(OA), "r"(OB) : "memory");
+      dump("unzip.8-> q0", OA); dump("unzip.8-> q1", OB);
+      __asm__ volatile("ee.vld.128.ip q0,%0,0\n ee.vld.128.ip q1,%1,0\n ee.vzip.16 q0,q1\n"
+                       "ee.vst.128.ip q0,%2,0\n ee.vst.128.ip q1,%3,0\n"
+                       :: "r"(A), "r"(B), "r"(OA), "r"(OB) : "memory");
+      dump("zip.16 -> q0", OA); dump("zip.16 -> q1", OB);
+      /*  розмноження одного 16-бітного значення на весь регістр — для заливки  */
+      static uint16_t __attribute__((aligned(16))) one[8] = { 0xABCD, 0, 0, 0, 0, 0, 0, 0 };
+      __asm__ volatile("ee.vldbc.16 q0,%0\n ee.vst.128.ip q0,%1,0\n" :: "r"(one), "r"(OA) : "memory");
+      dump("vldbc.16", OA);
+      /*  множення 16-бітних доріжок: чи це молодші 16 бітів добутку?  */
+      static uint16_t __attribute__((aligned(16))) M1[8] = { 100, 200, 300, 1000, 4000, 30000, 65535, 7 };
+      static uint16_t __attribute__((aligned(16))) M2[8] = {   2,   3,   4,   64,   17,     3,     2, 9 };
+      __asm__ volatile("ee.vld.128.ip q0,%0,0\n ee.vld.128.ip q1,%1,0\n ee.vmul.u16 q2,q0,q1\n ee.vst.128.ip q2,%2,0\n"
+                       :: "r"(M1), "r"(M2), "r"(OA) : "memory");
+      Serial.printf("vmul.u16      ");
+      for(int i = 0; i < 8; i++) Serial.printf(" %u(чек %u)", (unsigned)((uint16_t*)OA)[i], (unsigned)(uint16_t)(M1[i] * M2[i]));
+      Serial.println();
+      /*  вирівнювання смуги, з якою працює DMA  */
+      extern void* spidmaScratch(size_t);
+      void* sc = spidmaScratch(16384);
+      Serial.printf("  буфер смуги: %p, вирівняний на 16: %s\n", sc, (((uintptr_t)sc & 15) == 0) ? "так" : "НІ");
     }
     else if(!strcmp(buf,"spec")){
       extern float m2SpecDbg[32];

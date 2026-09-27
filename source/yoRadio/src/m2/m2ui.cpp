@@ -4,6 +4,7 @@
 #include "../core/options.h"
 #include "../displays/dspcore.h"
 #include "../displays/tools/spidma.h"
+#include "m2simd.h"
 #include "m2pages.h"
 #include "m2lang.h"
 #include "../extras/yoExtras.h"
@@ -901,7 +902,7 @@ void Menu::_flush(){
       _drawScene(g);
       int64_t u1 = esp_timer_get_time();
       const uint32_t n = (uint32_t)w * h;
-      for(uint32_t i = 0; i < n; i++){ uint16_t v = buf[i]; buf[i] = (uint16_t)((v >> 8) | (v << 8)); }
+      sSwap16(buf, n);
       if(pending){ if(!spidmaWait()) dma = false; pending = false; }
       dsp.setAddrWindow(x0, y0, w, h);
       if(dma && spidmaStart(buf, n * 2)){ pending = true; hi ^= 1; }

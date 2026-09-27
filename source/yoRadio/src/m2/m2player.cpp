@@ -13,6 +13,7 @@
 #include "../core/timekeeper.h"
 #include "../displays/dspcore.h"
 #include "../displays/tools/spidma.h"
+#include "m2simd.h"
 #include "../extras/yoExtras.h"
 #include "../extras/yoDlna.h"
 #include "../extras/yoRecorder.h"
@@ -724,7 +725,7 @@ void Player::_flush(){
       g.target(buf, x0, y0, w, h);
       _draw(g);
       const uint32_t n = (uint32_t)w * h;
-      for(uint32_t i = 0; i < n; i++){ uint16_t v = buf[i]; buf[i] = (uint16_t)((v >> 8) | (v << 8)); }
+      sSwap16(buf, n);
       if(pending){ if(!spidmaWait()) dma = false; pending = false; }
       dsp.setAddrWindow(x0, y0, w, h);
       if(dma && spidmaStart(buf, n * 2)){ pending = true; hi ^= 1; }
