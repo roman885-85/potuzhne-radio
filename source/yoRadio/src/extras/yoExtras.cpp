@@ -18,6 +18,7 @@
 #include <HWCDC.h>
 #include <Wire.h>
 #include "esp_sleep.h"
+#include "esp_system.h"
 #include "esp_sntp.h"
 #include "esp_heap_caps.h"
 #include "mbedtls/platform.h"
@@ -102,7 +103,18 @@ void YoExtras::_load(){
   if(s.vbass > 3) s.vbass = 0;
   if(s.lang >= m2::LANG_N) s.lang = m2::LANG_UK;
   if(s.dacPwr > 2) s.dacPwr = 0;
+  /*  Літній час (26.10.2026, прохання власника): типово — сам, за правилом Європи, а пояс
+      у налаштуваннях тепер зимовий. Хто влітку ставив +3 (Київ), отримує +2 і далі
+      перехід сам: улітку однаково +3, узимку — +2, як і має бути.  */
+  if(!s.dstInit){
+    s.dstInit = 1;
+    const int16_t m = config.store.tzHour * 60 + config.store.tzMin;
+    if(m >= 0 && m <= 180){ s.dstMode = 1; if(m == 180) config.setTimezone(2, 0); }
+    _dirty = true; _dirtyMs = millis();
+  }
+  if(s.dstMode > 1) s.dstMode = 0;
   m2::langSet(s.lang);                   /* мова екрана — до першого малювання */
+  config.applyTz();                      /* пояс із літнім часом — щойно відомий режим */
   yoDsp.changed();
 
   memset(fav, 0, sizeof(fav));
@@ -275,7 +287,12 @@ void YoExtras::applyDac(){
   Serial.printf("##DAC#\tаудіовихід %u, живлення з IO3: %u\n", s.dac, s.dacPwr);
 }
 
+/*  Перед будь-яким перезапуском (меню, оновлення, сторож, сторінка) — записати відкладені
+    налаштування: під час звуку їх тримаємо до тиші (див. Config::eepromLoop).  */
+static void yoShutdownSave(){ config.commitNow(); extras.saveNow(); }
+
 void YoExtras::begin(){
+  esp_register_shutdown_handler(yoShutdownSave);
   {
     Preferences p;
     if(p.begin("yoext", true)){
@@ -302,7 +319,9 @@ void YoExtras::loop(){
   yoWebApiLoop();                    /* команди з веб-сторінки */
   _wifiCheck(now);
   _wifiFileGuard(now);
-  if(_dirty && now - _dirtyMs > 3000){ _dirty = false; _save(); }
+  /*  Під час звуку — лише після 5 хв без змін (запис NVS зупиняє ядра, див. Config::eepromLoop);
+      решту запише тиша між станціями, сон чи перезапуск.  */
+  if(_dirty && now - _dirtyMs > 3000 && (!(player.isRunning() || player.extOn) || now - _dirtyMs > 300000UL)){ _dirty = false; _save(); }
   if(_pwrMode && (int32_t)(now - _pwrAt) >= 0){
     uint8_t m = _pwrMode; _pwrMode = 0;
     if(_dirty){ _dirty = false; _save(); }
@@ -338,6 +357,8 @@ void YoExtras::_powerOff(){
   if(player.status() == PLAYING) player.fadeStop();
   /*  грало радіо — після ввімкнення хай грає далі (якщо «грати після ввімкнення» не вимкнено)  */
   if(was && config.store.smartstart != 2) config.saveValue(&config.store.smartstart, (uint8_t)1);
+  config.commitNow();                  /* відкладені налаштування — до сну (у звуку їх не писали) */
+  saveNow();
   if(sdman.ready) sdman.stop();
   _led(0, 0, 0);
   pwmSet(0);

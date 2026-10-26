@@ -735,7 +735,8 @@ void Menu::_processTouch(){
         }else if(abs(dx) > 5 && gr == 1){
           _tm = TM_GRAB; _ripUp = true; _ripUpT = t.t;
         }else if(abs(dx) > 14 || abs(dy) > 14){
-          _tm = TM_DEAD; if(_ripOn){ _ripUp = true; _ripUpT = t.t; }
+          _tm = TM_DEAD;
+          if(_ripOn){ if((uint32_t)(t.t - _ripT0) < 90) _ripOn = false; else { _ripUp = true; _ripUpT = t.t; } }
         }
       }
       if(_tm == TM_SCROLL){
@@ -875,7 +876,7 @@ void Menu::render(){
     if(_ripUp && now - _ripUpT > 260) _ripOn = false;
     if(_ripPage != p) _ripOn = false;
     else if(_ripHdr) invalScreen(0, 0, 44, HDR - 1);
-    else inval(_rip);
+    else if((int32_t)(now - _ripStart()) >= 0) inval(_rip);    /* до початку хвилі малювати нічого */
   }
   /*  повідомлення  */
   if(_toastOn){
@@ -983,9 +984,9 @@ void Menu::_drawPage(Gfx& g, Page* p, int16_t dx, bool overlays){
   Rect s1 = g.narrow(0, HDR, SW, CH);
   g.origin(dx, HDR - p->scroll);
   p->draw(g);
-  if(overlays && _ripOn && !_ripHdr && _ripPage == p){
+  if(overlays && _ripOn && !_ripHdr && _ripPage == p && (int32_t)(_frameT - _ripStart()) >= 0){
     uint32_t now = _frameT;
-    float k = (now - _ripT0) / 280.0f; if(k > 1) k = 1;
+    float k = (now - _ripStart()) / 280.0f; if(k > 1) k = 1;
     float e = easeOut(k);
     float dxm = _ripX - _rip.x > _rip.x + _rip.w - _ripX ? _ripX - _rip.x : _rip.x + _rip.w - _ripX;
     float dym = _ripY - _rip.y > _rip.y + _rip.h - _ripY ? _ripY - _rip.y : _rip.y + _rip.h - _ripY;

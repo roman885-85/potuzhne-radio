@@ -54,8 +54,12 @@ if [ -f "$SKETCH/web/app.js" ]; then
 fi
 
 echo ">>> компіляція (перший запуск — близько 13 хвилин)"
+#  --wrap=dns_clear_cache: очистку кешу DNS із ядра Arduino ведемо в обгортку під
+#  замком lwIP (src/core/network.cpp) — без неї радіо падало при появі мережі.
 "$CLI" --config-file "$B/arduino-cli.yaml" compile \
-  --fqbn "$FQBN" --build-path "$B/bp" --output-dir "$B/out" "$SKETCH"
+  --fqbn "$FQBN" --build-path "$B/bp" --output-dir "$B/out" \
+  --build-property "compiler.c.elf.extra_flags=-Wl,--wrap=dns_clear_cache" \
+  "$SKETCH"
 
 echo ">>> образ файлової системи"
 MKSPIFFS=$(ls -d "$HOME"/Library/Arduino15/packages/esp32/tools/mkspiffs/*/mkspiffs | head -1)
