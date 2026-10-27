@@ -6,6 +6,11 @@
 Керується дотиками, з браузера або програмами для Android, Windows і Mac. Нові версії приходять
 на радіо самі — з цього репозиторію.
 
+> **Інша плата:** [ПОТУЖНЕ РАДІО для ES3C35P (3,5″, ST77922)](https://github.com/roman885-85/potuzhne-radio-es3c35p) —
+> те саме радіо на більшому екрані, з консоллю налагодження й прошивкою по Wi-Fi; опис там — українською й англійською.
+> *Another board: [POTUZHNE RADIO for ES3C35P (3.5″)](https://github.com/roman885-85/potuzhne-radio-es3c35p) —
+> README in English and Ukrainian.*
+
 <p>
 <img src="media/ekran-holovnyi.png" width="320" alt="Головний екран">
 <img src="media/menu-pult.png" width="320" alt="Меню">
